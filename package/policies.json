@@ -1,0 +1,26 @@
+{
+  "key_prefix": [
+    {
+      "carbonio-preview/": {
+        "policy": "read"
+      }
+    }
+  ],
+  "node_prefix": [
+    {
+      "": {
+        "policy": "read"
+      }
+    }
+  ],
+  "service": [
+    {
+      "carbonio-preview": {
+        "policy": "write"
+      },
+      "carbonio-preview-sidecar-proxy": {
+        "policy": "write"
+      }
+    }
+  ]
+}

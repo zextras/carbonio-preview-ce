@@ -1,0 +1,73 @@
+#!/bin/bash
+
+if [[ $(id -u) -ne 0 ]]; then
+  echo "Please run as root"
+  exit 1
+fi
+
+if [[ "$1" != "setup" ]]; then
+  echo "Syntax: 'carbonio-preview <setup>' to automatically configure the service"
+  exit 1;
+fi
+
+
+# decrypt the bootstrap token, asking the password to the sys admin
+# --setup check for SETUP_CONSUL_TOKEN env. variable and uses it
+# to avoid re-asking for the password
+echo -n "insert the cluster credential password: "
+export CONSUL_HTTP_TOKEN=$(service-discover bootstrap-token --setup)
+EXIT_CODE="$?"
+echo ""
+if [[ "${EXIT_CODE}" != "0" ]]; then
+  echo "cannot access to bootstrap token"
+  exit 1;
+fi
+# limit secret visibility as much as possible
+export -n SETUP_CONSUL_TOKEN
+
+POLICY_NAME='carbonio-preview-policy'
+POLICY_DESCRIPTION='Preview service policy for service and sidecar proxy'
+
+# create or update policy for the specific service (this will be shared across cluster)
+consul acl policy create -name "${POLICY_NAME}" -description "${POLICY_DESCRIPTION}" -rules @/etc/carbonio/preview/service-discover/policies.json >/dev/null 2>&1
+if [[ "$?" != "0" ]]; then
+    consul acl policy update -no-merge -name "${POLICY_NAME}" -description "${POLICY_DESCRIPTION}" -rules @/etc/carbonio/preview/service-discover/policies.json
+    if [[ "$?" != "0" ]]; then
+      echo "Setup failed: Cannot update policy for ${POLICY_NAME}"
+      exit 1
+    fi
+fi
+
+# declare the service as http
+consul config write /etc/carbonio/preview/service-discover/service-protocol.json
+
+
+# Allow other services to contact this service
+consul config write /etc/carbonio/preview/service-discover/intentions.json
+
+if [[ ! -f "/etc/carbonio/preview/service-discover/token" ]]; then
+    # create the token
+    consul acl token create -format json -policy-name "${POLICY_NAME}" -description "Token for carbonio-preview/$(hostname -A)" |
+      jq -r '.SecretID' > /etc/carbonio/preview/service-discover/token;
+    chown carbonio-preview:carbonio-preview /etc/carbonio/preview/service-discover/token
+    chmod 0600 /etc/carbonio/preview/service-discover/token
+
+    # to pass the token to consul-template we need to inject it to a env. variable
+    # since it doesn't accept a file as an argument
+    mkdir -p /etc/systemd/system/carbonio-preview.service.d/
+    cat >/etc/systemd/system/carbonio-preview.service.d/override.conf <<EOF
+[Service]
+Environment="CONSUL_HTTP_TOKEN=$(cat /etc/carbonio/preview/service-discover/token)"
+EOF
+    chmod 0600 /etc/systemd/system/carbonio-preview.service.d/override.conf
+    systemctl daemon-reload
+fi
+
+consul reload
+
+# limit token visibility as much as possible
+export -n CONSUL_HTTP_TOKEN
+
+systemctl restart carbonio-preview.service
+systemctl restart carbonio-preview-sidecar.service
+

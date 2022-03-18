@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[flake8]
+max-line-length=90
+exclude =
+    tests
+    .git,
+    __pycache__,
+    ./venv/*,
+    *.ini,
+    *.log
+max-complexity = 10

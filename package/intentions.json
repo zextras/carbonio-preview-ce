@@ -1,0 +1,15 @@
+{
+  "Kind": "service-intentions",
+  "Name": "carbonio-preview",
+  "Sources":
+  [
+    {
+      "Name": "carbonio-files",
+      "Action": "allow"
+    },
+    {
+      "Name": "carbonio-chats",
+      "Action": "allow"
+    }
+  ]
+}

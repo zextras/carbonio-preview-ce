@@ -1,0 +1,11 @@
+{
+    "name": "carbonio-preview-ce",
+    "description": "Carbonio Preview sidecar",
+    "build_dir": "/tmp/",
+    "output": "artifacts",
+    "projects": [
+        {
+            "name": "package"
+        }
+    ]
+}

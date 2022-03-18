@@ -1,0 +1,128 @@
+targets=(
+   "centos"
+   "ubuntu"
+)
+pkgname="carbonio-preview-ce"
+pkgver="0.2.2"
+pkgrel="1"
+pkgdesc="Carbonio Preview"
+pkgdesclong=(
+   "Carbonio Preview"
+)
+maintainer="Zextras <packages@zextras.com>"
+url="https://www.zextras.com/"
+section="admin"
+priority="optional"
+arch="amd64"
+license=("spdx:AGPL-3.0-only")
+
+depends=(
+   "python3>=3.8"
+   "python3-pip"
+   "python3-uno"
+   "service-discover"
+   "pending-setups"
+   "carbonio-openjdk"
+   "libreoffice-java-common"
+   "libreoffice-draw-nogui"
+   "libreoffice-core-nogui"
+)
+sources=(
+   "carbonio-preview-ce.tar.gz"
+   "carbonio-preview.service"
+   "carbonio-preview-sidecar.service"
+   "carbonio-preview-start.sh"
+   "carbonio-preview.hcl"
+   "carbonio-preview.sh"
+   "carbonio-preview"
+   "config.ini"
+   "messages.ini"
+   "intentions.json"
+   "policies.json"
+   "service-protocol.json"
+)
+hashsums=(
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+   "skip"
+)
+
+package() {
+  cd "${srcdir}"
+  mkdir -pm 755 "${pkgdir}/usr/bin/carbonio/preview/"
+
+  tar -xf carbonio-preview-ce.tar.gz -C "${pkgdir}/usr/bin/carbonio/preview/"
+
+  install -Dm 755 carbonio-preview-start.sh "${pkgdir}/usr/bin/carbonio/preview/carbonio-preview-start.sh"
+  install -Dm 755 carbonio-preview "${pkgdir}/usr/bin/carbonio-preview"
+  install -Dm 644 carbonio-preview.service "${pkgdir}/lib/systemd/system/carbonio-preview.service"
+  install -Dm 644 carbonio-preview-sidecar.service "${pkgdir}/lib/systemd/system/carbonio-preview-sidecar.service"
+  install -Dm 644 carbonio-preview.hcl "${pkgdir}/etc/zextras/service-discover/carbonio-preview.hcl"
+  install -Dm 755 carbonio-preview.sh "${pkgdir}/etc/zextras/pending-setups.d/carbonio-preview.sh"
+
+  install -Dm 644 intentions.json "${pkgdir}/etc/carbonio/preview/service-discover/intentions.json"
+  install -Dm 644 policies.json "${pkgdir}/etc/carbonio/preview/service-discover/policies.json"
+  install -Dm 644 service-protocol.json "${pkgdir}/etc/carbonio/preview/service-discover/service-protocol.json"
+  install -Dm 644 config.ini "${pkgdir}/etc/carbonio/preview/config.ini"
+  install -Dm 644 messages.ini "${pkgdir}/etc/carbonio/preview/messages.ini"
+}
+
+postinst() {
+  getent group 'carbonio-preview' >/dev/null ||
+    groupadd -r 'carbonio-preview'
+  getent passwd 'carbonio-preview' >/dev/null ||
+
+    useradd -r -m -d '/home/carbonio-preview' -g 'carbonio-preview' -s /sbin/nologin 'carbonio-preview'
+
+  mkdir -pm 755 "/var/log/carbonio/preview/"
+  chown carbonio-preview:carbonio-preview "/var/log/carbonio/preview"
+
+  python3 -m pip install --upgrade pip	
+  pip3 install -r "/usr/bin/carbonio/preview/requirements.txt"
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    systemctl enable carbonio-preview.service >/dev/null 2>&1 || :
+    systemctl enable carbonio-preview-sidecar.service >/dev/null 2>&1 || :
+  fi
+
+  echo "======================================================"
+  echo "Carbonio Preview installed successfully!"
+  echo "You must run pending-setups to configure it correctly."
+  echo "======================================================"
+}
+
+prerm() {
+  if [ -d /run/systemd/system ]; then
+    systemctl --no-reload disable carbonio-preview.service >/dev/null 2>&1 || :
+    systemctl --no-reload disable carbonio-preview-sidecar.service >/dev/null 2>&1 || :
+    systemctl stop carbonio-preview.service >/dev/null 2>&1 || :
+    systemctl stop carbonio-preview-sidecar.service >/dev/null 2>&1 || :
+  fi
+}
+
+postrm() {
+  rm -Rf /usr/bin/carbonio-preview
+  rm -Rf /usr/bin/carbonio/preview/
+  rm -Rf /etc/carbonio/preview
+  rm -Rf /var/log/carbonio/preview/
+  rm -f /lib/systemd/system/carbonio-preview-sidecar.service
+  rm -f /lib/systemd/system/carbonio-preview.service
+  rm -f /etc/zextras/service-discover/carbonio-preview.hcl
+  rm -f /etc/zextras/pending-setups.d/carbonio-preview.sh
+  rm -f /etc/zextras/pending-setups.d/done/carbonio-preview.sh
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+  fi
+}
+
