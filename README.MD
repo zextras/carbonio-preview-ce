@@ -96,7 +96,7 @@ source venv/bin/activate
 
 * Install python libraries
 ```bash
-pip3 install -r "requirements.txt"
+pip3 install -r "dev_requirements.txt"
 ```
 
 ## Debug and run 🔎

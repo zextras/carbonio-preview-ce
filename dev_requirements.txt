@@ -3,16 +3,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.75.0
+-r requirements.txt
 
-uvicorn~=0.17.0
-gunicorn~=20.1.0
+black~=22.1.0
+flake8~=4.0.1
+bandit~=1.7.4
+pre-commit~=2.17.0
 
-requests~=2.27.1
-
-Pillow~=9.0.0
-pdfrw~=0.4
-
-unoserver==1.1
-
-python-multipart
+responses~=0.20.0
