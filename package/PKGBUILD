@@ -56,6 +56,11 @@ hashsums=(
    "skip"
 )
 
+backup=(
+    "/etc/zextras/service-discover/carbonio-preview.hcl"
+    "/etc/carbonio/preview/config.ini"
+)
+
 package() {
   cd "${srcdir}"
   mkdir -pm 755 "${pkgdir}/usr/bin/carbonio/preview/"
@@ -111,13 +116,7 @@ prerm() {
 }
 
 postrm() {
-  rm -Rf /usr/bin/carbonio-preview
-  rm -Rf /usr/bin/carbonio/preview/
   rm -Rf /etc/carbonio/preview
-  rm -Rf /var/log/carbonio/preview/
-  rm -f /lib/systemd/system/carbonio-preview-sidecar.service
-  rm -f /lib/systemd/system/carbonio-preview.service
-  rm -f /etc/zextras/service-discover/carbonio-preview.hcl
   rm -f /etc/zextras/pending-setups.d/carbonio-preview.sh
   rm -f /etc/zextras/pending-setups.d/done/carbonio-preview.sh
 
