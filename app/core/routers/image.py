@@ -9,12 +9,12 @@ from starlette.responses import Response
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import check_for_validation_errors
-from app.core.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
-from app.core.schemas.enums.image_quality_enum import ImageQualityEnum
-from app.core.schemas.enums.image_type_enum import ImageTypeEnum
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
-from app.core.schemas.preview_image_metadata import PreviewImageMetadata
-from app.core.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
+from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
+from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.preview_image_metadata import PreviewImageMetadata
+from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
 from app.core.services import image_service
 
 router = APIRouter(

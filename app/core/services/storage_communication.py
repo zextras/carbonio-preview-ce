@@ -10,7 +10,7 @@ import logging
 from requests.models import Response
 
 from app.core.resources.constants import storage
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 logger = logging.getLogger("Storage")
 

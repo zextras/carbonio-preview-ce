@@ -4,10 +4,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
+from typing import List
 
 from PIL import Image, ImageDraw, ImageOps, ImageFilter
 
 from app.core.resources.constants.image import constants as consts
+from app.core.resources.schemas.enums.vertical_crop_position_enum import (
+    VerticalCropPositionEnum,
+)
 
 
 def save_image_to_buffer(
@@ -84,7 +88,12 @@ def find_smaller_scaled_dimensions(
         return requested_x, int(requested_x * original_y / original_x)
 
 
-def _crop_image(img: Image.Image, requested_x: int, requested_y: int) -> Image.Image:
+def _crop_image(
+    img: Image.Image,
+    requested_x: int,
+    requested_y: int,
+    crop_position: VerticalCropPositionEnum,
+) -> Image.Image:
     """
     Crop the image to the requested width and height
     \f
@@ -94,21 +103,51 @@ def _crop_image(img: Image.Image, requested_x: int, requested_y: int) -> Image.I
     :return: Cropped image
     """
     width, height = img.size
-    # The coordinate system starts from upper left,
-    # so this will crop it from the center outwards
-    right = requested_x if width > requested_x else width
-    bottom = requested_y if height > requested_y else height
-    # width/2 finds the center, but we need to draw
-    # req_x/2 to the left and req_x/2 to the right
-    # // returns int and not float like /
-    left = width // 2 - requested_x // 2 if width > requested_x else 0
-    upper = height // 2 - requested_y // 2 if height > requested_y else 0
 
+    [upper, right, bottom, left] = _get_crop_coordinates(
+        requested_x, requested_y, height, width, crop_position
+    )
     img = img.crop((left, upper, left + right, upper + bottom))
     img = _add_borders_to_crop(
         img=img, requested_x=requested_x, requested_y=requested_y
     )
     return img
+
+
+def _get_crop_coordinates(
+    requested_x: int,
+    requested_y: int,
+    height: int,
+    width: int,
+    crop_position: VerticalCropPositionEnum,
+) -> List[int]:
+    """
+    Method that calculates the correct crop coordinates for the given image size and desired size
+    \f
+    :param requested_x: desired x
+    :param requested_y: desired y
+    :param height: original x
+    :param width: original y
+    :param crop_position: how to crop (from the top, from the bottom, from the center)
+    :returns: [upper, right, bottom, left]
+    """
+    if crop_position.value == VerticalCropPositionEnum.CENTER:
+        # The coordinate system starts from upper left,
+        # so this will crop it from the center outwards
+        right = requested_x if width > requested_x else width
+        bottom = requested_y if height > requested_y else height
+        # width/2 finds the center, but we need to draw req_x/2 to the left and req_x/2 to the right
+        # // returns int and not float like /
+        left = width // 2 - requested_x // 2 if width > requested_x else 0
+        upper = height // 2 - requested_y // 2 if height > requested_y else 0
+    elif crop_position.value == VerticalCropPositionEnum.TOP:
+        right = requested_x if width > requested_x else width
+        bottom = requested_y if height > requested_y else height
+        left = width // 2 - requested_x // 2 if width > requested_x else 0
+        upper = 0
+    else:
+        [upper, right, bottom, left] = [0, 0, 0, 0]
+    return [upper, right, bottom, left]
 
 
 def _add_borders_to_crop(
@@ -189,7 +228,7 @@ def _convert_requested_size_to_true_res_to_scale(
     # is not higher than double the original, because if you have
     # original_x = 70, minimum 80 and requested_x = 100 this can still be converted,
     # However, if requested_x=200 then it is more than double, and it will not
-    # be resized it leaving under the minimum. On the other hand, setting everything
+    # be resized, leaving it under the minimum. On the other hand, setting everything
     # under the minimum to the minimum will lose information if it can still be resized.
     if original_width < consts.MINIMUM_RESOLUTION and requested_x / 2 > original_width:
         requested_x = consts.MINIMUM_RESOLUTION
@@ -202,7 +241,10 @@ def _convert_requested_size_to_true_res_to_scale(
 
 
 def resize_with_crop_and_paddings(
-    content: io.BytesIO, requested_x: int, requested_y: int
+    content: io.BytesIO,
+    requested_x: int,
+    requested_y: int,
+    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
 ) -> Image.Image:
     """
     Resize the image and crop it if necessary
@@ -210,6 +252,7 @@ def resize_with_crop_and_paddings(
     :param content: content to resize
     :param requested_x: width to resize to
     :param requested_y: height to resize to
+    :param crop_position: where should the image zoom when cropped
     :return: PIL Image containing resized image to fit requested x and y
     """
     img: Image.Image = Image.open(content)
@@ -242,7 +285,12 @@ def resize_with_crop_and_paddings(
     img = img.resize((new_width, new_height))
 
     if to_crop:
-        img = _crop_image(img=img, requested_x=to_scale_x, requested_y=to_scale_y)
+        img = _crop_image(
+            img=img,
+            requested_x=to_scale_x,
+            requested_y=to_scale_y,
+            crop_position=crop_position,
+        )
     else:
         img = _add_borders_to_image(
             img=img,

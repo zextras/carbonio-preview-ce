@@ -10,10 +10,10 @@ from fastapi.responses import Response
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import check_for_storage_response_error
-from app.core.schemas.enums.image_type_enum import ImageTypeEnum
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
-from app.core.schemas.preview_image_metadata import PreviewImageMetadata
-from app.core.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.preview_image_metadata import PreviewImageMetadata
+from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
 from app.core.services import storage_communication
 
 from app.core.services.image_manipulation.jpeg_manipulation import (
@@ -135,6 +135,7 @@ def _select_thumbnail_module(
             _quality=img_metadata.quality,
             border=img_metadata.shape,
             content=content,
+            crop_position=img_metadata.crop_position,
         )
     elif _format == ImageTypeEnum.PNG:
         return png_thumbnail(
@@ -142,6 +143,7 @@ def _select_thumbnail_module(
             _y=img_metadata.height,
             border=img_metadata.shape,
             content=content,
+            crop_position=img_metadata.crop_position,
         )
     else:
         raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)

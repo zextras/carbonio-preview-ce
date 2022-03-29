@@ -7,8 +7,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.core.schemas.enums.image_quality_enum import ImageQualityEnum
-from app.core.schemas.enums.image_type_enum import ImageTypeEnum
+from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 
 
 class PreviewImageMetadata(BaseModel):
