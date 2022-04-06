@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
+import logging
 from typing import List
 
 from PIL import Image, ImageDraw, ImageOps, ImageFilter
@@ -13,12 +14,15 @@ from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def save_image_to_buffer(
     img: Image.Image,
     _format: str = "JPEG",
     _optimize: bool = False,
     _quality_value: int = 0,
+    log: logging = logger,
 ) -> io.BytesIO:
     """
     Saves the given image object to a buffer object,
@@ -28,16 +32,22 @@ def save_image_to_buffer(
     :param _format: format to save to
     :param _optimize: optimize the image or not (does not change quality)
     :param _quality_value: 0-95 quality value with 0 lowest 95 highest
+    :param log: log to use, if missing it will use default class logger
     :return: buffer pointing at the start of the file, containing raw image
     """
     buffer = io.BytesIO()
     img.save(buffer, format=_format, optimize=_optimize, quality=_quality_value)
     buffer.seek(0)
+    log.info("PIL Image successfully saved to buffer.")
     return buffer
 
 
 def find_greater_scaled_dimensions(
-    original_x: int, original_y: int, requested_x: int, requested_y: int
+    original_x: int,
+    original_y: int,
+    requested_x: int,
+    requested_y: int,
+    log: logging = logger,
 ) -> [int, int]:
     """
     Finds new width and new height that are >=
@@ -47,6 +57,7 @@ def find_greater_scaled_dimensions(
     :param original_y: Original height
     :param requested_x: x to scale at least to
     :param requested_y: y to scale at least to
+    :param log: log to use, if missing it will use default class logger
     :return: Tuple[width, height]
     """
     # if orig_x > requested_x and orig_y > requested_y:
@@ -55,17 +66,30 @@ def find_greater_scaled_dimensions(
     original_ratio = original_x / original_y
     new_ratio = requested_x / requested_y
     if new_ratio == original_ratio:
+        log.debug("Same ratio, return requested x and y")
         return requested_x, requested_y
     # If the new ratio is higher, it means that the x grew proportionally
     # more than the y
     if new_ratio > original_ratio:
+        log.debug(
+            "Requested width/height ratio is > than original image width/height ratio. "
+            "Setting requested width and scaling height accordingly keeping the ratio."
+        )
         return requested_x, int(requested_x * original_y / original_x)
     else:
+        log.debug(
+            "Requested width/height ratio is < than original image width/height ratio."
+            "Setting requested height and scaling width accordingly keeping the ratio."
+        )
         return int(requested_y * original_x / original_y), requested_y
 
 
 def find_smaller_scaled_dimensions(
-    original_x: int, original_y: int, requested_x: int, requested_y: int
+    original_x: int,
+    original_y: int,
+    requested_x: int,
+    requested_y: int,
+    log: logging = logger,
 ) -> [int, int]:
     """
     Finds new width and new height that are <=
@@ -75,6 +99,7 @@ def find_smaller_scaled_dimensions(
     :param original_y: Original height
     :param requested_x: x to scale at least to
     :param requested_y: y to scale at least to
+    :param log: log to use, if missing it will use default class logger
     :return: Tuple[width, height]
     """
     original_ratio = original_x / original_y
@@ -83,8 +108,16 @@ def find_smaller_scaled_dimensions(
     # If the new ratio is higher, it means that the x grew proportionally
     # more than the y
     if new_ratio > original_ratio:
+        log.debug(
+            "Requested width/height ratio is < than original image width/height ratio."
+            "Setting requested height and scaling width accordingly keeping the ratio."
+        )
         return int(requested_y * original_x / original_y), requested_y
     else:
+        log.debug(
+            "Requested width/height ratio is > than original image width/height ratio. "
+            "Setting requested width and scaling height accordingly keeping the ratio."
+        )
         return requested_x, int(requested_x * original_y / original_x)
 
 
@@ -122,7 +155,8 @@ def _get_crop_coordinates(
     crop_position: VerticalCropPositionEnum,
 ) -> List[int]:
     """
-    Method that calculates the correct crop coordinates for the given image size and desired size
+    Method that calculates the correct crop coordinates
+     for the given image size and desired size
     \f
     :param requested_x: desired x
     :param requested_y: desired y
@@ -136,7 +170,8 @@ def _get_crop_coordinates(
         # so this will crop it from the center outwards
         right = requested_x if width > requested_x else width
         bottom = requested_y if height > requested_y else height
-        # width/2 finds the center, but we need to draw req_x/2 to the left and req_x/2 to the right
+        # width/2 finds the center, but we need to draw
+        # req_x/2 to the left and req_x/2 to the right
         # // returns int and not float like /
         left = width // 2 - requested_x // 2 if width > requested_x else 0
         upper = height // 2 - requested_y // 2 if height > requested_y else 0
@@ -198,7 +233,11 @@ def _add_borders_to_image(img: Image.Image, requested_x: int, requested_y: int):
 
 
 def _convert_requested_size_to_true_res_to_scale(
-    requested_x: int, requested_y: int, original_width: int, original_height: int
+    requested_x: int,
+    requested_y: int,
+    original_width: int,
+    original_height: int,
+    log: logging = logger,
 ) -> [int, int]:
     """
     Converts requested size to original image size if requested size
@@ -210,19 +249,30 @@ def _convert_requested_size_to_true_res_to_scale(
     :param requested_y: height to convert to
     :param original_width: base width
     :param original_height: base height
+    :param log: log to use, if missing it will use default class logger
     :return: Tuple[converted_x, converted_y]
     """
     # check if it was requested to size 0, meaning to use the original size of the image.
     if requested_x == 0:
         requested_x = original_width
+        log.debug("Using original width of fetched image.")
     if requested_y == 0:
         requested_y = original_height
+        log.debug("Using original height of fetched image.")
 
     # Check if the requested size is higher than the minimum
     if requested_x < consts.MINIMUM_RESOLUTION:
         requested_x = consts.MINIMUM_RESOLUTION
+        log.debug(
+            f"requested width is too small."
+            f"Resizing width to the minimum resolution of {consts.MINIMUM_RESOLUTION}"
+        )
     if requested_y < consts.MINIMUM_RESOLUTION:
         requested_y = consts.MINIMUM_RESOLUTION
+        log.debug(
+            f"requested height is too small."
+            f"Resizing height to the minimum resolution of {consts.MINIMUM_RESOLUTION}"
+        )
 
     # check if the original image is lower than the minimum and the requested
     # is not higher than double the original, because if you have
@@ -232,11 +282,21 @@ def _convert_requested_size_to_true_res_to_scale(
     # under the minimum to the minimum will lose information if it can still be resized.
     if original_width < consts.MINIMUM_RESOLUTION and requested_x / 2 > original_width:
         requested_x = consts.MINIMUM_RESOLUTION
+        log.debug(
+            f"original image width is too small and cannot"
+            f" be resized to requested width without stretching."
+            f"Setting the requested width to {consts.MINIMUM_RESOLUTION}"
+        )
     if (
         original_height < consts.MINIMUM_RESOLUTION
         and requested_y / 2 > original_height
     ):
         requested_y = consts.MINIMUM_RESOLUTION
+        log.debug(
+            f"original image height is too small and "
+            f"cannot be resized to requested width without stretching."
+            f"Setting the requested height to {consts.MINIMUM_RESOLUTION}"
+        )
     return requested_x, requested_y
 
 

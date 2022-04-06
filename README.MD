@@ -26,12 +26,13 @@ Preview-ce backend service for Zextras Carbonio
 You can preview the following type of files:
 - **images(png/jpeg)**
 - **pdf**
+- **docx, doc, odp, odt, ppt, xls, xlsx**
 
 
 You will be able to:
 
-* **Preview files**.
-* **Generate thumbnails**.
+* **Get preview of files**.
+* **Generate thumbnail of files**.
 
 
 Preview will always try to output the file in its original format,

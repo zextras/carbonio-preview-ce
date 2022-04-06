@@ -16,7 +16,7 @@ from app.core.resources.constants.settings import (
     NUMBER_OF_WORKERS,
 )
 
-logger = logging.getLogger("Pdf")
+logger = logging.getLogger(__name__)
 
 
 def split_pdf(
@@ -35,6 +35,10 @@ def split_pdf(
     pdf_page_count: int = len(all_pages)
     if first_page_number == 1 and last_page_number == 0:
         content.seek(0)
+        logger.debug(
+            "Full document was requested,"
+            " no split operation will be executed. Returning whole pdf."
+        )
         return content
 
     start_page: int = first_page_number - 1  # metadata info starts
@@ -131,7 +135,10 @@ async def _convert_with_libre(
     :param log: logger to use
     """
     office_port = _get_libre_office_random_port()
-    log.info(f"Converting file to {output_extension} on port {office_port}")
+    log.info(
+        f"Converting file to {output_extension} "
+        f"using LibreOffice instance on port {office_port}"
+    )
     converter = UnoConverter(port=office_port)
     out_data = io.BytesIO(
         converter.convert(indata=content.read(), convert_to=output_extension)

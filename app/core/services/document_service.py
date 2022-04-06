@@ -84,7 +84,8 @@ async def retrieve_doc_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
 ) -> Response:
     """
-    Contact storage and retrieves the document with the nodeid requested and converts it to image.
+    Contact storage and retrieves the document
+     with the nodeid requested and converts it to image.
     If the nodeid is not found returns Generic error specifying the error code
     :param file_id: UUID of the file
     :param version: version of the file
