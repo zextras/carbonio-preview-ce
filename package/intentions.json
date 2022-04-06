@@ -10,6 +10,10 @@
     {
       "Name": "carbonio-chats",
       "Action": "allow"
+    },
+    {
+      "Name": "carbonio-mailbox",
+      "Action": "allow"
     }
   ]
 }
