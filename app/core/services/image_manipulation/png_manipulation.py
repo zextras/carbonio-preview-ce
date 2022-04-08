@@ -19,7 +19,13 @@ from app.core.services.image_manipulation.image_manipulation import (
 )
 
 
-def png_preview(_x: int, _y: int, _crop: bool, content: io.BytesIO) -> io.BytesIO:
+def png_preview(
+    _x: int,
+    _y: int,
+    _crop: bool,
+    content: io.BytesIO,
+    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
+) -> io.BytesIO:
     """
     Create PNG preview
     \f
@@ -27,11 +33,12 @@ def png_preview(_x: int, _y: int, _crop: bool, content: io.BytesIO) -> io.BytesI
     :param _x: width to resize the image to
     :param _y: height to resize the image to
     :param content: image raw bytes
+    :param crop_position: where should the image zoom when cropped
     :return: compressed image raw bytes
     """
     if _crop:
         img: Image.Image = resize_with_crop_and_paddings(
-            content=content, requested_x=_x, requested_y=_y
+            content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
         )
     else:
         img: Image.Image = resize_with_paddings(

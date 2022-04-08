@@ -167,6 +167,7 @@ def _select_preview_module(
             _quality=img_metadata.quality,
             content=content,
             _crop=img_metadata.crop,
+            crop_position=img_metadata.crop_position,
         )
     elif _format == ImageTypeEnum.PNG:
         return png_preview(
@@ -174,6 +175,7 @@ def _select_preview_module(
             _y=img_metadata.height,
             content=content,
             _crop=img_metadata.crop,
+            crop_position=img_metadata.crop_position,
         )
     else:
         raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
