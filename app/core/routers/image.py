@@ -13,6 +13,9 @@ from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderS
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.enums.vertical_crop_position_enum import (
+    VerticalCropPositionEnum,
+)
 from app.core.resources.schemas.preview_image_metadata import PreviewImageMetadata
 from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
 from app.core.services import image_service
@@ -66,7 +69,12 @@ async def get_thumbnail(
     :return: 400 ok if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {"quality": quality, "format": output_format, "shape": shape}
+    metadata_dict = {
+        "quality": quality,
+        "format": output_format,
+        "shape": shape,
+        "crop_position": VerticalCropPositionEnum.CENTER,
+    }
     validation_errors: Optional[Response] = check_for_validation_errors(
         id=id, area=area, version=version, metadata_dict=metadata_dict
     )
@@ -112,7 +120,12 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {"quality": quality, "format": output_format, "shape": shape}
+    metadata_dict = {
+        "quality": quality,
+        "format": output_format,
+        "shape": shape,
+        "crop_position": VerticalCropPositionEnum.CENTER,
+    }
     validation_errors: Optional[Response] = check_for_validation_errors(
         area=area,
         metadata_dict=metadata_dict,
@@ -163,7 +176,12 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {"quality": quality, "format": output_format, "crop": crop}
+    metadata_dict = {
+        "quality": quality,
+        "format": output_format,
+        "crop": crop,
+        "crop_position": VerticalCropPositionEnum.CENTER,
+    }
     validation_errors: Optional[Response] = check_for_validation_errors(
         area=area,
         metadata_dict=metadata_dict,
@@ -227,7 +245,12 @@ async def get_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {"quality": quality, "format": output_format, "crop": crop}
+    metadata_dict = {
+        "quality": quality,
+        "format": output_format,
+        "crop": crop,
+        "crop_position": VerticalCropPositionEnum.CENTER,
+    }
     validation_errors: Optional[Response] = check_for_validation_errors(
         id=id, area=area, version=version, metadata_dict=metadata_dict
     )

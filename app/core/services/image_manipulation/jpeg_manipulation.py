@@ -21,7 +21,12 @@ from app.core.services.image_manipulation.image_manipulation import (
 
 
 def jpeg_preview(
-    _x: int, _y: int, _quality: ImageQualityEnum, _crop: bool, content: io.BytesIO
+    _x: int,
+    _y: int,
+    _quality: ImageQualityEnum,
+    _crop: bool,
+    content: io.BytesIO,
+    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
 ) -> io.BytesIO:
     """
     Create JPEG preview with the given quality
@@ -31,12 +36,13 @@ def jpeg_preview(
     :param _y: height to resize the image to
     :param _quality: quality to convert the image to
     :param content: image raw bytes
+    :param crop_position: the position from which the image will be cropped
     :return: compressed image raw bytes
     """
     _quality_value = _quality.get_jpeg_int_quality()
     if _crop:
         img: Image.Image = resize_with_crop_and_paddings(
-            content=content, requested_x=_x, requested_y=_y
+            content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
         )
     else:
         img: Image.Image = resize_with_paddings(
