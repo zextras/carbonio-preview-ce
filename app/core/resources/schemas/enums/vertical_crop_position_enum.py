@@ -2,15 +2,14 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-
 from enum import Enum
 
 
-class StorageServiceEnum(str, Enum):
+class VerticalCropPositionEnum(str, Enum):
     """
-    Class representing all the storage type accepted values
+    Class representing all the vertical crop positions accepted values
     """
 
-    STORAGES = "storages"
+    TOP = "top"
 
-    MAILBOX = "mailbox"
+    CENTER = "center"

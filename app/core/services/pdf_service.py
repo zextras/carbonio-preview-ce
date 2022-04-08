@@ -9,7 +9,7 @@ from fastapi import UploadFile
 from starlette.responses import Response
 
 from app.core.resources.data_validator import check_for_storage_response_error
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 from app.core.services.pdf_manipulation import pdf_manipulation
 from app.core.services.storage_communication import retrieve_data
 

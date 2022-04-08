@@ -4,10 +4,8 @@
 
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
-from starlette import status
-from app.core.resources.constants import message
 from app.core.routers import image
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 
 class TestController(IsolatedAsyncioTestCase):

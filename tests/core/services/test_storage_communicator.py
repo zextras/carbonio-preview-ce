@@ -13,7 +13,7 @@ from requests import Response
 
 import app.core.services.storage_communication as st_com
 from app.core.resources.constants import storage
-from app.core.schemas.enums.service_type_enum import ServiceTypeEnum
+from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 
 class TestStorageCommunicator(IsolatedAsyncioTestCase):

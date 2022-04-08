@@ -5,6 +5,9 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from app.core.resources.schemas.enums.vertical_crop_position_enum import (
+    VerticalCropPositionEnum,
+)
 from app.core.services.image_manipulation import image_manipulation
 
 
@@ -94,12 +97,19 @@ class TestImageManipulation(unittest.TestCase):
         req_x, req_y = 300, 400
         img_mock = MagicMock()
         img_mock.size = [img_width, img_height]
-        image_manipulation._crop_image(
-            img=img_mock, requested_x=req_x, requested_y=req_y
-        )
-        self.assertEqual(0, img_mock.call_count)
-        self.assertEqual(1, img_mock.crop.call_count)
-        self.assertEqual(1, mock_borders.call_count)
+        with patch(
+            "app.core.services.image_manipulation.image_manipulation._get_crop_coordinates"
+        ) as coordinates_mock:
+            coordinates_mock.return_value = [0, 0, 0, 0]
+            image_manipulation._crop_image(
+                img=img_mock,
+                requested_x=req_x,
+                requested_y=req_y,
+                crop_position=VerticalCropPositionEnum.CENTER,
+            )
+            self.assertEqual(0, img_mock.call_count)
+            self.assertEqual(1, img_mock.crop.call_count)
+            self.assertEqual(1, mock_borders.call_count)
 
     @patch(
         "app.core.services.image_manipulation"
@@ -445,3 +455,55 @@ class TestImageManipulation(unittest.TestCase):
         )
         self.assertEqual(80, to_scale_x)
         self.assertEqual(80, to_scale_y)
+
+    def test_get_crop_coordinates_top_fitting(self):
+        result = image_manipulation._get_crop_coordinates(
+            requested_x=10,
+            requested_y=10,
+            height=10,
+            width=10,
+            crop_position=VerticalCropPositionEnum.TOP,
+        )
+        [desired_upper, desired_right, desired_bottom, desired_left] = [0, 10, 10, 0]
+        self.assertEqual(
+            [desired_upper, desired_right, desired_bottom, desired_left], result
+        )
+
+    def test_get_crop_coordinates_top_not_enough_space(self):
+        result = image_manipulation._get_crop_coordinates(
+            requested_x=5,
+            requested_y=5,
+            height=10,
+            width=10,
+            crop_position=VerticalCropPositionEnum.TOP,
+        )
+        [desired_upper, desired_right, desired_bottom, desired_left] = [0, 5, 5, 3]
+        self.assertEqual(
+            [desired_upper, desired_right, desired_bottom, desired_left], result
+        )
+
+    def test_get_crop_coordinates_center_fitting(self):
+        result = image_manipulation._get_crop_coordinates(
+            requested_x=10,
+            requested_y=10,
+            height=10,
+            width=10,
+            crop_position=VerticalCropPositionEnum.CENTER,
+        )
+        [desired_upper, desired_right, desired_bottom, desired_left] = [0, 10, 10, 0]
+        self.assertEqual(
+            [desired_upper, desired_right, desired_bottom, desired_left], result
+        )
+
+    def test_get_crop_coordinates_center_not_enough_space(self):
+        result = image_manipulation._get_crop_coordinates(
+            requested_x=5,
+            requested_y=5,
+            height=10,
+            width=10,
+            crop_position=VerticalCropPositionEnum.CENTER,
+        )
+        [desired_upper, desired_right, desired_bottom, desired_left] = [3, 5, 5, 3]
+        self.assertEqual(
+            [desired_upper, desired_right, desired_bottom, desired_left], result
+        )
