@@ -12,6 +12,7 @@ from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
     LIBRE_OFFICE_FIRST_PORT,
 )
+from app.core.resources.constants.service import IP, PORT, LOG_ACCESS_FORMAT
 
 #
 # Server socket
@@ -75,11 +76,10 @@ from app.core.resources.constants.settings import (
 #       A positive integer. Generally set in the 1-5 seconds range.
 #
 
-
-bind = "127.78.0.6:10000"
+bind = f"{IP}:{PORT}"
 backlog = 2048
 
-workers = 4
+workers = NUMBER_OF_WORKERS
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
 timeout = 30
@@ -158,7 +158,7 @@ tmp_upload_dir = None
 errorlog = "-"
 loglevel = "info"
 accesslog = "-"
-access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
+access_log_format = LOG_ACCESS_FORMAT
 
 #
 # Process naming

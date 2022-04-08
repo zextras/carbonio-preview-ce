@@ -10,18 +10,19 @@ from app.core.resources.constants import service
 
 import uvicorn
 
-from app.core.routers import image, health, pdf
+from app.core.routers import image, health, pdf, document
 
 app = FastAPI(
     title=service.NAME,
-    version="0.2.3",
+    version="0.2.4",
     description=service.DESCRIPTION,
     on_startup=logging_initialization.initialize_logging(service_name=service.NAME),
 )
 
 app.include_router(image.router)
-app.include_router(health.router)
 app.include_router(pdf.router)
+app.include_router(document.router)
+app.include_router(health.router)
 
 
 if __name__ == "__main__":

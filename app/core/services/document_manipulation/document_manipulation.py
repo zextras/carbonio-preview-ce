@@ -64,37 +64,32 @@ async def convert_to_pdf(
     :param last_page_number: last page to convert
     :param log: logger to use
     """
-    return await convert_file_to(
-        content=content,
-        output_extension="pdf",
+
+    return split_pdf(
+        content=await convert_file_to(
+            content=content,
+            output_extension="pdf",
+            log=log,
+        ),
         first_page_number=first_page_number,
         last_page_number=last_page_number,
-        log=log,
     )
 
 
 async def convert_file_to(
     content: io.BytesIO,
     output_extension: str,
-    first_page_number: int = 1,
-    last_page_number: int = 0,
     log: logging = logger,
 ) -> io.BytesIO:
     """
     Converts any LibreOffice supported format to any LibreOffice supported format
     \f
     :param content: file to convert
-    :param first_page_number: first page to convert
-    :param last_page_number: last page to convert
     :param output_extension: output file, should be a format supported by LibreOffice
     :param log: logger to use
     """
-    return split_pdf(
-        content=await _convert_with_libre(
-            content=content, output_extension=output_extension, log=log
-        ),
-        first_page_number=first_page_number,
-        last_page_number=last_page_number,
+    return await _convert_with_libre(
+        content=content, output_extension=output_extension, log=log
     )
 
 
