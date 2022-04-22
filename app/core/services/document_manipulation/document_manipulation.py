@@ -35,10 +35,6 @@ def split_pdf(
     pdf_page_count: int = len(all_pages)
     if first_page_number == 1 and last_page_number == 0:
         content.seek(0)
-        logger.debug(
-            "Full document was requested,"
-            " no split operation will be executed. Returning whole pdf."
-        )
         return content
 
     start_page: int = first_page_number - 1  # metadata info starts
