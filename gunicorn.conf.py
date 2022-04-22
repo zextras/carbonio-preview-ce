@@ -3,15 +3,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
-from subprocess import Popen  # nosec
 
-from unoserver.server import UnoServer
-
-from app.core.resources.constants.settings import (
-    NUMBER_OF_WORKERS,
-    LIBRE_OFFICE_PATH,
-    LIBRE_OFFICE_FIRST_PORT,
-)
+from app.core.resources import libre_office_handler
+from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
 
@@ -243,15 +237,9 @@ proc_name = None
 #
 
 
-server_list = []
-
-
-def post_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-
-def pre_fork(server, worker):
-    pass
+def child_exit(server, worker):
+    server.log.info("Child of master worker exited, restarting worker.")
+    libre_office_handler.reboot_libre_instance()
 
 
 def pre_exec(server):
@@ -272,14 +260,14 @@ def worker_abort(worker):
 
 def on_starting(server):
     server.log.info("Starting server and libreoffice daemons")
-    for curr_server_port in range(0, NUMBER_OF_WORKERS):
-        new_port = LIBRE_OFFICE_FIRST_PORT + curr_server_port
-        server = UnoServer(port=str(new_port))
-        server_list.append(server.start(daemon=True, executable=LIBRE_OFFICE_PATH))
+    libre_office_handler.boot_libre_instance()
+
+
+def on_reload(server):
+    server.log.info("Restarting server and libreoffice daemons")
+    libre_office_handler.reboot_libre_instance()
 
 
 def on_shutdown(server):
     server.log.info("Closing server and terminating libreoffice daemons")
-    for server in server_list:
-        server: Popen
-        server.terminate()
+    libre_office_handler.shutdown_libre_instance()
