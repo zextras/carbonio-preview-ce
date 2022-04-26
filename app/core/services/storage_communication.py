@@ -54,5 +54,5 @@ async def retrieve_data(
     except Exception as crit_err:
         log.critical(f"Critical Error: {crit_err}")
     finally:
-        log.info(f"{req}, {response}")
+        log.info(f"[Requested: {req}, Response: {response}]")
         return response

@@ -16,7 +16,7 @@ from app.core.resources.constants.settings import (
     NUMBER_OF_WORKERS,
 )
 
-logger = logging.getLogger("Pdf")
+logger = logging.getLogger(__name__)
 
 
 def split_pdf(
@@ -131,7 +131,10 @@ async def _convert_with_libre(
     :param log: logger to use
     """
     office_port = _get_libre_office_random_port()
-    log.info(f"Converting file to {output_extension} on port {office_port}")
+    log.info(
+        f"Converting file to {output_extension} "
+        f"using LibreOffice instance on port {office_port}"
+    )
     converter = UnoConverter(port=office_port)
     out_data = io.BytesIO(
         converter.convert(indata=content.read(), convert_to=output_extension)

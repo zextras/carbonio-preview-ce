@@ -47,10 +47,3 @@ PDF_NAME = read_config(section=service_section_name, value="pdf_name")
 # DOCUMENT
 
 DOC_NAME = read_config(section=service_section_name, value="document_name")
-
-# LOG
-LOG_FORMAT = read_config(section="log", value="format", raw=True)
-LOG_PATH = read_config(section="log", value="path")
-
-# GUNICORN LOG
-LOG_ACCESS_FORMAT = read_config(section="log", value="access_format", raw=True)

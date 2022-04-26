@@ -25,6 +25,7 @@ async def retrieve_doc_and_create_preview(
     Contact storage and retrieves the image with the nodeid requested
     and trims it to the number of pages requested.
     If the nodeid is not found returns Generic error specifying the error code
+    \f
     :param file_id: UUID of the file
     :param version: version of the file
     :param first_page_number: first page to return
@@ -58,6 +59,7 @@ async def create_preview_from_raw(
 ) -> io.BytesIO:
     """
     Create pdf preview of a given file
+    \f
     :param file: uploaded file to convert
     :param first_page_number: the first page of the pdf to return
     :param last_page_number: the last page of the pdf to return
@@ -72,6 +74,7 @@ async def create_preview_from_raw(
 async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesIO:
     """
     Create image thumbnail of a given file
+    \f
     :param file: uploaded file to convert
     :param output_format: the image type that the thumbnail will have
     """
@@ -84,8 +87,10 @@ async def retrieve_doc_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
 ) -> Response:
     """
-    Contact storage and retrieves the document with the nodeid requested and converts it to image.
+    Contact storage and retrieves the document
+     with the nodeid requested and converts it to image.
     If the nodeid is not found returns Generic error specifying the error code
+    \f
     :param file_id: UUID of the file
     :param version: version of the file
     :param output_format: format

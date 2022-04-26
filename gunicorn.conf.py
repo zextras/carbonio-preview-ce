@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-
+import os
 from subprocess import Popen  # nosec
 
 from unoserver.server import UnoServer
@@ -12,7 +12,8 @@ from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
     LIBRE_OFFICE_FIRST_PORT,
 )
-from app.core.resources.constants.service import IP, PORT, LOG_ACCESS_FORMAT
+from app.core.resources.constants import service
+from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
 
 #
 # Server socket
@@ -76,7 +77,7 @@ from app.core.resources.constants.service import IP, PORT, LOG_ACCESS_FORMAT
 #       A positive integer. Generally set in the 1-5 seconds range.
 #
 
-bind = f"{IP}:{PORT}"
+bind = f"{service.IP}:{service.PORT}"
 backlog = 2048
 
 workers = NUMBER_OF_WORKERS
@@ -155,10 +156,54 @@ tmp_upload_dir = None
 #       A string of "debug", "info", "warning", "error", "critical"
 #
 
-errorlog = "-"
-loglevel = "info"
-accesslog = "-"
-access_log_format = LOG_ACCESS_FORMAT
+log_path = f"{os.path.join(LOG_PATH, service.NAME)}.log"
+capture_output = False
+
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": True,
+    "root": {
+        "handlers": ["console_standard", "file_standard"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "gunicorn.access": {
+            "level": LOG_LEVEL,
+            "handlers": ["console_gunicorn", "file_gunicorn"],
+            "propagate": False,
+            "qualname": "gunicorn.access",
+        },
+    },
+    "handlers": {
+        "console_standard": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "syslog",
+        },
+        "file_standard": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": log_path,
+            "formatter": "syslog",
+            "encoding": "utf8",
+        },
+        "console_gunicorn": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+            "formatter": "syslog",
+        },
+        "file_gunicorn": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": log_path,
+            "formatter": "syslog",
+            "encoding": "utf8",
+        },
+    },
+    "formatters": {
+        "syslog": {"format": LOG_FORMAT},
+    },
+}
+
+logconfig_dict = LOGGING_CONFIG
 
 #
 # Process naming

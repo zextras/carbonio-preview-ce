@@ -5,7 +5,6 @@
 
 from fastapi import FastAPI
 
-from app.core.resources import logging_initialization
 from app.core.resources.constants import service
 
 import uvicorn
@@ -14,9 +13,8 @@ from app.core.routers import image, health, pdf, document
 
 app = FastAPI(
     title=service.NAME,
-    version="0.2.4",
+    version="0.2.5",
     description=service.DESCRIPTION,
-    on_startup=logging_initialization.initialize_logging(service_name=service.NAME),
 )
 
 app.include_router(image.router)
