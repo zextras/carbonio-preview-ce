@@ -151,10 +151,6 @@ tmp_upload_dir = None
 #
 
 log_path = f"{os.path.join(LOG_PATH, service.NAME)}.log"
-# errorlog = logging_initialization.FULL_LOG_PATH
-# loglevel = LOG_LEVEL
-# accesslog = logging_initialization.FULL_LOG_PATH
-# access_log_format = LOG_ACCESS_FORMAT
 capture_output = False
 
 LOGGING_CONFIG = {

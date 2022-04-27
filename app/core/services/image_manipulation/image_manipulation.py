@@ -70,6 +70,10 @@ def find_greater_scaled_dimensions(
         return requested_x, requested_y
     # If the new ratio is higher, it means that the x grew proportionally
     # more than the y
+    log.debug(
+        f"Requested size is {requested_x} width/{requested_y} height, with a ratio of {new_ratio}"
+        f"Original image size is {original_x} width/{original_y} height, with a ratio of {original_ratio}"
+    )
     if new_ratio > original_ratio:
         log.debug(
             "Requested width/height ratio is > than original image width/height ratio. "
@@ -107,6 +111,10 @@ def find_smaller_scaled_dimensions(
     # images won't be stretched more than double.
     # If the new ratio is higher, it means that the x grew proportionally
     # more than the y
+    log.debug(
+        f"Requested size is {requested_x} width/{requested_y} height, with a ratio of {new_ratio}"
+        f"Original image size is {original_x} width/{original_y} height, with a ratio of {original_ratio}"
+    )
     if new_ratio > original_ratio:
         log.debug(
             "Requested width/height ratio is < than original image width/height ratio."
