@@ -85,6 +85,33 @@ pipeline {
                 }
             }
         }
+
+        stage('Upload To Develop') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                unstash 'artifacts-deb'
+                script {
+                    def server = Artifactory.server 'zextras-artifactory'
+                    def buildInfo
+                    def uploadSpec
+
+                    buildInfo = Artifactory.newBuildInfo()
+                    uploadSpec = '''{
+                        "files": [
+                            {
+                                "pattern": "artifacts/*.deb",
+                                "target": "ubuntu-devel/pool/",
+                                "props": "deb.distribution=focal;deb.component=main;deb.architecture=amd64"
+                            }
+                        ]
+                    }'''
+                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
+                }
+            }
+        }
+
         stage('Upload To Playground') {
             when {
                 anyOf {
@@ -94,7 +121,6 @@ pipeline {
             }
             steps {
                 unstash 'artifacts-deb'
-                unstash 'artifacts-rpm'
                 script {
                     def server = Artifactory.server 'zextras-artifactory'
                     def buildInfo
@@ -107,11 +133,6 @@ pipeline {
                                 "pattern": "artifacts/carbonio-preview-ce*.deb",
                                 "target": "ubuntu-playground/pool/",
                                 "props": "deb.distribution=bionic;deb.distribution=focal;deb.component=main;deb.architecture=amd64"
-                            },
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).rpm",
-                                "target": "centos8-playground/zextras/{1}/{1}-{2}.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras"
                             }
                         ]
                     }'''

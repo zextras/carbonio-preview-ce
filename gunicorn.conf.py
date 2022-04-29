@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
 
-from app.core.resources import libre_office_handler
 from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
@@ -212,7 +211,7 @@ logconfig_dict = LOGGING_CONFIG
 #       A string or None to choose a default of something like 'gunicorn'.
 #
 
-proc_name = None
+proc_name = "carbonio-preview-manager"
 
 #
 # Server hooks
@@ -234,8 +233,7 @@ proc_name = None
 
 
 def child_exit(server, worker):
-    server.log.info("Child of master worker exited, restarting worker.")
-    libre_office_handler.reboot_libre_instance()
+    server.log.info(f"Worker killed: {worker.pid}")
 
 
 def pre_exec(server):
@@ -246,24 +244,17 @@ def when_ready(server):
     server.log.info("Server is ready. Spawning workers")
 
 
-def worker_int(worker):
-    worker.log.info("worker received INT or QUIT signal")
-
-
 def worker_abort(worker):
     worker.log.info("worker received SIGABRT signal")
 
 
 def on_starting(server):
     server.log.info("Starting server and libreoffice daemons")
-    libre_office_handler.boot_libre_instance()
 
 
 def on_reload(server):
     server.log.info("Restarting server and libreoffice daemons")
-    libre_office_handler.reboot_libre_instance()
 
 
 def on_shutdown(server):
     server.log.info("Closing server and terminating libreoffice daemons")
-    libre_office_handler.shutdown_libre_instance()

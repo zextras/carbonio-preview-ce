@@ -5,6 +5,7 @@
 
 from fastapi import FastAPI
 
+from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
 
 import uvicorn
@@ -16,6 +17,8 @@ app = FastAPI(
     version="0.2.6",
     description=service.DESCRIPTION,
 )
+
+libre_office_handler.boot_libre_instance(service.IP)
 
 app.include_router(image.router)
 app.include_router(pdf.router)

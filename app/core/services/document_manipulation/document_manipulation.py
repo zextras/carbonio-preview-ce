@@ -10,6 +10,7 @@ from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
 
+from app.core.resources import libre_office_handler
 from app.core.resources.constants.settings import LIBRE_OFFICE_FIRST_PORT
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,9 @@ async def _convert_with_libre(
         f"Converting file to {output_extension} "
         f"using LibreOffice instance on port {office_port}"
     )
-    converter = UnoConverter(interface="127.0.0.1", port=office_port)
+    converter = UnoConverter(
+        interface="127.78.0.6", port=libre_office_handler.libre_port
+    )
     out_data = io.BytesIO(
         converter.convert(indata=content.read(), convert_to=output_extension)
     )
