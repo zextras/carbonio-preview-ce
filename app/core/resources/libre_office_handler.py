@@ -94,7 +94,7 @@ def is_libre_instance_up() -> bool:
     """
     if type(UnoConverter) != ImportError:
         try:
-            UnoConverter(interface="127.78.0.6", port=libre_port)
+            UnoConverter(interface=IP, port=libre_port)
             return True
         except Exception as e:
             logger.warning(
