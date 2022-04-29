@@ -75,16 +75,8 @@ def find_greater_scaled_dimensions(
         f"Original image size is {original_x} width/{original_y} height, with a ratio of {original_ratio}"
     )
     if new_ratio > original_ratio:
-        log.debug(
-            "Requested width/height ratio is > than original image width/height ratio. "
-            "Setting requested width and scaling height accordingly keeping the ratio."
-        )
         return requested_x, int(requested_x * original_y / original_x)
     else:
-        log.debug(
-            "Requested width/height ratio is < than original image width/height ratio."
-            "Setting requested height and scaling width accordingly keeping the ratio."
-        )
         return int(requested_y * original_x / original_y), requested_y
 
 
@@ -116,16 +108,8 @@ def find_smaller_scaled_dimensions(
         f"Original image size is {original_x} width/{original_y} height, with a ratio of {original_ratio}"
     )
     if new_ratio > original_ratio:
-        log.debug(
-            "Requested width/height ratio is < than original image width/height ratio."
-            "Setting requested height and scaling width accordingly keeping the ratio."
-        )
         return int(requested_y * original_x / original_y), requested_y
     else:
-        log.debug(
-            "Requested width/height ratio is > than original image width/height ratio. "
-            "Setting requested width and scaling height accordingly keeping the ratio."
-        )
         return requested_x, int(requested_x * original_y / original_x)
 
 

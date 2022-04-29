@@ -9,8 +9,6 @@ NUMBER_OF_WORKERS = int(read_config(section="libreoffice", value="workers"))
 
 LIBRE_OFFICE_PATH = read_config(section="libreoffice", value="path")
 
-LIBRE_OFFICE_FIRST_PORT = int(read_config(section="libreoffice", value="first_port"))
-
 # LOG
 log_section = "log"
 LOG_FORMAT = read_config(section=log_section, value="format", raw=True)
