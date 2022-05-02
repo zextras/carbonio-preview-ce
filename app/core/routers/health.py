@@ -10,16 +10,8 @@ import requests
 from starlette import status
 from starlette.responses import Response
 
-try:
-    from unoserver.converter import UnoConverter
-except ImportError:
-    UnoConverter = ImportError("Couldn't import UnoConverter")
-
 from app.core.resources.constants import service, storage, message
-from app.core.resources.constants.settings import (
-    NUMBER_OF_WORKERS,
-    LIBRE_OFFICE_FIRST_PORT,
-)
+from app.core.resources.libre_office_handler import is_libre_instance_up
 
 router = APIRouter(
     prefix=f"/{service.HEALTH_NAME}",
@@ -29,7 +21,7 @@ router = APIRouter(
         429: {"description": message.LIBRE_OFFICE_NOT_RUNNING},
     },
 )
-logger = logging.getLogger("Health")
+logger = logging.getLogger(__name__)
 
 
 @router.get("/")
@@ -42,7 +34,7 @@ async def health() -> dict:
     """
 
     req = f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
-    is_libre_up: bool = _is_unoserver_up()
+    is_libre_up: bool = is_libre_instance_up()
     try:
         response = requests.get(req, timeout=5)
         response.raise_for_status()
@@ -78,7 +70,7 @@ async def health_ready() -> Response:
     \f
     :return: returns 200 if service and libreoffice are running
     """
-    if _is_unoserver_up():
+    if is_libre_instance_up():
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)
     else:
@@ -98,23 +90,3 @@ async def health_live() -> Response:
     """
     logger.debug("Health live with status code 200")
     return Response(status_code=status.HTTP_200_OK)
-
-
-def _is_unoserver_up() -> bool:
-    """
-    Private method that checks if all the instances of unoserver are up and running
-    :return: True if all the instance are working
-    """
-    if type(UnoConverter) != ImportError:
-        try:
-            for curr_server_port in range(0, NUMBER_OF_WORKERS):
-                new_port = LIBRE_OFFICE_FIRST_PORT + curr_server_port
-                UnoConverter(port=str(new_port))
-            return True
-        except Exception as e:
-            logger.warning(
-                f"Encountered the following exception"
-                f" while trying to connect to unoserver: {e}"
-            )
-
-    return False

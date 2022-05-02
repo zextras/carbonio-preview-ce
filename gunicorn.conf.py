@@ -3,15 +3,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
-from subprocess import Popen  # nosec
 
-from unoserver.server import UnoServer
-
-from app.core.resources.constants.settings import (
-    NUMBER_OF_WORKERS,
-    LIBRE_OFFICE_PATH,
-    LIBRE_OFFICE_FIRST_PORT,
-)
+from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
 
@@ -218,7 +211,7 @@ logconfig_dict = LOGGING_CONFIG
 #       A string or None to choose a default of something like 'gunicorn'.
 #
 
-proc_name = None
+proc_name = "carbonio-preview-manager"
 
 #
 # Server hooks
@@ -239,15 +232,8 @@ proc_name = None
 #
 
 
-server_list = []
-
-
-def post_fork(server, worker):
-    server.log.info("Worker spawned (pid: %s)", worker.pid)
-
-
-def pre_fork(server, worker):
-    pass
+def child_exit(server, worker):
+    server.log.info(f"Worker killed: {worker.pid}")
 
 
 def pre_exec(server):
@@ -258,24 +244,17 @@ def when_ready(server):
     server.log.info("Server is ready. Spawning workers")
 
 
-def worker_int(worker):
-    worker.log.info("worker received INT or QUIT signal")
-
-
 def worker_abort(worker):
     worker.log.info("worker received SIGABRT signal")
 
 
 def on_starting(server):
     server.log.info("Starting server and libreoffice daemons")
-    for curr_server_port in range(0, NUMBER_OF_WORKERS):
-        new_port = LIBRE_OFFICE_FIRST_PORT + curr_server_port
-        server = UnoServer(port=str(new_port))
-        server_list.append(server.start(daemon=True, executable=LIBRE_OFFICE_PATH))
+
+
+def on_reload(server):
+    server.log.info("Restarting server and libreoffice daemons")
 
 
 def on_shutdown(server):
     server.log.info("Closing server and terminating libreoffice daemons")
-    for server in server_list:
-        server: Popen
-        server.terminate()

@@ -5,16 +5,13 @@
 
 import io
 import logging
-from random import randrange
 from typing import IO
 from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
 
-from app.core.resources.constants.settings import (
-    LIBRE_OFFICE_FIRST_PORT,
-    NUMBER_OF_WORKERS,
-)
+from app.core.resources import libre_office_handler
+from app.core.resources.constants import service
 
 logger = logging.getLogger(__name__)
 
@@ -130,22 +127,14 @@ async def _convert_with_libre(
     :param output_extension: desired file output type
     :param log: logger to use
     """
-    office_port = _get_libre_office_random_port()
+    office_port = libre_office_handler.libre_port
     log.info(
         f"Converting file to {output_extension} "
         f"using LibreOffice instance on port {office_port}"
     )
-    converter = UnoConverter(port=office_port)
+    converter = UnoConverter(interface=service.IP, port=office_port)
     out_data = io.BytesIO(
         converter.convert(indata=content.read(), convert_to=output_extension)
     )
     out_data.seek(0)
     return out_data
-
-
-def _get_libre_office_random_port() -> str:
-    """
-    Returns random port to use for LibreOffice
-    """
-    # This random is not used in any security context.
-    return str(LIBRE_OFFICE_FIRST_PORT + randrange(NUMBER_OF_WORKERS))  # nosec
