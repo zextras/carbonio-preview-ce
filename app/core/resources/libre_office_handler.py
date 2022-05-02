@@ -24,7 +24,7 @@ from app.core.resources.constants.settings import (
 
 libre_instance: Popen = None
 logger = logging.getLogger(__name__)
-libre_port = "100000"
+libre_port = "49152"
 
 
 def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
@@ -40,7 +40,9 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
     sleep = 0
     while True:  # in Python do while are represented as while true: if x break
         sleep += 1
-        libre_port = str(random.randint(49152, 62000))
+        libre_port = str(
+            random.randint(49152, 62000)  # nosec
+        )  # This random is not used for security or cryptographic purposes
         server = UnoServer(interface=interface, port=libre_port)
         libre_instance = server.start(daemon=True, executable=LIBRE_OFFICE_PATH)
         time.sleep(2 + sleep)
@@ -112,7 +114,8 @@ def _kill_proc_tree(pid):
     """
     try:
         logger.debug(
-            f"Start cleanup (kill) of sons and grandchildren of process with pid: {pid}"
+            f"Start cleanup (kill) of children and"
+            f" grandchildren of process with pid: {pid}"
         )
         parent = psutil.Process(pid)
         children = parent.children(recursive=True)
@@ -129,5 +132,5 @@ def _kill_proc_tree(pid):
     except Exception as e:
         logger.warning(
             f"Encountered an exception while cleaning up"
-            f" sons and grandchildren of process with pid: {pid}, Exception: {e}"
+            f" children and grandchildren of process with pid: {pid}, Exception: {e}"
         )
