@@ -14,5 +14,6 @@ Pillow~=9.0.0
 pdfrw~=0.4
 
 unoserver==1.1
+psutil==5.9.0
 
 python-multipart
