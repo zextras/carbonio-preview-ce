@@ -3,7 +3,7 @@ targets=(
    "ubuntu"
 )
 pkgname="carbonio-preview-ce"
-pkgver="0.2.6"
+pkgver="0.2.7"
 pkgrel="1"
 pkgdesc="Carbonio Preview"
 pkgdesclong=(
@@ -24,11 +24,11 @@ depends=(
    "pending-setups"
    "carbonio-openjdk"
    "libreoffice-java-common"
-   "libreoffice-core-nogui"
+   "libreoffice-core"
    "libreoffice-writer-nogui"
    "libreoffice-draw-nogui"
    "libreoffice-impress-nogui"
-   "libreoffice-calc-nogui"
+   "libreoffice-calc"
 )
 sources=(
    "carbonio-preview-ce.tar.gz"
