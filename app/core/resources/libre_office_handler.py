@@ -24,6 +24,8 @@ from app.core.resources.constants.settings import (
 
 libre_instance: Popen = None
 logger = logging.getLogger(__name__)
+unoserver_log = logging.getLogger("unoserver")
+unoserver_log.setLevel(logging.WARNING)
 libre_port = "49152"
 
 

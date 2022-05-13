@@ -32,7 +32,7 @@ def check_for_storage_response_error(
     """
     Checks if the storage response contains error and return them accordingly
     if no error is found return None
-
+    \f
     :param response_data: response object to analyze
     :return: None if no error was found, else the error
     """
@@ -51,18 +51,43 @@ def check_for_storage_response_error(
         )
 
 
-def check_for_validation_errors(
-    id: str = None, version: int = None, area: str = None, metadata_dict: dict = None
+def check_for_document_metadata_errors(
+    first_page: int, last_page: int
 ) -> Optional[Response]:
     """
-    Function that handle validation of the given parameters
+    Function that handle validation of the given document parameters
+    \f
+    :param first_page: number representing the first page to convert
+    :param last_page: number representing the last page to convert
+    :return: a Response with status code 400 and content with detailed explanation
+    if there were invalid parameters, otherwise None
+    """
+    if first_page >= 1 and (first_page <= last_page or last_page == 0):
+        return None
+    else:
+        return Response(
+            content=message.NUMBER_OF_PAGES_NOT_VALID,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+def check_for_image_metadata_errors(
+    id: str = None,
+    version: int = None,
+    area: str = None,
+    metadata_dict: dict = None,
+) -> Optional[Response]:
+    """
+    Function that handle validation of the given image parameters
      and stores them in metadata_dict
+     \f
     :param id: UUID of the image
     :param area: width x height
     :param version: version of the node
     :param metadata_dict: dictionary with optional arguments
      that will be filled with validated input
-    :return: 400 if there were invalid parameters, otherwise
+    :return: a Response with status code 400 and content with detailed explanation
+    if there were invalid parameters, otherwise None
     """
     try:
         width, height = area.split("x")

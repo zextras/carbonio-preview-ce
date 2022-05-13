@@ -10,7 +10,11 @@ from starlette import status
 from starlette.responses import Response
 
 from app.core.resources.constants import service, message
-from app.core.resources.data_validator import is_id_valid, check_for_validation_errors
+from app.core.resources.data_validator import (
+    is_id_valid,
+    check_for_image_metadata_errors,
+    check_for_document_metadata_errors,
+)
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -58,7 +62,13 @@ async def get_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
-    if first_page >= 1 and (first_page <= last_page or last_page == 0):
+    validation_errors: Optional[Response] = check_for_document_metadata_errors(
+        first_page=first_page,
+        last_page=last_page,
+    )
+    if validation_errors:
+        return validation_errors
+    else:
         if is_id_valid(file_id=id):
             return await document_service.retrieve_doc_and_create_preview(
                 file_id=id,
@@ -72,11 +82,6 @@ async def get_preview(
                 content=message.ID_NOT_VALID_ERROR,
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-    else:
-        return Response(
-            content=message.NUMBER_OF_PAGES_NOT_VALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
 
 
 @router.post("/")
@@ -98,7 +103,13 @@ async def post_preview(
     the requested file converted accordingly to pdf.
     """
 
-    if first_page >= 1 and (first_page <= last_page or last_page == 0):
+    validation_errors: Optional[Response] = check_for_document_metadata_errors(
+        first_page=first_page,
+        last_page=last_page,
+    )
+    if validation_errors:
+        return validation_errors
+    else:
         return Response(
             content=(
                 await document_service.create_preview_from_raw(
@@ -106,11 +117,6 @@ async def post_preview(
                 )
             ).read(),
             media_type="application/pdf",
-        )
-    else:
-        return Response(
-            content=message.NUMBER_OF_PAGES_NOT_VALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
         )
 
 
@@ -151,7 +157,7 @@ async def post_thumbnail(
         "shape": shape,
         "crop_position": VerticalCropPositionEnum.TOP,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
         area=area,
         metadata_dict=metadata_dict,
     )
@@ -220,7 +226,7 @@ async def get_thumbnail(
         "shape": shape,
         "crop_position": VerticalCropPositionEnum.TOP,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
         area=area,
         metadata_dict=metadata_dict,
     )

@@ -20,7 +20,7 @@ class TestController(IsolatedAsyncioTestCase):
     def tearDown(self) -> None:
         super(TestController, self).tearDown()
 
-    @patch("app.core.routers.image.check_for_validation_errors", return_value=None)
+    @patch("app.core.routers.image.check_for_image_metadata_errors", return_value=None)
     @patch("app.core.routers.image.image_service." "retrieve_image_and_create_preview")
     @patch("app.core.routers.image.PreviewImageMetadata")
     async def test_get_preview_success(
@@ -33,7 +33,7 @@ class TestController(IsolatedAsyncioTestCase):
         self.assertEqual(1, mock_create_preview.call_count)
         self.assertEqual(1, mock_enum.call_count)
 
-    @patch("app.core.routers.image.check_for_validation_errors", return_value=True)
+    @patch("app.core.routers.image.check_for_image_metadata_errors", return_value=True)
     async def test_get_preview_failure(self, mock_validate):
         result = await image.get_preview(
             id="test", version=1, area="test", service_type=ServiceTypeEnum.FILES
@@ -41,7 +41,7 @@ class TestController(IsolatedAsyncioTestCase):
         self.assertEqual(1, mock_validate.call_count)
         self.assertEqual(result, True)
 
-    @patch("app.core.routers.image.check_for_validation_errors", return_value=None)
+    @patch("app.core.routers.image.check_for_image_metadata_errors", return_value=None)
     @patch(
         "app.core.routers.image.image_service." "retrieve_image_and_create_thumbnail"
     )
@@ -56,7 +56,7 @@ class TestController(IsolatedAsyncioTestCase):
         self.assertEqual(1, mock_create_thumbnail.call_count)
         self.assertEqual(1, mock_enum.call_count)
 
-    @patch("app.core.routers.image.check_for_validation_errors", return_value=True)
+    @patch("app.core.routers.image.check_for_image_metadata_errors", return_value=True)
     async def test_get_thumbnail_failure(self, mock_validate):
         result = await image.get_thumbnail(
             id="test", version=1, area="test", service_type=ServiceTypeEnum.FILES

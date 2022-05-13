@@ -7,6 +7,7 @@ import io
 import logging
 from typing import List
 
+import PIL
 from PIL import Image, ImageDraw, ImageOps, ImageFilter
 
 from app.core.resources.constants.image import constants as consts
@@ -38,11 +39,11 @@ def save_image_to_buffer(
     buffer = io.BytesIO()
     img.save(buffer, format=_format, optimize=_optimize, quality=_quality_value)
     buffer.seek(0)
-    log.info("PIL Image successfully saved to buffer.")
+    log.debug("PIL Image successfully saved to buffer.")
     return buffer
 
 
-def find_greater_scaled_dimensions(
+def _find_greater_scaled_dimensions(
     original_x: int,
     original_y: int,
     requested_x: int,
@@ -82,7 +83,7 @@ def find_greater_scaled_dimensions(
         return int(requested_y * original_x / original_y), requested_y
 
 
-def find_smaller_scaled_dimensions(
+def _find_smaller_scaled_dimensions(
     original_x: int,
     original_y: int,
     requested_x: int,
@@ -296,6 +297,21 @@ def _convert_requested_size_to_true_res_to_scale(
     return requested_x, requested_y
 
 
+def _parse_to_valid_image(content: io.BytesIO):
+    """
+    Parses an image into a valid Pil Image,
+    if the image is empty returns empty MinxMin RGB image
+    \f
+    :param content: Image to parse
+    :return parsed image or new empty image
+    """
+    try:
+        return Image.open(content)
+    except PIL.UnidentifiedImageError as e:
+        logger.debug(f"Invalid or empty image caused error: {e}")
+        return Image.new("RGB", (consts.MINIMUM_RESOLUTION, consts.MINIMUM_RESOLUTION))
+
+
 def resize_with_crop_and_paddings(
     content: io.BytesIO,
     requested_x: int,
@@ -311,7 +327,7 @@ def resize_with_crop_and_paddings(
     :param crop_position: where should the image zoom when cropped
     :return: PIL Image containing resized image to fit requested x and y
     """
-    img: Image.Image = Image.open(content)
+    img: Image.Image = _parse_to_valid_image(content=content)
     original_width, original_height = img.size
     to_crop = False
     to_scale_x, to_scale_y = _convert_requested_size_to_true_res_to_scale(
@@ -322,7 +338,7 @@ def resize_with_crop_and_paddings(
     )
     # minimum resolution is already checked on convert_req_size_to_true
     if original_width >= requested_x / 2 and original_height >= requested_y / 2:
-        new_width, new_height = find_greater_scaled_dimensions(
+        new_width, new_height = _find_greater_scaled_dimensions(
             original_x=original_width,
             original_y=original_height,
             requested_x=to_scale_x,
@@ -332,7 +348,7 @@ def resize_with_crop_and_paddings(
     elif original_width <= to_scale_x / 2 and original_height <= to_scale_y / 2:
         new_width, new_height = original_width, original_height
     else:
-        new_width, new_height = find_smaller_scaled_dimensions(
+        new_width, new_height = _find_smaller_scaled_dimensions(
             original_x=original_width,
             original_y=original_height,
             requested_x=to_scale_x,
@@ -372,7 +388,7 @@ def resize_with_paddings(
     :param requested_y: height to resize to
     :return: PIL Image containing resized image to fit requested x and y
     """
-    img: Image.Image = Image.open(content)
+    img: Image.Image = _parse_to_valid_image(content=content)
     original_width, original_height = img.size
     to_scale_x, to_scale_y = _convert_requested_size_to_true_res_to_scale(
         requested_x=requested_x,
@@ -387,7 +403,7 @@ def resize_with_paddings(
         # return original_x, original_y
         new_width, new_height = original_width, original_height
     else:
-        new_width, new_height = find_smaller_scaled_dimensions(
+        new_width, new_height = _find_smaller_scaled_dimensions(
             original_x=original_width,
             original_y=original_height,
             requested_x=to_scale_x,

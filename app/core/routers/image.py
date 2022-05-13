@@ -8,7 +8,7 @@ from fastapi import APIRouter, UploadFile
 from starlette.responses import Response
 
 from app.core.resources.constants import service, message
-from app.core.resources.data_validator import check_for_validation_errors
+from app.core.resources.data_validator import check_for_image_metadata_errors
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -75,7 +75,7 @@ async def get_thumbnail(
         "shape": shape,
         "crop_position": VerticalCropPositionEnum.CENTER,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
         id=id, area=area, version=version, metadata_dict=metadata_dict
     )
     return (
@@ -126,9 +126,8 @@ async def post_thumbnail(
         "shape": shape,
         "crop_position": VerticalCropPositionEnum.CENTER,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
-        area=area,
-        metadata_dict=metadata_dict,
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
+        area=area, metadata_dict=metadata_dict
     )
     return (
         validation_errors
@@ -182,9 +181,8 @@ async def post_preview(
         "crop": crop,
         "crop_position": VerticalCropPositionEnum.CENTER,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
-        area=area,
-        metadata_dict=metadata_dict,
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
+        area=area, metadata_dict=metadata_dict
     )
     return (
         validation_errors
@@ -251,7 +249,7 @@ async def get_preview(
         "crop": crop,
         "crop_position": VerticalCropPositionEnum.CENTER,
     }
-    validation_errors: Optional[Response] = check_for_validation_errors(
+    validation_errors: Optional[Response] = check_for_image_metadata_errors(
         id=id, area=area, version=version, metadata_dict=metadata_dict
     )
     return (
