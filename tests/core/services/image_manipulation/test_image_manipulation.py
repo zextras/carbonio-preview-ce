@@ -516,4 +516,3 @@ class TestImageManipulation(unittest.TestCase):
     def test_parse_to_valid_image_invalid_image(self):
         result = image_manipulation._parse_to_valid_image(content=io.BytesIO(b""))
         self.assertEqual(result.size, (40, 40))
-        print(result)

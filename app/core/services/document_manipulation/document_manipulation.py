@@ -9,6 +9,7 @@ from typing import IO, Optional
 from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
+from pdfrw.errors import PdfParseError
 
 from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
@@ -32,11 +33,11 @@ def split_pdf(
     if not pdf:
         return _write_pdf_to_buffer(None)  # returns empty pdf
 
-    pdf_page_count: int = len(pdf)
     if first_page_number == 1 and last_page_number == 0:
         content.seek(0)
         return content
 
+    pdf_page_count: int = len(pdf)
     start_page: int = first_page_number - 1  # metadata info starts
     # at 0 but first_page_number is >0
     end_page: int = (
@@ -54,7 +55,7 @@ def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
     """
     try:
         return PdfReader(fdata=raw_content).pages
-    except PdfReader.PdfParseError:  # not a valid pdf
+    except PdfParseError:  # not a valid pdf
         logger.debug("Not a valid pdf file, replacing it with an empty one")
         return None
 
