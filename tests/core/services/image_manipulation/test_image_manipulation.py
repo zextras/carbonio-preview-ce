@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-
+import io
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +36,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_scaled_dimension_higher_than_original_square_result(self):
         orig_x, orig_y = 346, 826
-        result = image_manipulation.find_greater_scaled_dimensions(
+        result = image_manipulation._find_greater_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=1000,
@@ -54,7 +54,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_scaled_dimension_higher_than_original(self):
         orig_x, orig_y = 346, 826
-        result = image_manipulation.find_greater_scaled_dimensions(
+        result = image_manipulation._find_greater_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=700,
@@ -72,7 +72,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_scaled_dimension_lower_than_original(self):
         orig_x, orig_y = 346, 826
-        result = image_manipulation.find_greater_scaled_dimensions(
+        result = image_manipulation._find_greater_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=300,
@@ -154,7 +154,7 @@ class TestImageManipulation(unittest.TestCase):
     def test_find_smaller_scaled_dimension_with_higher_reqxy(self):
         # 826x346 => 1000x500
         orig_x, orig_y = 826, 346
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=1000,
@@ -168,7 +168,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_smaller_scaled_dimension_req_x_double_y_half(self):
         orig_x, orig_y = 200, 100
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=400,
@@ -182,7 +182,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_smaller_scaled_dimension_1(self):
         orig_x, orig_y = 200, 100
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=800,
@@ -196,7 +196,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_smaller_scaled_dimension_2(self):
         orig_x, orig_y = 300, 200
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=1200,
@@ -210,7 +210,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_smaller_scaled_dimension_3(self):
         orig_x, orig_y = 900, 1000
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=1700,
@@ -224,7 +224,7 @@ class TestImageManipulation(unittest.TestCase):
 
     def test_find_smaller_scaled_dimension_4(self):
         orig_x, orig_y = 4000, 200
-        result = image_manipulation.find_smaller_scaled_dimensions(
+        result = image_manipulation._find_smaller_scaled_dimensions(
             original_x=orig_x,
             original_y=orig_y,
             requested_x=8000,
@@ -507,3 +507,12 @@ class TestImageManipulation(unittest.TestCase):
         self.assertEqual(
             [desired_upper, desired_right, desired_bottom, desired_left], result
         )
+
+    @patch(
+        "app.core.services.image_manipulation"
+        ".image_manipulation.consts.MINIMUM_RESOLUTION",
+        40,
+    )
+    def test_parse_to_valid_image_invalid_image(self):
+        result = image_manipulation._parse_to_valid_image(content=io.BytesIO(b""))
+        self.assertEqual(result.size, (40, 40))

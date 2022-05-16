@@ -5,10 +5,11 @@
 
 import io
 import logging
-from typing import IO
+from typing import IO, Optional
 from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
+from pdfrw.errors import PdfParseError
 
 from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
@@ -28,20 +29,52 @@ def split_pdf(
     :return: pdf with the first n pages
     """
     raw_content = content.read()
-    all_pages = PdfReader(fdata=raw_content).pages
-    pdf_page_count: int = len(all_pages)
+    pdf: PdfReader = _parse_if_valid_pdf(raw_content)
+    if not pdf:
+        return _write_pdf_to_buffer(None)  # returns empty pdf
+
     if first_page_number == 1 and last_page_number == 0:
         content.seek(0)
         return content
 
+    pdf_page_count: int = len(pdf)
     start_page: int = first_page_number - 1  # metadata info starts
     # at 0 but first_page_number is >0
     end_page: int = (
         last_page_number if 0 < last_page_number < pdf_page_count else pdf_page_count
     )
+    return _write_pdf_to_buffer(pdf, start_page, end_page)
+
+
+def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
+    """
+    Parses the given bytes into PdfReader, if the file is not valid returns None
+    \f
+    :param raw_content: file to load into a PdfReader object
+    :return: PdfReader object containing the pdf or Empty if not valid
+    """
+    try:
+        return PdfReader(fdata=raw_content).pages
+    except PdfParseError:  # not a valid pdf
+        logger.debug("Not a valid pdf file, replacing it with an empty one")
+        return None
+
+
+def _write_pdf_to_buffer(
+    pdf: PdfReader = None, start_page: int = 0, end_page: int = 1
+) -> io.BytesIO:
+    """
+    Writes file to PDF, if pdf is empty writes an empty pdf file
+    \f
+    :param pdf: PdfReader object containing the content to write
+    :param start_page: first page to write
+    :param end_page: last page to write
+    :return: io.BytesIO object with pdf content written in it
+    """
     buf: io.BytesIO = io.BytesIO()
     writer: PdfWriter = PdfWriter(buf)
-    writer.addpages(all_pages[start_page:end_page])
+    if pdf:
+        writer.addpages(pdf[start_page:end_page])
     writer.write()
     buf.seek(0)
     return buf
@@ -128,13 +161,20 @@ async def _convert_with_libre(
     :param log: logger to use
     """
     office_port = libre_office_handler.libre_port
-    log.info(
+    log.debug(
         f"Converting file to {output_extension} "
         f"using LibreOffice instance on port {office_port}"
     )
     converter = UnoConverter(interface=service.IP, port=office_port)
-    out_data = io.BytesIO(
-        converter.convert(indata=content.read(), convert_to=output_extension)
-    )
-    out_data.seek(0)
+    out_data = io.BytesIO()
+    try:  # in case of empty file or libre exception
+        out_data = io.BytesIO(
+            converter.convert(indata=content.read(), convert_to=output_extension)
+        )
+        out_data.seek(0)
+    except Exception as e:
+        logger.debug(
+            f"File to convert was empty, libre conversion failed with error {e}"
+        )
+
     return out_data

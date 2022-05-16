@@ -51,3 +51,7 @@ VERSION_NOT_VALID_ERROR = read_message_config(
 FORMAT_NOT_SUPPORTED_ERROR = read_message_config(
     section=validation_section_name, value="format_not_supported_error"
 )
+
+FILE_NOT_VALID_ERROR = read_message_config(
+    section=validation_section_name, value="file_not_valid_error"
+)

@@ -34,6 +34,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
     def _mock_loggers(self):
         # For some reason if i do not return
         # something it doesn't count method calls
+        self.log_mock.debug = MagicMock(return_value=False)
         self.log_mock.info = MagicMock(return_value=False)
         self.log_mock.critical = MagicMock(return_value=False)
         self.log_mock.error = MagicMock(return_value=False)
@@ -82,7 +83,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(1, len(rsps.calls))
             self.assertEqual(0, self.log_mock.critical.call_count)
-            self.assertEqual(i + 1 - starting_point, self.log_mock.error.call_count)
+            self.assertEqual(i + 1 - starting_point, self.log_mock.debug.call_count)
             self.assertEqual(i + 1 - starting_point, self.log_mock.info.call_count)
             self.assertIsNotNone(response)
 
@@ -99,7 +100,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
             )
             self.assertEqual(1, len(rsps.calls))
         self.assertEqual(0, self.log_mock.critical.call_count)
-        self.assertEqual(1, self.log_mock.error.call_count)
+        self.assertEqual(1, self.log_mock.debug.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
         self.assertIsNone(response)
 

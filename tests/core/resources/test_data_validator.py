@@ -13,7 +13,7 @@ from app.core.resources.constants import message
 from app.core.resources.data_validator import (
     is_id_valid,
     check_for_storage_response_error,
-    check_for_validation_errors,
+    check_for_image_metadata_errors,
 )
 
 
@@ -61,7 +61,7 @@ class TestDataValidator(unittest.TestCase):
 
     @patch("app.core.resources.data_validator.is_id_valid", return_value=False)
     def test_validate_id_not_valid(self, mock_is_id_valid):
-        result = check_for_validation_errors(
+        result = check_for_image_metadata_errors(
             id="test", version=1, area="300x200", metadata_dict=dict()
         )
         self.assertEqual(1, mock_is_id_valid.call_count)
@@ -71,7 +71,7 @@ class TestDataValidator(unittest.TestCase):
     @patch("app.core.resources.data_validator.is_id_valid", return_value=True)
     def test_validate_success_with_0x0_area(self, mock_is_id_valid):
         self.img_metadata["area"] = "0x0"
-        check_for_validation_errors(
+        check_for_image_metadata_errors(
             id="test",
             version=self.img_metadata["version"],
             area=self.img_metadata["area"],
@@ -81,7 +81,7 @@ class TestDataValidator(unittest.TestCase):
 
     def test_validate_area_not_int(self):
         self.img_metadata["area"] = "ciaox0"
-        result = check_for_validation_errors(
+        result = check_for_image_metadata_errors(
             id="test",
             version=self.img_metadata["version"],
             area=self.img_metadata["area"],
@@ -92,7 +92,7 @@ class TestDataValidator(unittest.TestCase):
 
     def test_validate_area_missing_values(self):
         self.img_metadata["area"] = "0x"
-        result = check_for_validation_errors(
+        result = check_for_image_metadata_errors(
             id="test",
             version=self.img_metadata["version"],
             area=self.img_metadata["area"],
@@ -103,7 +103,7 @@ class TestDataValidator(unittest.TestCase):
 
     def test_validate_area_height_zero_invalid_id(self):
         self.img_metadata["area"] = "0x0"
-        result = check_for_validation_errors(
+        result = check_for_image_metadata_errors(
             id="test",
             version=self.img_metadata["version"],
             area=self.img_metadata["area"],
