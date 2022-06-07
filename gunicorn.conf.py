@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
-
-from app.core.resources import libre_office_handler
 from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
@@ -240,7 +238,10 @@ def child_exit(server, worker):
 
 def post_worker_init(worker):
     worker.log.info("Post worker init")
-    libre_office_handler.init_signals()
+    # import here, otherwise logs won't be configured correctly
+    from app.core.resources.libre_office_handler import init_signals
+
+    init_signals()
 
 
 def pre_exec(server):

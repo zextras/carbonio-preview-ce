@@ -83,6 +83,7 @@ def shutdown_worker(signal_number=6, caller=None):
         f"Shut down worker called from {caller} with signal number {signal_number}"
     )
     _shutdown_libre_instance()
+    logging.shutdown()
     os._exit(1)
 
 
