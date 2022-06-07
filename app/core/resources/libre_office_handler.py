@@ -2,25 +2,29 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+from app.core.resources.constants.settings import (
+    LIBRE_OFFICE_PATH,
+)
+from app.core.resources.constants.service import IP
+from unoserver.server import UnoServer
+from subprocess import Popen  # nosec
+import random
+import io
 import logging
 import os
 import signal
 import time
 
 import psutil
+import concurrent.futures
+
+executor = concurrent.futures.ThreadPoolExecutor()
 
 try:
     from unoserver.converter import UnoConverter
 except ImportError:
     UnoConverter = ImportError("Couldn't import UnoConverter")
-import random
-from subprocess import Popen  # nosec
-from unoserver.server import UnoServer
 
-from app.core.resources.constants.service import IP
-from app.core.resources.constants.settings import (
-    LIBRE_OFFICE_PATH,
-)
 
 libre_instance: Popen = None
 logger = logging.getLogger(__name__)
@@ -108,15 +112,32 @@ def is_libre_instance_up() -> bool:
     """
     if type(UnoConverter) != ImportError:
         try:
-            UnoConverter(interface=IP, port=libre_port)
+            with executor:
+                future = executor.submit(UnoConverter, IP, libre_port)
+                future.result(timeout=5)
             return True
         except Exception as e:
             logger.warning(
                 f"Encountered the following exception"
                 f" while trying to connect to unoserver: {e}"
             )
-
     return False
+
+
+def libre_convert_handler(
+    service_ip: str, office_port: str, content: io.BytesIO, output_extension: str
+) -> bytes:
+    """
+    private method used to isolate and handle conversion
+    of file using the external library UnoServer
+    \f
+    :param service_ip: libreoffice instance ip
+    :param office_port: libreoffice instance port
+    :param content: content to convert
+    :param output_extension: desired output format
+    """
+    converter: UnoConverter = UnoConverter(service_ip, office_port)
+    return converter.convert(indata=content.read(), convert_to=output_extension)
 
 
 def _kill_proc_tree(pid):

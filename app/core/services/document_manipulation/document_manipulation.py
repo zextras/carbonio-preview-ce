@@ -2,12 +2,10 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-import concurrent.futures
 import io
 import logging
 import sys
 from typing import IO, Optional
-from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
@@ -16,7 +14,6 @@ from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
 
 logger = logging.getLogger(__name__)
-executor = concurrent.futures.ThreadPoolExecutor()
 
 
 def split_pdf(
@@ -169,9 +166,9 @@ async def _convert_with_libre(
     )
     out_data = io.BytesIO()
     try:  # in case of empty file or libre exception
-        with executor:
+        with libre_office_handler.executor as executor:
             future = executor.submit(
-                _uno_converter_handler,
+                libre_office_handler.libre_convert_handler,
                 service.IP,
                 office_port,
                 content,
@@ -188,19 +185,3 @@ async def _convert_with_libre(
         )
 
     return out_data
-
-
-def _uno_converter_handler(
-    service_ip: str, office_port: str, content: io.BytesIO, output_extension: str
-) -> bytes:
-    """
-    private method used to isolate and handle conversion
-    of file using the external library UnoServer
-    \f
-    :param service_ip: libreoffice instance ip
-    :param office_port: libreoffice instance port
-    :param content: content to convert
-    :param output_extension: desired output format
-    """
-    converter: UnoConverter = UnoConverter(service_ip, office_port)
-    return converter.convert(indata=content.read(), convert_to=output_extension)
