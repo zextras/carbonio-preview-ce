@@ -166,15 +166,14 @@ async def _convert_with_libre(
     )
     out_data = io.BytesIO()
     try:  # in case of empty file or libre exception
-        with libre_office_handler.executor as executor:
-            future = executor.submit(
-                libre_office_handler.libre_convert_handler,
-                service.IP,
-                office_port,
-                content,
-                output_extension,
-            )
-            out_data = io.BytesIO(future.result(timeout=25))
+        future = libre_office_handler.executor.submit(
+            libre_office_handler.libre_convert_handler,
+            service.IP,
+            office_port,
+            content,
+            output_extension,
+        )
+        out_data = io.BytesIO(future.result(timeout=25))
         out_data.seek(0)
     except TimeoutError as time_error:
         logger.warning(f"LibreOffice is not responding.. error {time_error}")

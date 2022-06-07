@@ -18,8 +18,6 @@ import time
 import psutil
 import concurrent.futures
 
-executor = concurrent.futures.ThreadPoolExecutor()
-
 try:
     from unoserver.converter import UnoConverter
 except ImportError:
@@ -31,6 +29,8 @@ logger = logging.getLogger(__name__)
 unoserver_log = logging.getLogger("unoserver")
 unoserver_log.setLevel(logging.WARNING)
 libre_port = "49152"
+
+executor = concurrent.futures.ThreadPoolExecutor()
 
 
 def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
@@ -88,6 +88,7 @@ def shutdown_worker(signal_number=6, caller=None):
     )
     _shutdown_libre_instance()
     logging.shutdown()
+    executor.shutdown()
     os._exit(1)
 
 
@@ -112,9 +113,8 @@ def is_libre_instance_up() -> bool:
     """
     if type(UnoConverter) != ImportError:
         try:
-            with executor:
-                future = executor.submit(UnoConverter, IP, libre_port)
-                future.result(timeout=5)
+            future = executor.submit(UnoConverter, IP, libre_port)
+            future.result(timeout=5)
             return True
         except Exception as e:
             logger.warning(
