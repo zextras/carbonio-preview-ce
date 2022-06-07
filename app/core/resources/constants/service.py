@@ -7,10 +7,11 @@ from app.core.resources.config_loader import read_config
 
 
 # SERVICE CONFIG
-service_section_name = "service"
-NAME = read_config(section=service_section_name, value="name")
-IP = read_config(section=service_section_name, value="ip")
-PORT = read_config(section=service_section_name, value="port")
+service_section_name: str = "service"
+NAME: str = read_config(section=service_section_name, value="name")
+TIMEOUT: int = int(read_config(section=service_section_name, value="timeout"))
+IP: str = read_config(section=service_section_name, value="ip")
+PORT: str = read_config(section=service_section_name, value="port")
 
 DESCRIPTION = """
 Preview service. 🚀 \n
@@ -37,14 +38,14 @@ by asking for a jpeg format and changing the quality parameter.
 """
 
 # IMAGE
-IMAGE_NAME = read_config(section=service_section_name, value="image_name")
+IMAGE_NAME: str = read_config(section=service_section_name, value="image_name")
 
 # HEALTH
-HEALTH_NAME = read_config(section=service_section_name, value="health_name")
+HEALTH_NAME: str = read_config(section=service_section_name, value="health_name")
 
 # PDF
-PDF_NAME = read_config(section=service_section_name, value="pdf_name")
+PDF_NAME: str = read_config(section=service_section_name, value="pdf_name")
 
 # DOCUMENT
 
-DOC_NAME = read_config(section=service_section_name, value="document_name")
+DOC_NAME: str = read_config(section=service_section_name, value="document_name")

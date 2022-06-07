@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import os
+
 from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
@@ -75,8 +76,7 @@ backlog = 2048
 workers = NUMBER_OF_WORKERS
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
-graceful_timeout = 30
-timeout = 40
+timeout = service.TIMEOUT
 keepalive = 2
 
 #

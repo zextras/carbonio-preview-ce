@@ -173,7 +173,7 @@ async def _convert_with_libre(
             content,
             output_extension,
         )
-        out_data = io.BytesIO(future.result(timeout=25))
+        out_data = io.BytesIO(future.result(timeout=service.TIMEOUT))
         out_data.seek(0)
     except TimeoutError as time_error:
         logger.warning(f"LibreOffice is not responding.. error {time_error}")

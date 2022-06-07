@@ -6,11 +6,11 @@
 from app.core.resources.config_loader import read_config
 
 # FOR CONTACTING STORAGE
-storage_section_name = "storage"
-NAME = read_config(section=storage_section_name, value="name")
-DOWNLOAD_API = read_config(section=storage_section_name, value="download_api")
-HEALTH_CHECK_API = read_config(section=storage_section_name, value="health_check")
-PROTOCOL = read_config(section=storage_section_name, value="protocol")
-IP = read_config(section=storage_section_name, value="ip")
-PORT = read_config(section=storage_section_name, value="port")
-FULL_ADDRESS = f"{PROTOCOL}://{IP}:{PORT}"
+storage_section_name: str = "storage"
+NAME: str = read_config(section=storage_section_name, value="name")
+DOWNLOAD_API: str = read_config(section=storage_section_name, value="download_api")
+HEALTH_CHECK_API: str = read_config(section=storage_section_name, value="health_check")
+PROTOCOL: str = read_config(section=storage_section_name, value="protocol")
+IP: str = read_config(section=storage_section_name, value="ip")
+PORT: str = read_config(section=storage_section_name, value="port")
+FULL_ADDRESS: str = f"{PROTOCOL}://{IP}:{PORT}"
