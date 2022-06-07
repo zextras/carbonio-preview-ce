@@ -55,17 +55,23 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
         else:
             break
     log.info(f"Started LibreOffice instance at {interface}:{libre_port}")
-    # signal to intercept worker shutdown signal and terminate libreoffice correctly
+    return True
+
+
+def init_signals():
+    """
+    Initializes the signal handling of the program
+    """
     signal.signal(
         signal.SIGABRT, shutdown_worker
     )  # The one that is truly called on libre timeout
     signal.signal(signal.SIGTERM, shutdown_worker)
     signal.signal(signal.SIGQUIT, shutdown_worker)
     signal.signal(signal.SIGINT, shutdown_worker)
-    return True
+    signal.signal(signal.SIGHUP, shutdown_worker)
 
 
-def shutdown_worker(signal_number, caller):
+def shutdown_worker(signal_number=6, caller=None):
     """
     Shuts down LibreOffice worker instance and current worker.
     \f
@@ -73,6 +79,9 @@ def shutdown_worker(signal_number, caller):
     :param caller: function that made the signal fire
     :return: True if the service booted up correctly
     """
+    logger.warning(
+        f"Shut down worker called from {caller} with signal number {signal_number}"
+    )
     _shutdown_libre_instance()
     os._exit(1)
 
@@ -83,7 +92,7 @@ def _shutdown_libre_instance():
     \f
     """
     global libre_instance
-    logger.info("Worker kill requested")
+    logger.info(f"Libre instance kill requested, instance is {libre_instance}")
     if libre_instance is not None:
         logger.info(f"Killing libre instance with pid {libre_instance.pid}")
         _kill_proc_tree(libre_instance.pid)  # This is probably overkill but keep it.

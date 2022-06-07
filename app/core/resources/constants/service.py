@@ -18,6 +18,7 @@ You can preview the following type of files:
 
 * **images(png/jpeg)**
 * **pdf**
+* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**
 
 You will be able to:
 

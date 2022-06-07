@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+import atexit
 
 from fastapi import FastAPI
 
@@ -27,4 +28,5 @@ app.include_router(health.router)
 
 
 if __name__ == "__main__":
+    atexit.register(libre_office_handler.shutdown_worker)
     uvicorn.run(app, host=service.IP, port=int(service.PORT))

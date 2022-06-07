@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-
+import concurrent.futures
 import io
 import logging
+import sys
 from typing import IO, Optional
 from unoserver.converter import UnoConverter
 
@@ -15,6 +16,7 @@ from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
 
 logger = logging.getLogger(__name__)
+executor = concurrent.futures.ThreadPoolExecutor()
 
 
 def split_pdf(
@@ -144,7 +146,7 @@ async def convert_pdf_to(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
     )
-    return await _convert_with_libre(
+    return await convert_file_to(
         content=content, output_extension=output_extension, log=log
     )
 
@@ -165,16 +167,40 @@ async def _convert_with_libre(
         f"Converting file to {output_extension} "
         f"using LibreOffice instance on port {office_port}"
     )
-    converter = UnoConverter(interface=service.IP, port=office_port)
     out_data = io.BytesIO()
     try:  # in case of empty file or libre exception
-        out_data = io.BytesIO(
-            converter.convert(indata=content.read(), convert_to=output_extension)
-        )
+        with executor:
+            future = executor.submit(
+                _uno_converter_handler,
+                service.IP,
+                office_port,
+                content,
+                output_extension,
+            )
+            out_data = io.BytesIO(future.result(timeout=25))
         out_data.seek(0)
+    except TimeoutError as time_error:
+        logger.warning(f"LibreOffice is not responding.. error {time_error}")
+        sys.exit(1)
     except Exception as e:
         logger.debug(
             f"File to convert was empty, libre conversion failed with error {e}"
         )
 
     return out_data
+
+
+def _uno_converter_handler(
+    service_ip: str, office_port: str, content: io.BytesIO, output_extension: str
+) -> bytes:
+    """
+    private method used to isolate and handle conversion
+    of file using the external library UnoServer
+    \f
+    :param service_ip: libreoffice instance ip
+    :param office_port: libreoffice instance port
+    :param content: content to convert
+    :param output_extension: desired output format
+    """
+    converter: UnoConverter = UnoConverter(service_ip, office_port)
+    return converter.convert(indata=content.read(), convert_to=output_extension)
