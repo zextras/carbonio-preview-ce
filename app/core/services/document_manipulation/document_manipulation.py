@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
-# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
@@ -111,7 +110,10 @@ async def convert_file_to(
     log: logging = logger,
 ) -> io.BytesIO:
     """
-    Converts any LibreOffice supported format to any LibreOffice supported format
+    Converts any LibreOffice supported format to any LibreOffice
+     supported format using _convert_with_libre.
+     SHOULD ALWAYS be used instead of _convert_with_libre
+     as it isolates the connection with libre
     \f
     :param content: file to convert
     :param output_extension: output file, should be a format supported by LibreOffice
@@ -153,7 +155,8 @@ async def _convert_with_libre(
 ) -> io.BytesIO:
     """
     private method that implements conversion logic for every type of file,
-    uses LibreOffice
+    uses LibreOffice, SHOULD ONLY BE CALLED BY convert_file_to and
+     never directly to isolate possible POF
     \f
     :param content: pdf to convert
     :param output_extension: desired file output type

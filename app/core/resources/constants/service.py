@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
-# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
@@ -7,11 +6,11 @@ from app.core.resources.config_loader import read_config
 
 
 # SERVICE CONFIG
-service_section_name: str = "service"
-NAME: str = read_config(section=service_section_name, value="name")
-TIMEOUT: int = int(read_config(section=service_section_name, value="timeout"))
-IP: str = read_config(section=service_section_name, value="ip")
-PORT: str = read_config(section=service_section_name, value="port")
+_service_section_name: str = "service"
+NAME: str = read_config(section=_service_section_name, value="name")
+TIMEOUT: int = int(read_config(section=_service_section_name, value="timeout"))
+IP: str = read_config(section=_service_section_name, value="ip")
+PORT: int = int(read_config(section=_service_section_name, value="port"))
 
 DESCRIPTION = """
 Preview service. 🚀 \n
@@ -38,14 +37,14 @@ by asking for a jpeg format and changing the quality parameter.
 """
 
 # IMAGE
-IMAGE_NAME: str = read_config(section=service_section_name, value="image_name")
+IMAGE_NAME: str = read_config(section=_service_section_name, value="image_name")
 
 # HEALTH
-HEALTH_NAME: str = read_config(section=service_section_name, value="health_name")
+HEALTH_NAME: str = read_config(section=_service_section_name, value="health_name")
 
 # PDF
-PDF_NAME: str = read_config(section=service_section_name, value="pdf_name")
+PDF_NAME: str = read_config(section=_service_section_name, value="pdf_name")
 
 # DOCUMENT
 
-DOC_NAME: str = read_config(section=service_section_name, value="document_name")
+DOC_NAME: str = read_config(section=_service_section_name, value="document_name")
