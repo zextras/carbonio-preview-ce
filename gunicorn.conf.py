@@ -173,10 +173,12 @@ LOGGING_CONFIG = {
             "formatter": "syslog",
         },
         "file_standard": {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "logging.handlers.TimedRotatingFileHandler",
             "filename": log_path,
             "formatter": "syslog",
             "encoding": "utf8",
+            "when": "d",
+            "backupCount": 50,
         },
         "console_gunicorn": {
             "class": "logging.StreamHandler",
@@ -184,10 +186,12 @@ LOGGING_CONFIG = {
             "formatter": "syslog",
         },
         "file_gunicorn": {
-            "class": "logging.handlers.RotatingFileHandler",
+            "class": "logging.handlers.TimedRotatingFileHandler",
             "filename": log_path,
             "formatter": "syslog",
             "encoding": "utf8",
+            "when": "d",
+            "backupCount": 50,
         },
     },
     "formatters": {
