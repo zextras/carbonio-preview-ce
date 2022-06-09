@@ -1,32 +1,35 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
-# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+from app.core.resources.constants.settings import (
+    LIBRE_OFFICE_PATH,
+)
+from app.core.resources.constants.service import IP
+from unoserver.server import UnoServer
+from subprocess import Popen  # nosec
+import random
+import io
 import logging
 import os
 import signal
 import time
 
 import psutil
+import concurrent.futures
 
 try:
     from unoserver.converter import UnoConverter
 except ImportError:
     UnoConverter = ImportError("Couldn't import UnoConverter")
-import random
-from subprocess import Popen  # nosec
-from unoserver.server import UnoServer
 
-from app.core.resources.constants.service import IP
-from app.core.resources.constants.settings import (
-    LIBRE_OFFICE_PATH,
-)
 
 libre_instance: Popen = None
 logger = logging.getLogger(__name__)
 unoserver_log = logging.getLogger("unoserver")
 unoserver_log.setLevel(logging.WARNING)
 libre_port = "49152"
+
+executor = concurrent.futures.ThreadPoolExecutor()
 
 
 def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
@@ -55,17 +58,23 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
         else:
             break
     log.info(f"Started LibreOffice instance at {interface}:{libre_port}")
-    # signal to intercept worker shutdown signal and terminate libreoffice correctly
+    return True
+
+
+def init_signals():
+    """
+    Initializes the signal handling of the program
+    """
     signal.signal(
         signal.SIGABRT, shutdown_worker
     )  # The one that is truly called on libre timeout
     signal.signal(signal.SIGTERM, shutdown_worker)
     signal.signal(signal.SIGQUIT, shutdown_worker)
     signal.signal(signal.SIGINT, shutdown_worker)
-    return True
+    signal.signal(signal.SIGHUP, shutdown_worker)
 
 
-def shutdown_worker(signal_number, caller):
+def shutdown_worker(signal_number=6, caller=None):
     """
     Shuts down LibreOffice worker instance and current worker.
     \f
@@ -73,7 +82,12 @@ def shutdown_worker(signal_number, caller):
     :param caller: function that made the signal fire
     :return: True if the service booted up correctly
     """
+    logger.warning(
+        f"Shut down worker called from {caller} with signal number {signal_number}"
+    )
     _shutdown_libre_instance()
+    logging.shutdown()
+    executor.shutdown()
     os._exit(1)
 
 
@@ -83,7 +97,7 @@ def _shutdown_libre_instance():
     \f
     """
     global libre_instance
-    logger.info("Worker kill requested")
+    logger.info(f"Libre instance kill requested, instance is {libre_instance}")
     if libre_instance is not None:
         logger.info(f"Killing libre instance with pid {libre_instance.pid}")
         _kill_proc_tree(libre_instance.pid)  # This is probably overkill but keep it.
@@ -98,15 +112,31 @@ def is_libre_instance_up() -> bool:
     """
     if type(UnoConverter) != ImportError:
         try:
-            UnoConverter(interface=IP, port=libre_port)
+            future = executor.submit(UnoConverter, IP, libre_port)
+            future.result(timeout=5)
             return True
         except Exception as e:
             logger.warning(
                 f"Encountered the following exception"
                 f" while trying to connect to unoserver: {e}"
             )
-
     return False
+
+
+def libre_convert_handler(
+    service_ip: str, office_port: str, content: io.BytesIO, output_extension: str
+) -> bytes:
+    """
+    private method used to isolate and handle conversion
+    of file using the external library UnoServer
+    \f
+    :param service_ip: libreoffice instance ip
+    :param office_port: libreoffice instance port
+    :param content: content to convert
+    :param output_extension: desired output format
+    """
+    converter: UnoConverter = UnoConverter(service_ip, office_port)
+    return converter.convert(indata=content.read(), convert_to=output_extension)
 
 
 def _kill_proc_tree(pid):

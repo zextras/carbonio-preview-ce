@@ -1,12 +1,10 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
-# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-
 import io
 import logging
+import sys
 from typing import IO, Optional
-from unoserver.converter import UnoConverter
 
 from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
@@ -112,7 +110,10 @@ async def convert_file_to(
     log: logging = logger,
 ) -> io.BytesIO:
     """
-    Converts any LibreOffice supported format to any LibreOffice supported format
+    Converts any LibreOffice supported format to any LibreOffice
+     supported format using _convert_with_libre.
+     SHOULD ALWAYS be used instead of _convert_with_libre
+     as it isolates the connection with libre
     \f
     :param content: file to convert
     :param output_extension: output file, should be a format supported by LibreOffice
@@ -144,7 +145,7 @@ async def convert_pdf_to(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
     )
-    return await _convert_with_libre(
+    return await convert_file_to(
         content=content, output_extension=output_extension, log=log
     )
 
@@ -154,7 +155,8 @@ async def _convert_with_libre(
 ) -> io.BytesIO:
     """
     private method that implements conversion logic for every type of file,
-    uses LibreOffice
+    uses LibreOffice, SHOULD ONLY BE CALLED BY convert_file_to and
+     never directly to isolate possible POF
     \f
     :param content: pdf to convert
     :param output_extension: desired file output type
@@ -165,13 +167,20 @@ async def _convert_with_libre(
         f"Converting file to {output_extension} "
         f"using LibreOffice instance on port {office_port}"
     )
-    converter = UnoConverter(interface=service.IP, port=office_port)
     out_data = io.BytesIO()
     try:  # in case of empty file or libre exception
-        out_data = io.BytesIO(
-            converter.convert(indata=content.read(), convert_to=output_extension)
+        future = libre_office_handler.executor.submit(
+            libre_office_handler.libre_convert_handler,
+            service.IP,
+            office_port,
+            content,
+            output_extension,
         )
+        out_data = io.BytesIO(future.result(timeout=service.TIMEOUT))
         out_data.seek(0)
+    except TimeoutError as time_error:
+        logger.warning(f"LibreOffice is not responding.. error {time_error}")
+        sys.exit(1)
     except Exception as e:
         logger.debug(
             f"File to convert was empty, libre conversion failed with error {e}"
