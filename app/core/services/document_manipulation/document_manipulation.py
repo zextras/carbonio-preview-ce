@@ -31,17 +31,18 @@ def split_pdf(
     if not pdf:
         return _write_pdf_to_buffer(None)  # returns empty pdf
 
-    if first_page_number == 1 and last_page_number == 0:
+    if first_page_number == 1 and last_page_number == 0 or "/Encrypt" in pdf.keys():
+        # If the pdf is encrypted we cannot split it
         content.seek(0)
         return content
-
-    pdf_page_count: int = len(pdf)
+    pdf_pages: list = pdf.pages
+    pdf_page_count: int = len(pdf_pages)
     start_page: int = first_page_number - 1  # metadata info starts
-    # at 0 but first_page_number is >0
+    # at 0 but first_page_number is >=1
     end_page: int = (
         last_page_number if 0 < last_page_number < pdf_page_count else pdf_page_count
     )
-    return _write_pdf_to_buffer(pdf, start_page, end_page)
+    return _write_pdf_to_buffer(pdf_pages, start_page, end_page)
 
 
 def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
@@ -51,11 +52,13 @@ def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
     :param raw_content: file to load into a PdfReader object
     :return: PdfReader object containing the pdf or Empty if not valid
     """
+    pdf = None
     try:
-        return PdfReader(fdata=raw_content).pages
+        pdf = PdfReader(fdata=raw_content)
     except PdfParseError:  # not a valid pdf
         logger.debug("Not a valid pdf file, replacing it with an empty one")
-        return None
+    finally:
+        return pdf
 
 
 def _write_pdf_to_buffer(
