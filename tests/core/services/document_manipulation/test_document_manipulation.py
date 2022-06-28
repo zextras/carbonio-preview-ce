@@ -16,6 +16,10 @@ from app.core.services.document_manipulation import document_manipulation  # noq
 
 
 class TestPdfManipulation(IsolatedAsyncioTestCase):
+
+    encrypted_pdf_mock = MagicMock(return_value=b"encrypted_sample")
+    encrypted_pdf_mock.keys = MagicMock(return_value=["key1", "/Encrypt", "key2"])
+
     def setUp(self) -> None:
         super(TestPdfManipulation, self).setUp()
 
@@ -60,4 +64,13 @@ class TestPdfManipulation(IsolatedAsyncioTestCase):
     def test_split_pdf_valid_pdf_no_pages_to_split(self, mock_parse_pdf):
         result = document_manipulation.split_pdf(io.BytesIO(), 1, 0)
         self.assertEqual(result.read(), b"")
+        self.assertEqual(mock_parse_pdf.call_count, 1)
+
+    @patch(
+        "app.core.services.document_manipulation.document_manipulation._parse_if_valid_pdf",
+        return_value=encrypted_pdf_mock,
+    )
+    def test_split_encrypted_pdf(self, mock_parse_pdf):
+        result = document_manipulation.split_pdf(io.BytesIO(b"ciao"), 2, 5)
+        self.assertEqual(result.read(), b"ciao")
         self.assertEqual(mock_parse_pdf.call_count, 1)
