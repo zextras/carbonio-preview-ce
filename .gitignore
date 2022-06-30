@@ -2,16 +2,19 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-.idea
-venv
+*.deb
+*.rpm
 .coverage
-preview.log
-__pycache__
+.idea
 Dockerfile
-package/carbonio-preview-ce.tar.xz
-scratch.py
 LICENSES
+__pycache__
 app/core/resources/config.ini
 app/core/resources/messages.ini
+artifacts
 build/
 carbonio_preview_ce.egg-info/
+package/carbonio-preview-ce.tar.xz
+preview.log
+scratch.py
+venv
