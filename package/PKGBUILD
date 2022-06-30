@@ -140,7 +140,7 @@ postinst() {
   getent group 'carbonio-preview' >/dev/null ||
     groupadd -r 'carbonio-preview'
   getent passwd 'carbonio-preview' >/dev/null ||
-    useradd -r -m -d '/home/carbonio-preview' -g 'carbonio-preview' -s /sbin/nologin 'carbonio-preview'
+    useradd -r -m -d '/var/lib/carbonio-preview' -g 'carbonio-preview' -s /sbin/nologin 'carbonio-preview'
 
   chown carbonio-preview:carbonio-preview "/var/log/carbonio/preview"
 
