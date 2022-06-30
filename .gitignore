@@ -13,3 +13,5 @@ scratch.py
 LICENSES
 app/core/resources/config.ini
 app/core/resources/messages.ini
+build/
+carbonio_preview_ce.egg-info/

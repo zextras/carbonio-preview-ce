@@ -6,7 +6,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart= /usr/bin/carbonio/preview/carbonio-preview-start.sh
+ExecStart= /usr/bin/carbonio-preview-start.sh
 User=carbonio-preview
 Group=carbonio-preview
 Restart=on-failure
