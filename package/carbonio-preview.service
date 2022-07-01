@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 [Unit]
 Description=Carbonio Preview daemon
 Documentation=https://docs.zextras.com/zextras-suite-documentation/latest/
@@ -6,7 +10,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart= /usr/bin/carbonio/preview/carbonio-preview-start.sh
+ExecStart= /usr/bin/carbonio-preview-start.sh
 User=carbonio-preview
 Group=carbonio-preview
 Restart=on-failure
