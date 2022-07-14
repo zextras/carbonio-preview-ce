@@ -74,11 +74,10 @@ async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.
     :param file: uploaded pdf to convert
     :param output_format: the image type that the thumbnail will have
     """
-    return await document_manipulation.convert_pdf_to(
-        content=file.file,
+    return await document_manipulation.convert_pdf_to_image(
+        content=file.file.read(),  # file.file,
         output_extension=output_format,
-        first_page_number=1,
-        last_page_number=1,
+        page_number=0,
     )
 
 
@@ -107,11 +106,10 @@ async def retrieve_pdf_and_create_thumbnail(
     else:
         return Response(
             content=(
-                await document_manipulation.convert_pdf_to(
+                await document_manipulation.convert_pdf_to_image(
                     content=io.BytesIO(response_data.content),
                     output_extension=output_format,
-                    first_page_number=1,
-                    last_page_number=1,
+                    page_number=0,
                 )
             ).read(),
             media_type=f"image/{output_format}",

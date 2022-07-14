@@ -48,7 +48,7 @@ repos:
         entry: python -m unittest discover
         language: python
         additional_dependencies: [
-            python-multipart, FastAPI, uvicorn, gunicorn, Pillow, pdfrw, responses, psutil
+            python-multipart, FastAPI, uvicorn, gunicorn, Pillow, pdfrw, responses, psutil, pypdfium2
         ]
         'types': [python]
         pass_filenames: false
