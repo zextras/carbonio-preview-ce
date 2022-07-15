@@ -9,6 +9,7 @@ python-multipart, 2012, Copyright Andrew Dunham;
 responses, 2015, Copyright David Cramer;
 bandit;
 requests;
+pypdfium2;
 
 
                                  Apache License
