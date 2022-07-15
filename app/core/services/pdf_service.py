@@ -75,7 +75,7 @@ async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.
     :param output_format: the image type that the thumbnail will have
     """
     return await document_manipulation.convert_pdf_to_image(
-        content=file.file.read(),  # file.file,
+        content=file.file.read(),
         output_extension=output_format,
         page_number=0,
     )
