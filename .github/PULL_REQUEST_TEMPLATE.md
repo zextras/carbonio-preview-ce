@@ -20,6 +20,7 @@ Please delete options that are not relevant or put an 'x' on the desired options
 
 This checklist is used as a reminder to avoid half-baked code
 - [ ] The PR title follows the following structure:" type[optional scope]: PREV-XX - LONG DESCRIPTION "
+- [ ] I have bumped both the PKGBUILD version and controller version, and they are the same.
 - [ ] I have correctly installed and enabled pre-commit
 - [ ] My code follows the style guidelines of this project
 - [ ] I have performed a self-review of my own code
