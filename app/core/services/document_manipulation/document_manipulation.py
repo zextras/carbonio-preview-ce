@@ -152,6 +152,11 @@ async def convert_pdf_to_image(
             output_extension,
             False,
             ImageQualityEnum.HIGHEST.get_jpeg_int_quality(),
+            # the render is automatically done at the highest quality.
+            # The desired quality will be set while processing the image
+            # at the end of the api call because
+            # doing it here will just increase method parameters and complexity,
+            # without major performance improvements
         )
     except pypdfium2.PdfiumError as e:
         log.info(f"Wrong pdf file passed, error: {e}")
