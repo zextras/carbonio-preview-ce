@@ -4,13 +4,18 @@
 import io
 import logging
 import sys
+import pypdfium2
+
 from typing import IO, Optional
 
 from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
+from starlette.exceptions import HTTPException
 
 from app.core.resources import libre_office_handler
 from app.core.resources.constants import service
+from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
+from app.core.services.image_manipulation import image_manipulation
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,7 @@ def split_pdf(
     :param last_page_number: last page to convert
     :return: pdf with the first n pages
     """
-    raw_content = content.read()
+    raw_content: bytes = content.read()
     pdf: PdfReader = _parse_if_valid_pdf(raw_content)
     if not pdf:
         return _write_pdf_to_buffer(None)  # returns empty pdf
@@ -125,6 +130,37 @@ async def convert_file_to(
     return await _convert_with_libre(
         content=content, output_extension=output_extension, log=log
     )
+
+
+async def convert_pdf_to_image(
+    content: IO, output_extension: str, page_number: int, log: logging = logger
+) -> io.BytesIO:
+    """
+    Converts pdf to any image supported format using PDFium
+    \f
+    :param content: pdf to convert
+    :param output_extension: desired file output type
+    :param page_number: first page to convert
+    :param log: logger to use
+    """
+    try:
+        pdf = pypdfium2.PdfDocument(content)
+        page = pdf.get_page(page_number)
+        pil_image = page.render_topil()
+        return image_manipulation.save_image_to_buffer(
+            pil_image,
+            output_extension,
+            False,
+            ImageQualityEnum.HIGHEST.get_jpeg_int_quality(),
+            # the render is automatically done at the highest quality.
+            # The desired quality will be set while processing the image
+            # at the end of the api call because
+            # doing it here will just increase method parameters and complexity,
+            # without major performance improvements
+        )
+    except pypdfium2.PdfiumError as e:
+        log.info(f"Wrong pdf file passed, error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid pdf file")
 
 
 async def convert_pdf_to(

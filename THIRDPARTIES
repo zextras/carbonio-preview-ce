@@ -9,6 +9,7 @@ python-multipart, 2012, Copyright Andrew Dunham;
 responses, 2015, Copyright David Cramer;
 bandit;
 requests;
+pypdfium2;
 
 
                                  Apache License
@@ -218,6 +219,7 @@ requests;
 BSD 3-Clause License (BSD-3-Clause) applies to:
 
 uvicorn, 2017, Copyright Encode OSS Ltd;
+psutil, 2009, Copyright Jay Loden, Dave Daeschler, Giampaolo Rodola';
 PyPDF2
 2006-2008, Copyright Mathieu Fenniak,
 2007, Some contributions copyright Ashish Kulkarni <kulkarni.ashish@gmail.com>,
