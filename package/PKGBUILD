@@ -3,8 +3,8 @@ targets=(
    "ubuntu"
 )
 pkgname="carbonio-preview-ce"
-pkgver="0.2.9"
-pkgrel="3"
+pkgver="0.2.10"
+pkgrel="1"
 pkgdesc="Carbonio Preview"
 pkgdesclong=(
   "Carbonio Preview"
