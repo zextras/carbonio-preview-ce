@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+from threading import Thread
+
 from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
 )
@@ -56,9 +58,30 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
         if not is_libre_instance_up():
             _shutdown_libre_instance()  # clean up memory, remove failed to boot instance
         else:
+            Thread(target=watchdog_threaded_function).start()
             break
     log.info(f"Started LibreOffice instance at {interface}:{libre_port}")
     return True
+
+
+def watchdog_threaded_function():
+    watchdog_sleep_time = 60
+    while True:
+        logger.debug(
+            f"Checking LibreOffice status at ip: {IP} and port: {libre_port}.."
+        )
+        if not is_libre_instance_up(watchdog_sleep_time):
+            logger.info(
+                f"LibreOffice is offline at ip: {IP} and port: {libre_port},"
+                f" restarting worker .."
+            )
+            shutdown_worker()
+        else:
+            logger.debug(
+                f"LibreOffice is working at ip: {IP} and port: {libre_port},"
+                f" sleeping for {watchdog_sleep_time} seconds .."
+            )
+            time.sleep(watchdog_sleep_time)
 
 
 def init_signals():
@@ -104,7 +127,7 @@ def _shutdown_libre_instance():
         libre_instance.terminate()
 
 
-def is_libre_instance_up() -> bool:
+def is_libre_instance_up(timeout: int = 5) -> bool:
     """
     method that checks if the worker instances of unoserver is up and running
     \f
@@ -113,12 +136,13 @@ def is_libre_instance_up() -> bool:
     if type(UnoConverter) != ImportError:
         try:
             future = executor.submit(UnoConverter, IP, libre_port)
-            future.result(timeout=5)
+            future.result(timeout=timeout)
             return True
         except Exception as e:
             logger.warning(
                 f"Encountered the following exception"
-                f" while trying to connect to unoserver: {e}"
+                f" while trying to connect to unoserver: "
+                f"{e} at ip {IP} and port {libre_port}"
             )
     return False
 
