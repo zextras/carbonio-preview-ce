@@ -75,7 +75,7 @@ def watchdog_threaded_function():
                 f"LibreOffice is offline at ip: {IP} and port: {libre_port},"
                 f" restarting worker .."
             )
-            shutdown_worker()
+            shutdown_worker(exit_code=10)
         else:
             logger.debug(
                 f"LibreOffice is working at ip: {IP} and port: {libre_port},"
@@ -97,21 +97,23 @@ def init_signals():
     signal.signal(signal.SIGHUP, shutdown_worker)
 
 
-def shutdown_worker(signal_number=6, caller=None):
+def shutdown_worker(signal_number=6, caller=None, exit_code: int = 1):
     """
     Shuts down LibreOffice worker instance and current worker.
     \f
     :param signal_number: number representing signal received (example 6 = Abort)
     :param caller: function that made the signal fire
+    :param exit_code: return code used for debugging
     :return: True if the service booted up correctly
     """
     logger.warning(
-        f"Shut down worker called from {caller} with signal number {signal_number}"
+        f"Shut down worker called from {caller} with"
+        f" signal number {signal_number} and exit code {exit_code}"
     )
     _shutdown_libre_instance()
     logging.shutdown()
     executor.shutdown()
-    os._exit(1)
+    os._exit(exit_code)
 
 
 def _shutdown_libre_instance():
