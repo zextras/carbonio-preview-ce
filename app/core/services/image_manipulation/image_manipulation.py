@@ -36,6 +36,7 @@ def save_image_to_buffer(
     :return: buffer pointing at the start of the file, containing raw image
     """
     buffer = io.BytesIO()
+    img = ImageOps.exif_transpose(img)
     img.save(buffer, format=_format, optimize=_optimize, quality=_quality_value)
     buffer.seek(0)
     log.debug("PIL Image successfully saved to buffer.")
@@ -305,7 +306,8 @@ def _parse_to_valid_image(content: io.BytesIO):
     :return parsed image or new empty image
     """
     try:
-        return Image.open(content)
+        img = Image.open(content)
+        return ImageOps.exif_transpose(img)
     except PIL.UnidentifiedImageError as e:
         logger.debug(f"Invalid or empty image caused error: {e}")
         return Image.new("RGB", (consts.MINIMUM_RESOLUTION, consts.MINIMUM_RESOLUTION))
