@@ -133,6 +133,7 @@ def is_libre_instance_up(timeout: int = 5) -> bool:
     """
     method that checks if the worker instances of unoserver is up and running
     \f
+    :param timeout: seconds to wait for a response from LibreOffice
     :return: True if the instance is working
     """
     if type(UnoConverter) != ImportError:
