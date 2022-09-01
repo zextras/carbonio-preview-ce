@@ -5,6 +5,8 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
+from PIL import ImageOps
+
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
@@ -30,6 +32,7 @@ class TestImageManipulation(unittest.TestCase):
     def test_save_image_to_buffer(self):
         img_to_save = MagicMock()
         img_to_save.save = MagicMock()
+        ImageOps.exif_transpose = MagicMock(return_value=img_to_save)
         buffer = image_manipulation.save_image_to_buffer(img_to_save)
         self.assertEqual(1, img_to_save.save.call_count)
         self.assertEqual([], buffer.readlines())
