@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+from threading import Thread
+
 from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
 )
@@ -56,9 +58,30 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
         if not is_libre_instance_up():
             _shutdown_libre_instance()  # clean up memory, remove failed to boot instance
         else:
+            Thread(target=watchdog_threaded_function).start()
             break
     log.info(f"Started LibreOffice instance at {interface}:{libre_port}")
     return True
+
+
+def watchdog_threaded_function():
+    watchdog_sleep_time = 60
+    while True:
+        logger.debug(
+            f"Checking LibreOffice status at ip: {IP} and port: {libre_port}.."
+        )
+        if not is_libre_instance_up(watchdog_sleep_time):
+            logger.info(
+                f"LibreOffice is offline at ip: {IP} and port: {libre_port},"
+                f" restarting worker .."
+            )
+            shutdown_worker(exit_code=10)
+        else:
+            logger.debug(
+                f"LibreOffice is working at ip: {IP} and port: {libre_port},"
+                f" sleeping for {watchdog_sleep_time} seconds .."
+            )
+            time.sleep(watchdog_sleep_time)
 
 
 def init_signals():
@@ -74,21 +97,23 @@ def init_signals():
     signal.signal(signal.SIGHUP, shutdown_worker)
 
 
-def shutdown_worker(signal_number=6, caller=None):
+def shutdown_worker(signal_number=6, caller=None, exit_code: int = 1):
     """
     Shuts down LibreOffice worker instance and current worker.
     \f
     :param signal_number: number representing signal received (example 6 = Abort)
     :param caller: function that made the signal fire
+    :param exit_code: return code used for debugging
     :return: True if the service booted up correctly
     """
     logger.warning(
-        f"Shut down worker called from {caller} with signal number {signal_number}"
+        f"Shut down worker called from {caller} with"
+        f" signal number {signal_number} and exit code {exit_code}"
     )
     _shutdown_libre_instance()
     logging.shutdown()
     executor.shutdown()
-    os._exit(1)
+    os._exit(exit_code)
 
 
 def _shutdown_libre_instance():
@@ -104,21 +129,23 @@ def _shutdown_libre_instance():
         libre_instance.terminate()
 
 
-def is_libre_instance_up() -> bool:
+def is_libre_instance_up(timeout: int = 5) -> bool:
     """
     method that checks if the worker instances of unoserver is up and running
     \f
+    :param timeout: seconds to wait for a response from LibreOffice
     :return: True if the instance is working
     """
     if type(UnoConverter) != ImportError:
         try:
             future = executor.submit(UnoConverter, IP, libre_port)
-            future.result(timeout=5)
+            future.result(timeout=timeout)
             return True
         except Exception as e:
             logger.warning(
                 f"Encountered the following exception"
-                f" while trying to connect to unoserver: {e}"
+                f" while trying to connect to unoserver: "
+                f"{e} at ip {IP} and port {libre_port}"
             )
     return False
 
