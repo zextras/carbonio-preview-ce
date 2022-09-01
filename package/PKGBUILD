@@ -46,6 +46,15 @@ makedepends:apt=(
   "python3-pip"
 )
 
+provides:yum=(
+  "libjpeg-62ed1500.so.62.3.0(LIBJPEG_6.2)(64bit)"
+  "liblzma-d540a118.so.5.2.5(XZ_5.0)(64bit)"
+  "libpng16-213e245f.so.16.37.0(PNG16_0)(64bit)"
+  "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
+  "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
+  "/bin/python3"
+)
+
 sources=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
