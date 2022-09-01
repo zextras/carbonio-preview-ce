@@ -26,7 +26,8 @@ def save_image_to_buffer(
 ) -> io.BytesIO:
     """
     Saves the given image object to a buffer object,
-    converting to the given format and to the given quality
+    converting to the given format and to the given quality and rotated
+    according to EXIF metadata
     \f
     :param img: img to convert and save
     :param _format: format to save to
@@ -299,7 +300,7 @@ def _convert_requested_size_to_true_res_to_scale(
 
 def _parse_to_valid_image(content: io.BytesIO):
     """
-    Parses an image into a valid Pil Image,
+    Parses an image into a valid Pil Image rotating it according to EXIF metadata,
     if the image is empty returns empty MinxMin RGB image
     \f
     :param content: Image to parse
