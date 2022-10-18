@@ -13,7 +13,7 @@ Pillow~=9.0.0
 pdfrw~=0.4
 pypdfium2~=2.5.0
 
-unoserver==1.1
+unoserver==1.2
 psutil==5.9.0
 
 python-multipart

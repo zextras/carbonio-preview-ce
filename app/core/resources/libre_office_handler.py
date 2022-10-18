@@ -51,7 +51,7 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
             random.randint(49152, 62000)  # nosec
         )  # This random is not used for security or cryptographic purposes
         server = UnoServer(interface=interface, port=libre_port)
-        libre_instance = server.start(daemon=True, executable=LIBRE_OFFICE_PATH)
+        libre_instance = server.start(executable=LIBRE_OFFICE_PATH)
         time.sleep(2 + sleep)
         # Used to avoid flooding with libreoffice startup.
         # You also need to wait a little for libre process to startup before checking.
