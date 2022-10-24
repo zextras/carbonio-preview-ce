@@ -44,7 +44,7 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
     """
     global libre_instance
     global libre_port
-    sleep = 0
+    sleep = 12
     while True:  # in Python do while are represented as while true: if x break
         sleep += 1
         libre_port = str(
