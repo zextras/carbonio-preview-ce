@@ -40,12 +40,12 @@ makedepends:apt=(
 )
 
 provides:yum=(
-  "libjpeg-62ed1500.so.62.3.0(LIBJPEG_6.2)(64bit)"
+  "libjpeg-3e290cba.so.62.3.0(LIBJPEG_6.2)(64bit)"
   "liblzma-d540a118.so.5.2.5(XZ_5.0)(64bit)"
-  "libpng16-213e245f.so.16.37.0(PNG16_0)(64bit)"
+  "libpng16-52f22300.so.16.37.0(PNG16_0)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
-  "/bin/python3"
+  "/bin/python3.8"
 )
 
 sources=(
@@ -73,7 +73,6 @@ hashsums=(
   "skip"
   "skip"
   "skip"
-  "skip"
 )
 
 backup=(
@@ -81,7 +80,7 @@ backup=(
   "/etc/carbonio/preview/config.ini"
 )
 
-package() {
+build:apt() {
   cd "${srcdir}"/../staging
 
   pip3 install \
@@ -92,7 +91,28 @@ package() {
     --no-compile \
     --prefix=/opt/zextras/common \
     --root="${pkgdir}"
+}
 
+build:yum() {
+  cd "${srcdir}"/../staging
+
+  # ugly workaround to disable rpm system-wide stripping
+  # please don't execute outside of the build agent
+  echo "#!/bin/sh" > /usr/lib/rpm/brp-python-bytecompile
+  echo "#!/bin/sh" > /usr/lib/rpm/brp-strip-static-archive
+  echo "#!/bin/sh" > /usr/lib/rpm/brp-strip
+
+  pip3.8 install \
+    --prefix="${pkgdir}/opt/zextras/common" \
+    -r requirements.txt
+
+  python3.8 setup.py install \
+    --no-compile \
+    --prefix=/opt/zextras/common \
+    --root="${pkgdir}"
+}
+
+package() {
   install -Dm755 "${srcdir}/carbonio-preview-start.sh" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 

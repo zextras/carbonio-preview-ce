@@ -16,7 +16,7 @@
 
 # cd could be avoided but we do it nonetheless
 
-export PYTHONPATH="/opt/zextras/common/lib/python3.8/site-packages/:${PYTHONPATH}"
+export PYTHONPATH="/opt/zextras/common/lib/python3.8/site-packages/:/opt/zextras/common/lib64/python3.8/site-packages/${PYTHONPATH}"
 
 /opt/zextras/common/bin/gunicorn app.controller:app \
   --config /opt/zextras/common/lib/python3.8/site-packages/app/gunicorn.conf.py
