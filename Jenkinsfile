@@ -51,16 +51,16 @@ pipeline {
                                 }
                             }
                         }
-                        stage('RHEL 8') {
+                        stage('Rocky 8') {
                             agent {
                                 node {
-                                    label 'pacur-agent-centos-8-v1'
+                                    label 'pacur-agent-rocky-8-v1'
                                 }
                             }
                             steps {
                                 unstash 'staging'
                                 sh 'cp -r staging /tmp'
-                                sh 'sudo pacur build centos /tmp/staging/package'
+                                sh 'sudo pacur build rocky /tmp/staging/package'
                                 dir('artifacts/') {
                                     sh 'echo carbonio-preview-ce* | sed -E "s#(carbonio-preview-ce-[0-9.]*).*#\\0 \\1.x86_64.rpm#" | xargs sudo mv'
                                 }
