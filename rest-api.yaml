@@ -1,0 +1,1064 @@
+﻿# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+openapi: 3.0.2
+info:
+  title: preview
+  description: "\nPreview service. \U0001F680 \n\nYou can preview the following type of files:\n\n* **images(png/jpeg)**\n* **pdf**\n* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**\n\nYou will be able to:\n\n* **Preview images**.\n* **Generate smart thumbnails**.\n\nThe main difference between thumbnail and preview\n functionality is that preview tends to be more faithful\nwhile thumbnail tends to elaborate on it, cropping\n it by default and rounding the image if asked.\nPreview should always output the file in its original format,\n while thumbnail will convert it to an image.\nThere is no difference in quality between the two,\n the difference in quality can be achieved only\nby asking for a jpeg format and changing the quality parameter.\n"
+  version: 0.2.11
+paths:
+  '/preview/image/{id}/{version}/{area}/thumbnail/':
+    get:
+      tags:
+        - image
+      summary: Get Thumbnail
+      description: |
+        Creates and returns a thumbnail of the image fetched by id and version
+        with the given size, quality, format and shape.
+        It will automatically crop the picture.
+        - **id**: UUID of the image
+        - **version**: version of the image
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        - **service_type**: Service that owns the resource
+         (service that first uploaded the data to storage)
+      operationId: get_thumbnail_preview_image__id___version___area__thumbnail__get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  '/preview/image/{area}/thumbnail/':
+    post:
+      tags:
+        - image
+      summary: Post Thumbnail
+      description: |
+        Creates and returns a thumbnail of the given image
+        with the given size, quality, format and shape.
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        This option will lose information, leaving it False will scale and
+        have borders to fill the requested size.
+        - **file**: file uploaded with FormData.
+      operationId: post_thumbnail_preview_image__area__thumbnail__post
+      parameters:
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: >-
+                #/components/schemas/Body_post_thumbnail_preview_image__area__thumbnail__post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/image/{area}/':
+    post:
+      tags:
+        - image
+      summary: Post Preview
+      description: |
+        Creates and returns a preview of the given image
+        with the given size, quality and format
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **crop**: True will crop the picture starting from the borders.
+        This option will lose information, leaving it False will scale and
+        have borders to fill the requested size.
+        - **file**: file uploaded with FormData.
+      operationId: post_preview_preview_image__area___post
+      parameters:
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: false
+          schema:
+            title: Crop
+            type: boolean
+            default: false
+          name: crop
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: >-
+                #/components/schemas/Body_post_preview_preview_image__area___post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/image/{id}/{version}/{area}/':
+    get:
+      tags:
+        - image
+      summary: Get Preview
+      description: |
+        Creates and returns a preview of the image fetched by id and version
+        with the given size, quality and format
+        - **id**: UUID of the image
+        - **version**: version of the image
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **crop**: True will crop the picture starting from the borders.
+        This option will lose information, leaving it False will scale and
+        have borders to fill the requested size.
+        - **service_type**: Service that owns the resource
+        (service that first uploaded the data to storage)
+      operationId: get_preview_preview_image__id___version___area___get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            title: Crop
+            type: boolean
+            default: false
+          name: crop
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  '/preview/pdf/{id}/{version}/':
+    get:
+      tags:
+        - pdf
+      summary: Get Preview
+      description: >
+        Create and returns a preview of the given file,
+
+        the pdf file will contain the first and last page given.
+
+        With default values will return all the pages.
+
+        - **id**: UUID of the pdf.
+
+        - **version**: version of the pdf.
+
+        - **first_page**: integer value of first page to preview (n>=1)
+
+        - **last_page**: integer value of last page to preview  (0 = last of the
+        pdf)
+
+        - **service_type**: Service that owns the resource
+
+        (service that first uploaded the data to storage)
+      operationId: get_preview_preview_pdf__id___version___get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            title: First Page
+            type: integer
+            default: 1
+          name: first_page
+          in: query
+        - required: false
+          schema:
+            title: Last Page
+            type: integer
+            default: 0
+          name: last_page
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  /preview/pdf/:
+    post:
+      tags:
+        - pdf
+      summary: Post Preview
+      description: >
+        Create and returns a preview of the given file,
+
+        the pdf file will contain the first and last page given.
+
+        With default values will return all the pages.
+
+        - **file**: file uploaded with FormData.
+
+        - **first_page**: integer value of first page to preview (n>=1)
+
+        - **last_page**: integer value of last page to preview  (0 = last of the
+        pdf)
+      operationId: post_preview_preview_pdf__post
+      parameters:
+        - required: false
+          schema:
+            title: First Page
+            type: integer
+            default: 1
+          name: first_page
+          in: query
+        - required: false
+          schema:
+            title: Last Page
+            type: integer
+            default: 0
+          name: last_page
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_post_preview_preview_pdf__post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/pdf/{area}/thumbnail/':
+    post:
+      tags:
+        - pdf
+      summary: Post Thumbnail
+      description: |
+        Create and returns the thumbnail of the given file,
+        the image rendered will be the first page.
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        - **file**: file uploaded with FormData.
+      operationId: post_thumbnail_preview_pdf__area__thumbnail__post
+      parameters:
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: >-
+                #/components/schemas/Body_post_thumbnail_preview_pdf__area__thumbnail__post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/pdf/{id}/{version}/{area}/thumbnail/':
+    get:
+      tags:
+        - pdf
+      summary: Get Thumbnail
+      description: |
+        Create and returns a thumbnail of the file fetched by id and version
+        the image will be rendered from the first page.
+        - **id**: UUID of the pdf.
+        - **version**: version of the file.
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        - **service_type**: Service that owns the resource
+         (service that first uploaded the data to storage)
+      operationId: get_thumbnail_preview_pdf__id___version___area__thumbnail__get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  '/preview/document/{id}/{version}/':
+    get:
+      tags:
+        - document
+      summary: Get Preview
+      description: >
+        Create and returns a pdf preview of the given file,
+
+        the pdf file will contain the first and last page given.
+
+        With default values will return all the pages.
+
+        - **id**: UUID of the file.
+
+        - **version**: version of the file.
+
+        - **first_page**: integer value of first page to preview (n>=1)
+
+        - **last_page**: integer value of last page to preview  (0 = last of the
+        file)
+
+        - **service_type**: Service that owns the resource
+
+        (service that first uploaded the data to storage)
+      operationId: get_preview_preview_document__id___version___get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            title: First Page
+            type: integer
+            default: 1
+          name: first_page
+          in: query
+        - required: false
+          schema:
+            title: Last Page
+            type: integer
+            default: 0
+          name: last_page
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  /preview/document/:
+    post:
+      tags:
+        - document
+      summary: Post Preview
+      description: >
+        Create and returns a pdf preview of the given file,
+
+        the pdf file will contain the first and last page given.
+
+        With default values will return all the pages.
+
+        - **file**: file uploaded with FormData.
+
+        - **first_page**: integer value of first page to preview (n>=1)
+
+        - **last_page**: integer value of last page to preview  (0 = last of the
+        pdf)
+      operationId: post_preview_preview_document__post
+      parameters:
+        - required: false
+          schema:
+            title: First Page
+            type: integer
+            default: 1
+          name: first_page
+          in: query
+        - required: false
+          schema:
+            title: Last Page
+            type: integer
+            default: 0
+          name: last_page
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_post_preview_preview_document__post'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/document/{area}/thumbnail/':
+    post:
+      tags:
+        - document
+      summary: Post Thumbnail
+      description: |
+        Create and returns the thumbnail of the given file,
+        the image rendered will be the first page.
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        - **file**: file uploaded with FormData.
+      operationId: post_thumbnail_preview_document__area__thumbnail__post
+      parameters:
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: >-
+                #/components/schemas/Body_post_thumbnail_preview_document__area__thumbnail__post
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '400':
+          description: Some values in the query were not correct.
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  '/preview/document/{id}/{version}/{area}/thumbnail/':
+    get:
+      tags:
+        - document
+      summary: Get Thumbnail
+      description: |
+        Create and returns a thumbnail of the file fetched by id and version
+        the image will be rendered from the first page.
+        - **id**: UUID of the file.
+        - **version**: version of the file.
+        - **quality**: quality of the output image
+        (the higher you go the slower the process)
+        - **output_format**: format of the output image
+        - **area**: width of the output image (>=0) x
+        height of the output image (>=0), width x height => 100x200.
+        The first is width, the latter height, the order is important!
+        - **shape**: Rounded and Rectangular are currently supported.
+        - **service_type**: Service that owns the resource
+         (service that first uploaded the data to storage)
+      operationId: get_thumbnail_preview_document__id___version___area__thumbnail__get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '404':
+          description: Requested item was not found in the storage.
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+  /health/:
+    get:
+      tags:
+        - health
+      summary: Health
+      description: |
+        Checks if the service and all of its dependencies are
+        working and returns a descriptive json
+      operationId: health_health__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '429':
+          description: >-
+            Unoserver's LibreOffice instance was not initialized correctly,
+            document preview service is currently offline.
+        '502':
+          description: Storage is currently unavailable.
+  /health/ready/:
+    get:
+      tags:
+        - health
+      summary: Health Ready
+      description: >
+        Checks if the service is up and essential dependencies are running
+        correctly
+      operationId: health_ready_health_ready__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '429':
+          description: >-
+            Unoserver's LibreOffice instance was not initialized correctly,
+            document preview service is currently offline.
+        '502':
+          description: Storage is currently unavailable.
+  /health/live/:
+    get:
+      tags:
+        - health
+      summary: Health Live
+      description: |
+        Checks if the service is up
+      operationId: health_live_health_live__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '429':
+          description: >-
+            Unoserver's LibreOffice instance was not initialized correctly,
+            document preview service is currently offline.
+        '502':
+          description: Storage is currently unavailable.
+components:
+  schemas:
+    Body_post_preview_preview_document__post:
+      title: Body_post_preview_preview_document__post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    Body_post_preview_preview_image__area___post:
+      title: Body_post_preview_preview_image__area___post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    Body_post_preview_preview_pdf__post:
+      title: Body_post_preview_preview_pdf__post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    Body_post_thumbnail_preview_document__area__thumbnail__post:
+      title: Body_post_thumbnail_preview_document__area__thumbnail__post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    Body_post_thumbnail_preview_image__area__thumbnail__post:
+      title: Body_post_thumbnail_preview_image__area__thumbnail__post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    Body_post_thumbnail_preview_pdf__area__thumbnail__post:
+      title: Body_post_thumbnail_preview_pdf__area__thumbnail__post
+      required:
+        - file
+      type: object
+      properties:
+        file:
+          title: File
+          type: string
+          format: binary
+    HTTPValidationError:
+      title: HTTPValidationError
+      type: object
+      properties:
+        detail:
+          title: Detail
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
+    ImageBorderShapeEnum:
+      title: ImageBorderShapeEnum
+      enum:
+        - rounded
+        - rectangular
+      type: string
+      description: |2-
+
+            Class representing all the image type accepted values
+
+    ImageQualityEnum:
+      title: ImageQualityEnum
+      enum:
+        - lowest
+        - low
+        - medium
+        - high
+        - highest
+      type: string
+      description: |2-
+
+            Class representing all the image quality accepted values
+
+    ImageTypeEnum:
+      title: ImageTypeEnum
+      enum:
+        - jpeg
+        - png
+      type: string
+      description: |2-
+
+            Class representing all the image type accepted values
+
+    ServiceTypeEnum:
+      title: ServiceTypeEnum
+      enum:
+        - files
+        - chats
+      type: string
+      description: |2-
+
+            Class representing all the service type accepted values
+
+    ValidationError:
+      title: ValidationError
+      required:
+        - loc
+        - msg
+        - type
+      type: object
+      properties:
+        loc:
+          title: Location
+          type: array
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          title: Message
+          type: string
+        type:
+          title: Error Type
+          type: string

@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: carbonio-preview-ce
+  title: Carbonio Preview CE service
+  description: Service to generate thumbnail and preview of images, documents and pdfs.
+  tags:
+    - python
+    - backend
+  links:
+    - url: https://github.com/Zextras/carbonio-preview-ce/blob/develop/README.md
+      title: README
+spec:
+  type: service
+  lifecycle: production
+  owner: shuffled-waffles
+  providesApis:
+    - carbonio-preview-ce-rest-api
+  dependsOn:
+    - carbonio-storages-ce
+    - carbonio-storages-ce-java-sdk
+
+---
+
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: carbonio-files-ce-rest-api
+  title: Carbonio Files CE REST APIs
+  description: Carbonio Files Community Edition REST APIs.
+  tags:
+    - rest
+spec:
+  type: openapi
+  lifecycle: production
+  owner: shuffled-waffles
+  definition:
+    $text: https://github.com/Zextras/carbonio-preview-ce/blob/develop/rest-api.yaml
