@@ -29,9 +29,9 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
-  name: carbonio-files-ce-rest-api
-  title: Carbonio Files CE REST APIs
-  description: Carbonio Files Community Edition REST APIs.
+  name: carbonio-preview-ce-rest-api
+  title: Carbonio Preview CE REST APIs
+  description: Carbonio Preview Community Edition REST APIs.
   tags:
     - rest
 spec:
