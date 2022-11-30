@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from threading import Thread
 
+from app.core.resources.constants import service
 from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
 )
@@ -43,6 +44,9 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
     :param log: logger to use
     :return: True if the service booted up correctly
     """
+    if not service.ARE_DOCS_ENABLED:
+        return True
+
     global libre_instance
     global libre_port
     sleep = 12

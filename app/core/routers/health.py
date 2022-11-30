@@ -33,10 +33,7 @@ async def health() -> dict:
     """
 
     req = f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
-    is_libre_enabled: bool = (
-        service.ENABLE_DOCUMENT_PREVIEW or service.ENABLE_DOCUMENT_THUMBNAIL
-    )
-    is_libre_up: bool = is_libre_instance_up() if is_libre_enabled else False
+    is_libre_up: bool = is_libre_instance_up() if service.ARE_DOCS_ENABLED else False
     try:
         response = requests.get(req, timeout=5)
         response.raise_for_status()
@@ -57,7 +54,7 @@ async def health() -> dict:
                 "name": "libreoffice",
                 "ready": is_libre_up,
                 "live": is_libre_up,
-                "type": "REQUIRED" if is_libre_enabled else "OPTIONAL",
+                "type": "REQUIRED" if service.ARE_DOCS_ENABLED else "OPTIONAL",
             },
         ],
     }
@@ -72,10 +69,7 @@ async def health_ready() -> Response:
     \f
     :return: returns 200 if service and libreoffice are running
     """
-    is_libre_enabled = (
-        service.ENABLE_DOCUMENT_THUMBNAIL or service.ENABLE_DOCUMENT_PREVIEW
-    )
-    if not is_libre_enabled or is_libre_instance_up():
+    if not service.ARE_DOCS_ENABLED or is_libre_instance_up():
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)
     else:

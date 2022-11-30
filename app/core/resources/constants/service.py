@@ -32,6 +32,8 @@ ENABLE_DOCUMENT_PREVIEW = (
     else False
 )
 
+ARE_DOCS_ENABLED: bool = ENABLE_DOCUMENT_PREVIEW or ENABLE_DOCUMENT_THUMBNAIL
+
 DESCRIPTION = """
 Preview service. 🚀 \n
 You can preview the following type of files:
