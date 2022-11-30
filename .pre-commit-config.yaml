@@ -4,39 +4,39 @@
 
 repos:
 -   repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v1.2.0
+    rev: v2.1.1
     hooks:
     -   id: conventional-pre-commit
         stages: [commit-msg]
         args: []
 
 -   repo: https://github.com/pre-commit/mirrors-autopep8
-    rev: v1.6.0
+    rev: v2.0.0
     hooks:
     -   id: autopep8
         language_version: python3.8
 
 -   repo: https://github.com/python/black.git
-    rev: 22.1.0
+    rev: 22.10.0
     hooks:
       - id: black
         language_version: python3.8
 
 -   repo: https://github.com/PyCQA/bandit
-    rev: 1.7.3
+    rev: 1.7.4
     hooks:
     -   id: bandit
         language_version: python3.8
 
--   repo: https://gitlab.com/pycqa/flake8
-    rev: 4.0.1
+-   repo: https://github.com/pyCQA/flake8
+    rev: 6.0.0
     hooks:
     - id: flake8
       exclude: ^tests/
       language_version: python3.8
 
 -   repo: https://github.com/fsfe/reuse-tool
-    rev: v0.14.0
+    rev: v1.0.0
     hooks:
         - id: reuse
           exclude: Dockerfile

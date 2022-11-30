@@ -13,6 +13,8 @@ from app.core.resources.data_validator import (
     is_id_valid,
     check_for_image_metadata_errors,
     check_for_document_metadata_errors,
+    check_if_document_preview_is_enabled,
+    check_if_document_thumbnail_is_enabled,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -61,6 +63,13 @@ async def get_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
+
+    document_preview_service_errors: Optional[
+        Response
+    ] = check_if_document_preview_is_enabled()
+    if document_preview_service_errors:
+        return document_preview_service_errors
+
     validation_errors: Optional[Response] = check_for_document_metadata_errors(
         first_page=first_page,
         last_page=last_page,
@@ -101,6 +110,11 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
+    document_preview_service_errors: Optional[
+        Response
+    ] = check_if_document_preview_is_enabled()
+    if document_preview_service_errors:
+        return document_preview_service_errors
 
     validation_errors: Optional[Response] = check_for_document_metadata_errors(
         first_page=first_page,
@@ -150,6 +164,13 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
+
+    document_thumbnail_service_errors: Optional[
+        Response
+    ] = check_if_document_thumbnail_is_enabled()
+    if document_thumbnail_service_errors:
+        return document_thumbnail_service_errors
+
     metadata_dict = {
         "quality": quality,
         "format": output_format,
@@ -219,12 +240,19 @@ async def get_thumbnail(
     the requested pdf modified accordingly.
     """
 
+    document_thumbnail_service_errors: Optional[
+        Response
+    ] = check_if_document_thumbnail_is_enabled()
+    if document_thumbnail_service_errors:
+        return document_thumbnail_service_errors
+
     metadata_dict = {
         "quality": quality,
         "format": output_format,
         "shape": shape,
         "crop_position": VerticalCropPositionEnum.TOP,
     }
+
     validation_errors: Optional[Response] = check_for_image_metadata_errors(
         area=area,
         metadata_dict=metadata_dict,

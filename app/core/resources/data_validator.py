@@ -8,13 +8,13 @@ from typing import Optional
 from starlette import status
 from starlette.responses import Response
 
-from app.core.resources.constants import message
+from app.core.resources.constants import message, service
 
 
 def is_id_valid(file_id: str) -> bool:
     """
     Validate the id, compares it to the structure of UUID1 to UUID4
-
+    \f
     :param file_id: id to validate
     :return: True if there was no error parsing it
     """
@@ -124,3 +124,37 @@ def check_for_image_metadata_errors(
             content=message.HEIGHT_WIDTH_NOT_VALID_ERROR,
             status_code=status.HTTP_400_BAD_REQUEST,
         )
+
+
+def check_if_document_thumbnail_is_enabled():
+    """
+    Checks if the document thumbnail option is enabled
+    \f
+    :return: a Response with status code 400 and content with
+     detailed explanation if thumbnail is not enabled
+    """
+    return (
+        None
+        if service.ENABLE_DOCUMENT_THUMBNAIL
+        else Response(
+            content=message.DOCUMENT_THUMBNAIL_NOT_ENABLED_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    )
+
+
+def check_if_document_preview_is_enabled():
+    """
+    Checks if the document preview option is enabled
+    \f
+    :return: a Response with status code 400 and content with
+     detailed explanation if preview is not enabled
+    """
+    return (
+        None
+        if service.ENABLE_DOCUMENT_PREVIEW
+        else Response(
+            content=message.DOCUMENT_PREVIEW_NOT_ENABLED_ERROR,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+    )

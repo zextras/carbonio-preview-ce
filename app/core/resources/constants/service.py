@@ -8,9 +8,29 @@ from app.core.resources.config_loader import read_config
 # SERVICE CONFIG
 _service_section_name: str = "service"
 NAME: str = read_config(section=_service_section_name, value="name")
-TIMEOUT: int = int(read_config(section=_service_section_name, value="timeout"))
+TIMEOUT: int = int(
+    read_config(section=_service_section_name, value="timeout_in_seconds")
+)
 IP: str = read_config(section=_service_section_name, value="ip")
 PORT: int = int(read_config(section=_service_section_name, value="port"))
+
+ENABLE_DOCUMENT_THUMBNAIL: bool = (
+    True
+    if read_config(
+        section=_service_section_name, value="enable_document_thumbnail"
+    ).lower()
+    == "true"
+    else False
+)
+
+ENABLE_DOCUMENT_PREVIEW = (
+    True
+    if read_config(
+        section=_service_section_name, value="enable_document_preview"
+    ).lower()
+    == "true"
+    else False
+)
 
 DESCRIPTION = """
 Preview service. 🚀 \n
