@@ -255,6 +255,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 MIT License (MIT) applies to:
 
+fastapi, 2018, Copyright Sebastián Ramírez;
 unoserver, 2021, Copyright unoconv;
 black, 2018, Copyright Łukasz Langa;
 gunicorn
