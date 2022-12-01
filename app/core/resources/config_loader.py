@@ -4,7 +4,7 @@
 
 import configparser
 import os
-from typing import List
+from typing import List, Any
 
 config = configparser.ConfigParser()
 message_config = configparser.ConfigParser()
@@ -35,8 +35,13 @@ load_config()
 load_message_config()
 
 
-def read_config(section: str, value: str, raw: bool = False) -> str:
-    return config.get(section, value, raw=raw)
+def read_config(
+    section: str, value: str, raw: bool = False, default_value: Any = None
+) -> str:
+    if default_value:
+        return config.get(section, value, raw=raw, fallback=default_value)
+    else:
+        return config.get(section, value, raw=raw)
 
 
 def read_message_config(section: str, value: str, raw: bool = False) -> str:

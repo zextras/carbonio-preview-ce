@@ -126,7 +126,7 @@ def check_for_image_metadata_errors(
         )
 
 
-def check_if_document_thumbnail_is_enabled():
+def check_if_document_thumbnail_is_enabled() -> Optional[Response]:
     """
     Checks if the document thumbnail option is enabled
     \f
@@ -143,7 +143,7 @@ def check_if_document_thumbnail_is_enabled():
     )
 
 
-def check_if_document_preview_is_enabled():
+def check_if_document_preview_is_enabled() -> Optional[Response]:
     """
     Checks if the document preview option is enabled
     \f

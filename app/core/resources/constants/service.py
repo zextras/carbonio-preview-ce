@@ -17,7 +17,9 @@ PORT: int = int(read_config(section=_service_section_name, value="port"))
 ENABLE_DOCUMENT_THUMBNAIL: bool = (
     True
     if read_config(
-        section=_service_section_name, value="enable_document_thumbnail"
+        section=_service_section_name,
+        value="enable_document_thumbnail",
+        default_value="false",
     ).lower()
     == "true"
     else False
@@ -26,7 +28,9 @@ ENABLE_DOCUMENT_THUMBNAIL: bool = (
 ENABLE_DOCUMENT_PREVIEW = (
     True
     if read_config(
-        section=_service_section_name, value="enable_document_preview"
+        section=_service_section_name,
+        value="enable_document_preview",
+        default_value="false",
     ).lower()
     == "true"
     else False
