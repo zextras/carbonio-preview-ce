@@ -221,8 +221,8 @@ async def _convert_with_libre(
         logger.warning(f"LibreOffice is not responding.. error {time_error}")
         sys.exit(1)
     except Exception as e:
-        logger.debug(
-            f"File to convert was empty, libre conversion failed with error {e}"
+        logger.info(
+            f"File to convert was corrupted, libre conversion failed with error {e}"
         )
 
     return out_data

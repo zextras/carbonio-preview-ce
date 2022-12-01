@@ -60,7 +60,10 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
         else:
             Thread(target=watchdog_threaded_function).start()
             break
-    log.info(f"Started LibreOffice instance at {interface}:{libre_port}")
+    log.info(
+        f"Started LibreOffice instance at {interface}:{libre_port}"
+        f" with pid {libre_instance.pid}"
+    )
     return True
 
 
@@ -72,13 +75,14 @@ def watchdog_threaded_function():
         )
         if not is_libre_instance_up(watchdog_sleep_time):
             logger.info(
-                f"LibreOffice is offline at ip: {IP} and port: {libre_port},"
-                f" restarting worker .."
+                f"LibreOffice is offline at ip: {IP} and port: {libre_port}"
+                f" with pid {libre_instance.pid}, restarting worker .."
             )
             shutdown_worker(exit_code=10)
         else:
             logger.debug(
-                f"LibreOffice is working at ip: {IP} and port: {libre_port},"
+                f"LibreOffice is working at ip: {IP} and port: {libre_port}"
+                f" with pid {libre_instance.pid},"
                 f" sleeping for {watchdog_sleep_time} seconds .."
             )
             time.sleep(watchdog_sleep_time)
@@ -145,7 +149,7 @@ def is_libre_instance_up(timeout: int = 5) -> bool:
             logger.warning(
                 f"Encountered the following exception"
                 f" while trying to connect to unoserver: "
-                f"{e} at ip {IP} and port {libre_port}"
+                f"{e} at ip {IP} and port {libre_port} with pid {libre_instance.pid}"
             )
     return False
 
@@ -178,13 +182,13 @@ def _kill_proc_tree(pid):
         )
         parent = psutil.Process(pid)
         children = parent.children(recursive=True)
-        for p in children:
+        for p in [*children, parent]:
             if p.pid == os.getpid():
-                logger.debug("Wrong pid, the process won't kill itself")
+                logger.debug(f"Wrong pid {p.pid}, the process won't kill itself")
                 continue
             p: psutil.Process
             try:
-                logger.debug(f"Current son pid to kill {p.pid}")
+                logger.info(f"Current son pid to kill {p.pid}")
                 p.send_signal(signal.SIGKILL)
             except psutil.NoSuchProcess:
                 pass

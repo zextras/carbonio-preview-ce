@@ -21,8 +21,8 @@ spec:
   providesApis:
     - carbonio-preview-ce-rest-api
   dependsOn:
-    - carbonio-storages-ce
-    - carbonio-storages-ce-java-sdk
+    - component: carbonio-storages-ce
+    - component: carbonio-storages-ce-java-sdk
 
 ---
 
