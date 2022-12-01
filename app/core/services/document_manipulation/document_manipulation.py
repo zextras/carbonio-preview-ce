@@ -13,7 +13,7 @@ from pdfrw.errors import PdfParseError
 from starlette.exceptions import HTTPException
 
 from app.core.resources import libre_office_handler
-from app.core.resources.constants import service
+from app.core.resources.constants import service, settings
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.services.image_manipulation import image_manipulation
 
@@ -215,7 +215,7 @@ async def _convert_with_libre(
             content,
             output_extension,
         )
-        out_data = io.BytesIO(future.result(timeout=service.TIMEOUT))
+        out_data = io.BytesIO(future.result(timeout=settings.LIBRE_OFFICE_TIMEOUT))
         out_data.seek(0)
     except TimeoutError as time_error:
         logger.warning(f"LibreOffice is not responding.. error {time_error}")

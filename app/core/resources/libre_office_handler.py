@@ -3,10 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from threading import Thread
 
+from app.core.resources.constants import service
 from app.core.resources.constants.settings import (
     LIBRE_OFFICE_PATH,
 )
 from app.core.resources.constants.service import IP
+from app.core.resources.constants.settings import LIBRE_OFFICE_TIMEOUT
 from unoserver.server import UnoServer
 from subprocess import Popen  # nosec
 import random
@@ -42,6 +44,9 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
     :param log: logger to use
     :return: True if the service booted up correctly
     """
+    if not service.ARE_DOCS_ENABLED:
+        return True
+
     global libre_instance
     global libre_port
     sleep = 12
@@ -68,12 +73,12 @@ def boot_libre_instance(interface: str = IP, log: logging = logger) -> bool:
 
 
 def watchdog_threaded_function():
-    watchdog_sleep_time = 60
+    watchdog_sleep_time = 30
     while True:
         logger.debug(
             f"Checking LibreOffice status at ip: {IP} and port: {libre_port}.."
         )
-        if not is_libre_instance_up(watchdog_sleep_time):
+        if not is_libre_instance_up(LIBRE_OFFICE_TIMEOUT):
             logger.info(
                 f"LibreOffice is offline at ip: {IP} and port: {libre_port}"
                 f" with pid {libre_instance.pid}, restarting worker .."

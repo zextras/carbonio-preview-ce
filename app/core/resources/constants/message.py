@@ -56,3 +56,11 @@ FORMAT_NOT_SUPPORTED_ERROR: str = read_message_config(
 FILE_NOT_VALID_ERROR: str = read_message_config(
     section=_validation_section_name, value="file_not_valid_error"
 )
+
+DOCUMENT_THUMBNAIL_NOT_ENABLED_ERROR: str = read_message_config(
+    section=_validation_section_name, value="document_thumbnail_not_enabled_error"
+)
+
+DOCUMENT_PREVIEW_NOT_ENABLED_ERROR: str = read_message_config(
+    section=_validation_section_name, value="document_preview_not_enabled_error"
+)
