@@ -30,7 +30,7 @@ ENABLE_DOCUMENT_PREVIEW = (
     if read_config(
         section=_service_section_name,
         value="enable_document_preview",
-        default_value="false",
+        default_value="true",
     ).lower()
     == "true"
     else False
