@@ -4,7 +4,7 @@ targets=(
 )
 pkgname="carbonio-preview-ce"
 pkgver="0.2.14"
-pkgrel="2"
+pkgrel="1"
 pkgdesc="Carbonio Preview"
 pkgdesclong=(
   "Carbonio Preview"
