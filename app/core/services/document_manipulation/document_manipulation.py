@@ -62,7 +62,9 @@ def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
     try:
         pdf = PdfReader(fdata=raw_content)
     except PdfParseError as e:  # not a valid pdf
-        logger.info(f"Not a valid pdf file, replacing it with an empty one. Error: {e}")
+        logger.warning(
+            f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
+        )
     finally:
         return pdf
 
@@ -73,7 +75,7 @@ def _write_pdf_to_buffer(
     """
     Writes file to PDF, if pdf is empty writes an empty pdf file
     \f
-    :param pdf: PdfReader object containing the content to write
+    :param pdf: list of PdfReader pages containing the content to write
     :param start_page: first page to write
     :param end_page: last page to write
     :return: io.BytesIO object with pdf content written in it
@@ -166,7 +168,7 @@ async def convert_pdf_to_image(
 
 def _get_sanitize_offset(buffer: io.BytesIO, pattern_to_find: str = "%PDF") -> int:
     """
-    Calculates of many bytes to skip to avoid extra headers, it continues until
+    Calculates how many bytes to skip to avoid extra headers, it continues until
     it finds the pattern requested
     \f
     :param buffer: pdf to search inside
