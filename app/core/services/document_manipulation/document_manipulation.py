@@ -6,7 +6,7 @@ import logging
 import sys
 import pypdfium2
 
-from typing import IO, Optional
+from typing import IO, Optional, Generator
 
 from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
@@ -31,6 +31,7 @@ def split_pdf(
     :param last_page_number: last page to convert
     :return: pdf with the first n pages
     """
+    content.seek(_get_sanitize_offset(content))
     raw_content: bytes = content.read()
     pdf: PdfReader = _parse_if_valid_pdf(raw_content)
     if not pdf:
@@ -60,19 +61,21 @@ def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
     pdf = None
     try:
         pdf = PdfReader(fdata=raw_content)
-    except PdfParseError:  # not a valid pdf
-        logger.debug("Not a valid pdf file, replacing it with an empty one")
+    except PdfParseError as e:  # not a valid pdf
+        logger.warning(
+            f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
+        )
     finally:
         return pdf
 
 
 def _write_pdf_to_buffer(
-    pdf: PdfReader = None, start_page: int = 0, end_page: int = 1
+    pdf: list = None, start_page: int = 0, end_page: int = 1
 ) -> io.BytesIO:
     """
     Writes file to PDF, if pdf is empty writes an empty pdf file
     \f
-    :param pdf: PdfReader object containing the content to write
+    :param pdf: list of PdfReader pages containing the content to write
     :param start_page: first page to write
     :param end_page: last page to write
     :return: io.BytesIO object with pdf content written in it
@@ -161,6 +164,40 @@ async def convert_pdf_to_image(
     except pypdfium2.PdfiumError as e:
         log.info(f"Wrong pdf file passed, error: {e}")
         raise HTTPException(status_code=400, detail="Invalid pdf file")
+
+
+def _get_sanitize_offset(buffer: io.BytesIO, pattern_to_find: str = "%PDF") -> int:
+    """
+    Calculates how many bytes to skip to avoid extra headers, it continues until
+    it finds the pattern requested
+    \f
+    :param buffer: pdf to search inside
+    :param pattern_to_find: pattern to search for inside the pdf,
+    every byte before the pattern will be summed up and returned
+    :returns: number of bytes before the pattern to find
+    """
+    offset = 0
+    # usually the extra headers are not many,
+    # it would be a waste to read all the file
+    for line in _read_buffer_line_by_line(buffer):
+        if line.startswith(pattern_to_find):
+            break
+        else:
+            offset_in_str = line.find(pattern_to_find)
+            if offset_in_str != -1:
+                offset += offset_in_str
+                break
+            else:
+                offset += len(line)
+    return offset
+
+
+def _read_buffer_line_by_line(buffer: IO) -> Generator:
+    while True:
+        curr_line = buffer.readline()
+        if not curr_line:
+            break
+        yield curr_line
 
 
 async def convert_pdf_to(

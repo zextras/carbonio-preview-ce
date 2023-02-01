@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[tool.flake8]
+max-line-length = 90
+exclude = ["tests/*", ".git", "__pycache__", "venv/*", "*.ini", "*.log"]
+max-complexity = 10
+
+[tool.bandit]
+exclude_dirs = ["tests/", "venv/"]

@@ -258,6 +258,9 @@ MIT License (MIT) applies to:
 fastapi, 2018, Copyright Sebastián Ramírez;
 unoserver, 2021, Copyright unoconv;
 black, 2018, Copyright Łukasz Langa;
+pytest, 2004, Copyright Holger Krekel and others;
+pytest-mockito, 2014, Copyright Herr Kaste <herr.kaste@gmail.com>;
+flake8-pyproject, 2022, Copyright John Hennig;
 gunicorn
 2009-2018 Copyright Benoît Chesneau <benoitc@e-engura.org>,
 2009-2015 Copyright Paul J. Davis <paul.joseph.davis@gmail.com>;
