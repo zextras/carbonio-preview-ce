@@ -98,7 +98,7 @@ class TestPdfManipulation(IsolatedAsyncioTestCase):
 def test_given_pdf_without_extra_headers_sanitize_offset_should_return_0(expect):
     # Given
     buff_argument = io.BytesIO()
-    pdf_content: List[str] = ["%PDF-1.5", "pdf_content1", "pdf_content2"]
+    pdf_content: List[bytes] = [b"%PDF-1.5", b"pdf_content1", b"pdf_content2"]
     expect(document_manipulation, times=1)._read_buffer_line_by_line(
         buff_argument
     ).thenReturn(pdf_content)
@@ -115,7 +115,7 @@ def test_given_pdf_with_one_extra_headers_sanitize_offset_should_return_len_firs
 ):
     # Given
     buff_argument = io.BytesIO()
-    pdf_content: List[str] = ["extra-header" "%PDF-1.5", "pdf_content1"]
+    pdf_content: List[bytes] = [b"extra-header" b"%PDF-1.5", b"pdf_content1"]
     expect(document_manipulation, times=1)._read_buffer_line_by_line(
         buff_argument
     ).thenReturn(pdf_content)
@@ -130,15 +130,15 @@ def test_given_pdf_with_one_extra_headers_sanitize_offset_should_return_len_firs
 @pytest.mark.parametrize(
     "in_out_tuple",
     [
-        (["x%PDF-1.5"], 1),
-        (["xxxx%PDF-1.5"], 4),
-        (["xxxxxxxxxxx%PDF-1.5"], 11),
-        (["x%PDF-1.5", "pdf-content"], 1),
-        (["pdf-content", "x%PDF-1.5"], 12),
-        (["xxxx%PDF-1.5", "pdf-content"], 4),
-        (["pdf-content", "xxxx%PDF-1.5"], 15),
-        (["xxxxxxxxxxx%PDF-1.5", "pdf-content"], 11),
-        (["pdf-content", "xxxxxxxxxxx%PDF-1.5"], 22),
+        ([b"x%PDF-1.5"], 1),
+        ([b"xxxx%PDF-1.5"], 4),
+        ([b"xxxxxxxxxxx%PDF-1.5"], 11),
+        ([b"x%PDF-1.5", b"pdf-content"], 1),
+        ([b"pdf-content", b"x%PDF-1.5"], 12),
+        ([b"xxxx%PDF-1.5", b"pdf-content"], 4),
+        ([b"pdf-content", b"xxxx%PDF-1.5"], 15),
+        ([b"xxxxxxxxxxx%PDF-1.5", b"pdf-content"], 11),
+        ([b"pdf-content", b"xxxxxxxxxxx%PDF-1.5"], 22),
     ],
 )
 def test_given_pdf_with_extra_headers_sanitize_offset_should_return_correct_size(
@@ -162,7 +162,7 @@ def test_given_pdf_without_correct_header_and_multiple_lines_offset_should_retur
 ):
     # Given
     buff_argument = io.BytesIO()
-    str_to_search = ["zextras", "-", "test-rakuja"]
+    str_to_search = [b"zextras", b"-", b"test-rakuja"]
     expect(document_manipulation, times=1)._read_buffer_line_by_line(
         buff_argument
     ).thenReturn(str_to_search)
@@ -179,10 +179,10 @@ def test_given_pdf_without_correct_header_and_single_line_offset_should_return_s
 ):
     # Given
     buff_argument = io.BytesIO()
-    str_to_search = "zextras-test-rakuja"
+    str_to_search = b"zextras-test-rakuja"
     expect(document_manipulation, times=1)._read_buffer_line_by_line(
         buff_argument
-    ).thenReturn(str_to_search)
+    ).thenReturn([str_to_search])
 
     # When
     result = document_manipulation._get_sanitize_offset(buff_argument)

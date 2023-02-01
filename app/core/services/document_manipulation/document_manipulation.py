@@ -166,12 +166,13 @@ async def convert_pdf_to_image(
         raise HTTPException(status_code=400, detail="Invalid pdf file")
 
 
-def _get_sanitize_offset(buffer: io.BytesIO, pattern_to_find: str = "%PDF") -> int:
+def _get_sanitize_offset(buffer: io.BytesIO, pattern_to_find: bytes = b"%PDF") -> int:
     """
     Calculates how many bytes to skip to avoid extra headers, it continues until
     it finds the pattern requested
     \f
-    :param buffer: pdf to search inside
+    :param buffer: pdf to search inside, the pattern MUST be of
+    the same type of the buffer
     :param pattern_to_find: pattern to search for inside the pdf,
     every byte before the pattern will be summed up and returned
     :returns: number of bytes before the pattern to find
