@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+import multiprocessing
 import os
+from logging.handlers import QueueListener, QueueHandler, TimedRotatingFileHandler
 
 from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
@@ -151,11 +153,30 @@ tmp_upload_dir = None
 log_path = f"{os.path.join(LOG_PATH, service.NAME)}.log"
 capture_output = False
 
+# Set up a queue to communicate with the handlers
+log_queue = multiprocessing.Queue()
+
+# Create a listener and add it to the root logger
+listener = QueueListener(
+    log_queue,
+    TimedRotatingFileHandler(
+        filename=log_path,
+        when="h",
+        encoding="utf8",
+        backupCount=50,
+    ),
+)
+listener.start()
+
+# Set up the QueueHandler with the queue
+queue_handler = QueueHandler(log_queue)
+
+
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": True,
     "root": {
-        "handlers": ["console_standard", "file_standard"],
+        "handlers": ["console_standard", "queue"],
         "level": LOG_LEVEL,
     },
     "loggers": {
@@ -179,6 +200,10 @@ LOGGING_CONFIG = {
             "encoding": "utf8",
             "when": "d",
             "backupCount": 50,
+        },
+        "queue": {
+            "class": "logging.handlers.QueueHandler",
+            "queue": log_queue,
         },
         "console_gunicorn": {
             "class": "logging.StreamHandler",
