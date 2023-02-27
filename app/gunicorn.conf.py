@@ -157,7 +157,6 @@ capture_output = False
 # Set up a queue to communicate with the handlers
 log_queue = multiprocessing.Queue()
 
-# Create a listener and add it to the root logger
 queue_timed_rotating_handler = TimedRotatingFileHandler(
     filename=log_path,
     when="d",
