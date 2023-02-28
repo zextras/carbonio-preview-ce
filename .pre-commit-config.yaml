@@ -11,7 +11,7 @@ repos:
         args: []
 
 -   repo: https://github.com/python/black.git
-    rev: 22.12.0
+    rev: 23.1.0
     hooks:
       - id: black
 

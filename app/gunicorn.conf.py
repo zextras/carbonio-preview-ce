@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+import logging
+import multiprocessing
 import os
+from logging.handlers import QueueListener, QueueHandler, TimedRotatingFileHandler
 
 from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
@@ -151,17 +154,35 @@ tmp_upload_dir = None
 log_path = f"{os.path.join(LOG_PATH, service.NAME)}.log"
 capture_output = False
 
+# Set up a queue to communicate with the handlers
+log_queue = multiprocessing.Queue()
+
+queue_timed_rotating_handler = TimedRotatingFileHandler(
+    filename=log_path,
+    when="d",
+    encoding="utf8",
+    backupCount=50,
+)
+queue_timed_rotating_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+
+listener = QueueListener(log_queue, queue_timed_rotating_handler)
+listener.start()
+
+# Set up the QueueHandler with the queue
+queue_handler = QueueHandler(log_queue)
+
+
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": True,
     "root": {
-        "handlers": ["console_standard", "file_standard"],
+        "handlers": ["console_standard", "queue"],
         "level": LOG_LEVEL,
     },
     "loggers": {
         "gunicorn.access": {
             "level": LOG_LEVEL,
-            "handlers": ["console_gunicorn", "file_gunicorn"],
+            "handlers": ["console_gunicorn", "queue"],
             "propagate": False,
             "qualname": "gunicorn.access",
         },
@@ -172,26 +193,14 @@ LOGGING_CONFIG = {
             "stream": "ext://sys.stdout",
             "formatter": "syslog",
         },
-        "file_standard": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": log_path,
-            "formatter": "syslog",
-            "encoding": "utf8",
-            "when": "d",
-            "backupCount": 50,
+        "queue": {
+            "class": "logging.handlers.QueueHandler",
+            "queue": log_queue,
         },
         "console_gunicorn": {
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
             "formatter": "syslog",
-        },
-        "file_gunicorn": {
-            "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": log_path,
-            "formatter": "syslog",
-            "encoding": "utf8",
-            "when": "d",
-            "backupCount": 50,
         },
     },
     "formatters": {
