@@ -53,6 +53,7 @@ They must be installed if Mandatory otherwise user discretion is advised
 | Name                 | Mandatory/Optional |
 |----------------------|--------------------|
 | carbonio-storages-ce | Optional           |
+ | carbonio-docs-editor | Optional           |
 
 ## Service installation 🏁
 
@@ -85,14 +86,10 @@ git clone 'https://github.com/Zextras/carbonio-preview-ce'
 
 - Go to the project folder
 
-- Optionally you can now create a virtual enviroment. Unfortunately, python3-libreoffice needs to be installed somewhere inside the enviroment or you can also do it using the global libreoffice instance with:
-
 ```bash
-virtualenv --python /usr/bin/python3 --system-site-packages venv
+virtualenv --python /usr/bin/python3 venv
 source venv/bin/activate
 ```
-
-* Install libreoffice
 
 - Install python libraries
 
@@ -108,8 +105,7 @@ To start the application from command line, go to the project folder and type:
 gunicorn controller:app --config gunicorn.conf.py
 ```
 
-There are others alternatives, you can also start the program from the main class (if you want to debug it). **keep in 
-mind that starting from the main class does not load LibreOffice as the loading is done inside the gunicorn.conf.py file.**
+There are others alternatives, you can also start the program from the main class (if you want to debug it). 
 
 
 ## CI and Tests 🤖
@@ -148,8 +144,6 @@ python -m unittest discover -v -s "./tests/" -p "test*"
 ## Tech Stack 💾
 
 All the python libraries used can be found on the "requirements.txt" file.
-
-LibreOffice is used to convert documents to pdf and pdfs to images.
 
 ## License
 

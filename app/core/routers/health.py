@@ -9,15 +9,14 @@ import requests
 from starlette import status
 from starlette.responses import Response
 
-from app.core.resources.constants import service, storage, message
-from app.core.resources.libre_office_handler import is_libre_instance_up
+from app.core.resources.constants import service, storage, message, document_conversion
 
 router = APIRouter(
     prefix=f"/{service.HEALTH_NAME}",
     tags=[service.HEALTH_NAME],
     responses={
         502: {"description": message.STORAGE_UNAVAILABLE_STRING},
-        429: {"description": message.LIBRE_OFFICE_NOT_RUNNING},
+        429: {"description": message.DOCS_EDITOR_UNAVAILABLE_STRING},
     },
 )
 logger = logging.getLogger(__name__)
@@ -31,18 +30,13 @@ async def health() -> dict:
     \f
     :return: json with status of service and optional dependencies
     """
-
-    req = f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
-    is_libre_up: bool = is_libre_instance_up() if service.ARE_DOCS_ENABLED else False
-    try:
-        response = requests.get(req, timeout=5)
-        response.raise_for_status()
-        is_storage_up: bool = True
-    except requests.exceptions.RequestException:
-        is_storage_up: bool = False
+    is_storage_up: bool = _is_dependency_up(
+        f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
+    )
+    is_libre_up: bool = _is_dependency_up(document_conversion.FULL_ADDRESS)
 
     result_dict = {
-        "ready": is_libre_up,
+        "ready": True,
         "dependencies": [
             {
                 "name": "carbonio-storages",
@@ -51,10 +45,10 @@ async def health() -> dict:
                 "type": "OPTIONAL",
             },
             {
-                "name": "libreoffice",
+                "name": "carbonio-docs-editor",
                 "ready": is_libre_up,
                 "live": is_libre_up,
-                "type": "REQUIRED" if service.ARE_DOCS_ENABLED else "OPTIONAL",
+                "type": "OPTIONAL",
             },
         ],
     }
@@ -67,16 +61,18 @@ async def health_ready() -> Response:
     """
     Checks if the service is up and essential dependencies are running correctly
     \f
-    :return: returns 200 if service and libreoffice are running
+    :return: returns 200 if service and carbonio-docs-editor are running
     """
-    if not service.ARE_DOCS_ENABLED or is_libre_instance_up():
+    if not service.ARE_DOCS_ENABLED or _is_dependency_up(
+        document_conversion.FULL_ADDRESS
+    ):
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)
     else:
-        logger.debug("Health ready with status code 500 (LibreOffice not up)")
+        logger.debug("Health ready with status code 429 (Carbonio-docs-editor not up)")
         return Response(
-            content=message.LIBRE_OFFICE_NOT_RUNNING,
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=message.DOCS_EDITOR_UNAVAILABLE_STRING,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
 
@@ -89,3 +85,20 @@ async def health_live() -> Response:
     """
     logger.debug("Health live with status code 200")
     return Response(status_code=status.HTTP_200_OK)
+
+
+def _is_dependency_up(dependency_url: str, timeout: int = 5) -> bool:
+    """
+    Checks if the requested dependency is up
+    \f
+    :param dependency_url: address to ping, it should be the health API of the dependency
+    :param timeout: if the service does not respond in the given timeout frame,
+     it's considered down
+    :return: True if the dependency is up
+    """
+    try:
+        response = requests.get(dependency_url, timeout=timeout)
+        response.raise_for_status()
+        return True
+    except requests.exceptions.RequestException:
+        return False

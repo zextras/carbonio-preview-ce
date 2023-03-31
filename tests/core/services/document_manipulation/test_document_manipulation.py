@@ -18,7 +18,6 @@ from app.core.services.document_manipulation import document_manipulation  # noq
 
 
 class TestPdfManipulation(IsolatedAsyncioTestCase):
-
     encrypted_pdf_mock = MagicMock(return_value=b"encrypted_sample")
     encrypted_pdf_mock.keys = MagicMock(return_value=["key1", "/Encrypt", "key2"])
 

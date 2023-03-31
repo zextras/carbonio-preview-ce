@@ -17,7 +17,6 @@ arch="amd64"
 license=("AGPL-3.0-only")
 
 depends:apt=(
-   "carbonio-docs-core"
    "pending-setups"
    "python3>=3.8"
    "service-discover"

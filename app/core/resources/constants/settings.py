@@ -4,16 +4,6 @@
 
 from app.core.resources.config_loader import read_config
 
-_libre_section: str = "libreoffice"
-
-NUMBER_OF_WORKERS: int = int(read_config(section=_libre_section, value="workers"))
-
-LIBRE_OFFICE_PATH: str = read_config(section=_libre_section, value="path")
-
-LIBRE_OFFICE_TIMEOUT: int = int(
-    read_config(section=_libre_section, value="timeout_in_seconds")
-)
-
 # LOG
 _log_section: str = "log"
 LOG_FORMAT: str = read_config(section=_log_section, value="format", raw=True)

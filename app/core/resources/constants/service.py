@@ -13,6 +13,9 @@ TIMEOUT: int = int(
 )
 IP: str = read_config(section=_service_section_name, value="ip")
 PORT: int = int(read_config(section=_service_section_name, value="port"))
+NUMBER_OF_WORKERS: int = int(
+    read_config(section=_service_section_name, value="workers")
+)
 
 ENABLE_DOCUMENT_THUMBNAIL: bool = (
     True

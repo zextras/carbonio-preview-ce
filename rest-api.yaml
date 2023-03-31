@@ -882,7 +882,7 @@ paths:
               schema: {}
         '429':
           description: >-
-            Unoserver's LibreOffice instance was not initialized correctly,
+            Carbonio-docs-editor is currently unavailable,
             document preview service is currently offline.
         '502':
           description: Storage is currently unavailable.
@@ -903,7 +903,7 @@ paths:
               schema: {}
         '429':
           description: >-
-            Unoserver's LibreOffice instance was not initialized correctly,
+            Carbonio-docs-editor is currently unavailable,
             document preview service is currently offline.
         '502':
           description: Storage is currently unavailable.
@@ -923,7 +923,7 @@ paths:
               schema: {}
         '429':
           description: >-
-            Unoserver's LibreOffice instance was not initialized correctly,
+            Carbonio-docs-editor is currently unavailable,
             document preview service is currently offline.
         '502':
           description: Storage is currently unavailable.

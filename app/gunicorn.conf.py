@@ -6,7 +6,6 @@ import multiprocessing
 import os
 from logging.handlers import QueueListener, QueueHandler, TimedRotatingFileHandler
 
-from app.core.resources.constants.settings import NUMBER_OF_WORKERS
 from app.core.resources.constants import service
 from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
 
@@ -75,7 +74,7 @@ from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVE
 bind = f"{service.IP}:{service.PORT}"
 backlog = 2048
 
-workers = NUMBER_OF_WORKERS
+workers = service.NUMBER_OF_WORKERS
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
 timeout = service.TIMEOUT
@@ -250,10 +249,6 @@ def child_exit(server, worker):
 
 def post_worker_init(worker):
     worker.log.info("Post worker init")
-    # import here, otherwise logs won't be configured correctly
-    from app.core.resources.libre_office_handler import init_signals
-
-    init_signals()
 
 
 def pre_exec(server):
@@ -269,12 +264,12 @@ def worker_abort(worker):
 
 
 def on_starting(server):
-    server.log.info("Starting server and libreoffice daemons")
+    server.log.info("Starting server")
 
 
 def on_reload(server):
-    server.log.info("Restarting server and libreoffice daemons")
+    server.log.info("Restarting server")
 
 
 def on_shutdown(server):
-    server.log.info("Closing server and terminating libreoffice daemons")
+    server.log.info("Closing server")
