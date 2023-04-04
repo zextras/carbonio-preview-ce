@@ -9,8 +9,13 @@ _document_conversion_section: str = "document_conversion"
 PROTOCOL: str = read_config(section=_document_conversion_section, value="protocol")
 IP: str = read_config(section=_document_conversion_section, value="ip")
 PORT: str = read_config(section=_document_conversion_section, value="port")
+SERVICE_ENDPOINT: str = read_config(
+    section=_document_conversion_section, value="service_endpoint"
+)
 CONVERT_API: str = read_config(
     section=_document_conversion_section, value="convert_api"
 )
 
-FULL_ADDRESS: str = f"{PROTOCOL}://{IP}:{PORT}"
+BASE_ADDRESS: str = f"{PROTOCOL}://{IP}:{PORT}"
+FULL_SERVICE_ADDRESS: str = f"{BASE_ADDRESS}/{SERVICE_ENDPOINT}/"
+FULL_CONVERT_ADDRESS: str = f"{FULL_SERVICE_ADDRESS}{CONVERT_API}"

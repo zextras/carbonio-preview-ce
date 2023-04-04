@@ -33,7 +33,7 @@ async def health() -> dict:
     is_storage_up: bool = _is_dependency_up(
         f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
     )
-    is_libre_up: bool = _is_dependency_up(document_conversion.FULL_ADDRESS)
+    is_libre_up: bool = _is_dependency_up(document_conversion.FULL_SERVICE_ADDRESS)
 
     result_dict = {
         "ready": True,
@@ -64,7 +64,7 @@ async def health_ready() -> Response:
     :return: returns 200 if service and carbonio-docs-editor are running
     """
     if not service.ARE_DOCS_ENABLED or _is_dependency_up(
-        document_conversion.FULL_ADDRESS
+        document_conversion.FULL_SERVICE_ADDRESS
     ):
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)

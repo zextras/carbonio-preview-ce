@@ -233,10 +233,7 @@ async def _convert_with_libre(
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
 
-    url = (
-        f"{document_conversion.FULL_ADDRESS}/"
-        f"{document_conversion.CONVERT_API}/{output_extension}"
-    )
+    url = f"{document_conversion.FULL_CONVERT_ADDRESS}/{output_extension}"
 
     files = {"files": ("docs-editor-file", content)}
 
