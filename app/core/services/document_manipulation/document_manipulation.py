@@ -13,6 +13,7 @@ from pdfrw.errors import PdfParseError
 from starlette.exceptions import HTTPException
 
 from app.core.resources.constants import document_conversion
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.services.image_manipulation import image_manipulation
 
@@ -230,10 +231,7 @@ async def convert_pdf_to(
 async def _convert_with_libre(
     content: io.BytesIO, output_extension: str, log: logging
 ) -> io.BytesIO:
-    supported_images: set = {"PNG", "JPEG", "SVG"}
-    output_extension = (
-        "png" if output_extension.upper() in supported_images else output_extension
-    )
+    output_extension = _sanitize_output_extension(output_extension)
 
     url = (
         f"{document_conversion.FULL_ADDRESS}/"
@@ -266,3 +264,17 @@ async def _convert_with_libre(
 
     out_data.seek(0)
     return out_data
+
+
+def _sanitize_output_extension(output_extension: str) -> str:
+    """Checks if the output extension is valid for conversion.
+    Some extensions like jpeg are not supported and will be swapped with png
+    \f
+    :param output_extension: extension to check
+    :return the given output_extension or a valid alternative
+    """
+    return (
+        "png"
+        if output_extension.upper() in ImageTypeEnum.__members__
+        else output_extension
+    )
