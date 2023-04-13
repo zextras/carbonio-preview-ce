@@ -4,7 +4,6 @@
 
 from app.core.resources.config_loader import read_config
 
-# LOG
 _document_conversion_section: str = "document_conversion"
 PROTOCOL: str = read_config(section=_document_conversion_section, value="protocol")
 IP: str = read_config(section=_document_conversion_section, value="ip")
