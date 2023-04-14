@@ -8,7 +8,7 @@
       "Action": "allow"
     },
     {
-      "Name": "carbonio-chats",
+      "Name": "carbonio-ws-collaboration",
       "Action": "allow"
     },
     {
