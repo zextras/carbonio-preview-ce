@@ -12,7 +12,7 @@ from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
 from starlette.exceptions import HTTPException
 
-from app.core.resources.constants import document_conversion
+from app.core.resources.constants import document_conversion, service
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.services.image_manipulation import image_manipulation
@@ -239,7 +239,7 @@ async def _convert_with_libre(
 
     s = requests.Session()
     s.stream = True
-    response = s.post(url, timeout=5, files=files)
+    response = s.post(url, timeout=service.DOCS_TIMEOUT, files=files)
     out_data = io.BytesIO()
     try:
         response.raise_for_status()
