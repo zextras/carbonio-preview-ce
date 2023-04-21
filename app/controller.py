@@ -12,7 +12,7 @@ from app.core.routers import image, health, pdf, document
 
 app = FastAPI(
     title=service.NAME,
-    version="0.3.0-1",
+    version="0.2.15-3",
     description=service.DESCRIPTION,
 )
 
