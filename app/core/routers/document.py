@@ -261,7 +261,6 @@ async def get_thumbnail(
     if validation_errors:
         return validation_errors
     else:
-
         image_response: Response = (
             await document_service.retrieve_doc_and_create_thumbnail(
                 file_id=id,

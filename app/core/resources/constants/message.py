@@ -20,8 +20,8 @@ INPUT_ERROR: str = read_message_config(
     section=_hard_errors_section_name, value="input_error"
 )
 
-LIBRE_OFFICE_NOT_RUNNING: str = read_message_config(
-    section=_hard_errors_section_name, value="libre_office_not_running"
+DOCS_EDITOR_UNAVAILABLE_STRING: str = read_message_config(
+    section=_hard_errors_section_name, value="carbonio_docs_editor_not_running"
 )
 
 # Validation

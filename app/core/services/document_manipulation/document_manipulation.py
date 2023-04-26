@@ -3,17 +3,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
 import logging
-import sys
 import pypdfium2
 
 from typing import IO, Optional, Generator
 
+import requests
 from pdfrw import PdfReader, PdfWriter
 from pdfrw.errors import PdfParseError
 from starlette.exceptions import HTTPException
 
-from app.core.resources import libre_office_handler
-from app.core.resources.constants import service, settings
+from app.core.resources.constants import document_conversion, service
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.services.image_manipulation import image_manipulation
 
@@ -96,7 +96,7 @@ async def convert_to_pdf(
     log: logging = logger,
 ) -> io.BytesIO:
     """
-    Converts any LibreOffice supported format to pdf
+    Converts any Carbonio-docs-editor supported format to pdf
     \f
     :param content: file to convert
     :param first_page_number: first page to convert
@@ -121,13 +121,14 @@ async def convert_file_to(
     log: logging = logger,
 ) -> io.BytesIO:
     """
-    Converts any LibreOffice supported format to any LibreOffice
+    Converts any Carbonio-docs-editor supported format to any Carbonio-docs-editor
      supported format using _convert_with_libre.
      SHOULD ALWAYS be used instead of _convert_with_libre
      as it isolates the connection with libre
     \f
     :param content: file to convert
-    :param output_extension: output file, should be a format supported by LibreOffice
+    :param output_extension: output file,
+     should be a format supported by Carbonio-docs-editor
     :param log: logger to use
     """
     return await _convert_with_libre(
@@ -202,14 +203,14 @@ def _read_buffer_line_by_line(buffer: IO) -> Generator:
 
 
 async def convert_pdf_to(
-    content: IO,
+    content: io.BytesIO,
     output_extension: str,
     first_page_number: int,
     last_page_number: int,
     log: logging = logger,
 ) -> io.BytesIO:
     """
-    Converts pdf to any LibreOffice supported format
+    Converts pdf to any Carbonio-docs-editor supported format
     \f
     :param content: pdf to convert
     :param output_extension: desired file output type
@@ -228,39 +229,49 @@ async def convert_pdf_to(
 
 
 async def _convert_with_libre(
-    content: io.BytesIO, output_extension, log: logging
+    content: io.BytesIO, output_extension: str, log: logging
 ) -> io.BytesIO:
-    """
-    private method that implements conversion logic for every type of file,
-    uses LibreOffice, SHOULD ONLY BE CALLED BY convert_file_to and
-     never directly to isolate possible POF
-    \f
-    :param content: pdf to convert
-    :param output_extension: desired file output type
-    :param log: logger to use
-    """
-    office_port = libre_office_handler.libre_port
-    log.debug(
-        f"Converting file to {output_extension} "
-        f"using LibreOffice instance on port {office_port}"
-    )
-    out_data = io.BytesIO()
-    try:  # in case of empty file or libre exception
-        future = libre_office_handler.executor.submit(
-            libre_office_handler.libre_convert_handler,
-            service.IP,
-            office_port,
-            content,
-            output_extension,
-        )
-        out_data = io.BytesIO(future.result(timeout=settings.LIBRE_OFFICE_TIMEOUT))
-        out_data.seek(0)
-    except TimeoutError as time_error:
-        logger.warning(f"LibreOffice is not responding.. error {time_error}")
-        sys.exit(1)
-    except Exception as e:
-        logger.info(
-            f"File to convert was corrupted, libre conversion failed with error {e}"
-        )
+    output_extension = _sanitize_output_extension(output_extension)
 
+    url = f"{document_conversion.FULL_CONVERT_ADDRESS}/{output_extension}"
+
+    files = {"files": ("docs-editor-file", content)}
+
+    s = requests.Session()
+    s.stream = True
+    response = s.post(url, timeout=service.DOCS_TIMEOUT, files=files)
+    out_data = io.BytesIO()
+    try:
+        response.raise_for_status()
+        converted_file_bytes: bytes = response.content
+        out_data = io.BytesIO(converted_file_bytes)
+
+    except requests.exceptions.HTTPError as http_error:
+        log.critical(f"Http Error: {http_error}")
+    except requests.exceptions.ConnectionError as connection_error:
+        log.critical(f"Connection Error: {connection_error}")
+    # from this onward are not related to the raise_for_status,
+    # these are all critical errors.
+    except requests.exceptions.Timeout as timeout_error:
+        log.error(f"Timeout Error: {timeout_error}")
+    except requests.exceptions.RequestException as request_error:
+        log.critical(f"Unexpected Error: {request_error}")
+    except Exception as crit_err:
+        log.critical(f"Critical Error: {crit_err}")
+
+    out_data.seek(0)
     return out_data
+
+
+def _sanitize_output_extension(output_extension: str) -> str:
+    """Checks if the output extension is valid for conversion.
+    Some extensions like jpeg are not supported and will be swapped with png
+    \f
+    :param output_extension: extension to check
+    :return the given output_extension or a valid alternative
+    """
+    return (
+        "png"
+        if output_extension.upper() in ImageTypeEnum.__members__
+        else output_extension
+    )

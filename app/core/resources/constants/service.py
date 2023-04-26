@@ -13,6 +13,9 @@ TIMEOUT: int = int(
 )
 IP: str = read_config(section=_service_section_name, value="ip")
 PORT: int = int(read_config(section=_service_section_name, value="port"))
+NUMBER_OF_WORKERS: int = int(
+    read_config(section=_service_section_name, value="workers")
+)
 
 ENABLE_DOCUMENT_THUMBNAIL: bool = (
     True
@@ -37,6 +40,10 @@ ENABLE_DOCUMENT_PREVIEW = (
 )
 
 ARE_DOCS_ENABLED: bool = ENABLE_DOCUMENT_PREVIEW or ENABLE_DOCUMENT_THUMBNAIL
+
+DOCS_TIMEOUT: int = int(
+    read_config(section=_service_section_name, value="docs-timeout", default_value=10)
+)
 
 DESCRIPTION = """
 Preview service. 🚀 \n

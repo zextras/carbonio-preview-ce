@@ -256,7 +256,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 MIT License (MIT) applies to:
 
 fastapi, 2018, Copyright Sebastián Ramírez;
-unoserver, 2021, Copyright unoconv;
 black, 2018, Copyright Łukasz Langa;
 pytest, 2004, Copyright Holger Krekel and others;
 pytest-mockito, 2014, Copyright Herr Kaste <herr.kaste@gmail.com>;

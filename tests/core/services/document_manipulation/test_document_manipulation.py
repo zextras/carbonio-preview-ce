@@ -3,22 +3,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-import sys
 import pytest
 from typing import List
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
-
-sys.modules["unoserver"] = MagicMock()
-sys.modules["unoserver.converter"] = MagicMock()
-sys.modules["unoserver.server"] = MagicMock()
-
-# This MUST be AFTER mocking unoserver library, otherwise it will try to import uno
 from app.core.services.document_manipulation import document_manipulation  # noqa
 
 
 class TestPdfManipulation(IsolatedAsyncioTestCase):
-
     encrypted_pdf_mock = MagicMock(return_value=b"encrypted_sample")
     encrypted_pdf_mock.keys = MagicMock(return_value=["key1", "/Encrypt", "key2"])
 
