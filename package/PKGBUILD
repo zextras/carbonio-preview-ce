@@ -39,8 +39,8 @@ makedepends:apt=(
 )
 
 provides:yum=(
-  "libjpeg-2c0fa17f.so.62.3.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-85b6360a.so.5.4.0(XZ_5.0)(64bit)"
+  "libjpeg-2caf4b68.so.62.3.0(LIBJPEG_6.2)(64bit)"
+  "liblzma-72f7b2a5.so.5.4.2(XZ_5.0)(64bit)"
   "libpng16-021811b1.so.16.39.0(PNG16_0)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"

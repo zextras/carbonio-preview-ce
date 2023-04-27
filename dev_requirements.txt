@@ -4,13 +4,13 @@
 
 -r requirements.txt
 
-black~=23.1.0
+black~=23.3.0
 flake8~=6.0.0
 Flake8-pyproject~=1.2.2
 bandit~=1.7.4
-pre-commit~=3.1.0
+pre-commit~=3.2.2
 
-responses~=0.22.0
+responses~=0.23.1
 
-pytest~=7.2.1
+pytest~=7.3.1
 pytest-mockito~=0.0.4
