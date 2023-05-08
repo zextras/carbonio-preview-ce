@@ -6,6 +6,14 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Changelog
 
+## v0.3.1 (2023-05-08)
+
+#### Fixes
+
+* Swap deprecated render_topil  ([#34](https://github.com/Zextras/carbonio-preview-ce/issues/34))
+
+Full set of changes: [`v0.3.0...v0.3.1`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.0...v0.3.1)
+
 ## v0.3.0 (2023-04-27)
 
 #### New Features
@@ -13,6 +21,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 * Introduce docs editor ([#30](https://github.com/Zextras/carbonio-preview-ce/issues/30))
 #### Others
 
+* (release): 0.3.0 ([#33](https://github.com/Zextras/carbonio-preview-ce/issues/33))
 * upgrade dependencies ([#32](https://github.com/Zextras/carbonio-preview-ce/issues/32))
 * (infra): update intentions.json aligning it to new chats naming ([#31](https://github.com/Zextras/carbonio-preview-ce/issues/31))
 
