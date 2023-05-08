@@ -150,7 +150,7 @@ async def convert_pdf_to_image(
     try:
         pdf = pypdfium2.PdfDocument(content)
         page = pdf.get_page(page_number)
-        pil_image = page.render_topil()
+        pil_image = page.render().to_pil()
         return image_manipulation.save_image_to_buffer(
             pil_image,
             output_extension,
