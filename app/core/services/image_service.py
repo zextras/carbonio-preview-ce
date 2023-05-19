@@ -26,19 +26,23 @@ from app.core.services.image_manipulation.png_manipulation import (
 
 
 async def retrieve_image_and_create_thumbnail(
-    image_id: str, img_metadata: ThumbnailImageMetadata, service_type: ServiceTypeEnum
+    image_id: str,
+    version: int,
+    img_metadata: ThumbnailImageMetadata,
+    service_type: ServiceTypeEnum,
 ) -> Response:
     """
-    Contact storage and retrieves the image with the nodeid requested
+    Contact storage and retrieves the image with the file id requested
     and calls process image.
-    If the nodeid is not found returns Generic error specifying the error code
+    If the file id is not found returns Generic error specifying the error code
     :param image_id: UUID of the image
+    :param version: version of the file
     :param img_metadata: Instance of ThumbnailImageMetadata class
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
     response_data: Optional[Response] = await storage_communication.retrieve_data(
-        file_id=image_id, version=img_metadata.version, service_type=service_type
+        file_id=image_id, version=version, service_type=service_type
     )
     return await _process_response_data(
         response_data=response_data,
@@ -48,19 +52,23 @@ async def retrieve_image_and_create_thumbnail(
 
 
 async def retrieve_image_and_create_preview(
-    image_id: str, img_metadata: PreviewImageMetadata, service_type: ServiceTypeEnum
+    image_id: str,
+    version: int,
+    img_metadata: PreviewImageMetadata,
+    service_type: ServiceTypeEnum,
 ) -> Response:
     """
-    Contact storage and retrieves the image with the nodeid requested
+    Contact storage and retrieves the image with the file id requested
     and calls process image.
-    If the nodeid is not found returns Generic error specifying the error code
+    If the file id is not found returns Generic error specifying the error code
     :param image_id: UUID of the image
+    :param version: version of the file
     :param img_metadata: Instance of PreviewImageMetadata class
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
     response_data: Optional[Response] = await storage_communication.retrieve_data(
-        file_id=image_id, version=img_metadata.version, service_type=service_type
+        file_id=image_id, version=version, service_type=service_type
     )
     return await _process_response_data(
         response_data=response_data,

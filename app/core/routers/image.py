@@ -1,13 +1,17 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
-from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, UploadFile
+from pydantic import NonNegativeInt, constr
 from starlette.responses import Response
 
 from app.core.resources.constants import service, message
-from app.core.resources.data_validator import check_for_image_metadata_errors
+from app.core.resources.data_validator import (
+    AREA_REGEX,
+    create_image_metadata_dict,
+)
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -34,9 +38,9 @@ router = APIRouter(
     },
 )
 async def get_thumbnail(
-    id: str,
-    version: int,
-    area: str,
+    id: UUID,
+    version: NonNegativeInt,
+    area: constr(regex=AREA_REGEX),
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -68,29 +72,24 @@ async def get_thumbnail(
     :return: 400 ok if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "shape": shape,
-        "crop_position": VerticalCropPositionEnum.CENTER,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
-        id=id, area=area, version=version, metadata_dict=metadata_dict
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        shape=shape,
+        crop_position=VerticalCropPositionEnum.CENTER,
+        area=area,
     )
-    return (
-        validation_errors
-        if validation_errors
-        else await image_service.retrieve_image_and_create_thumbnail(
-            image_id=id,
-            img_metadata=ThumbnailImageMetadata(**metadata_dict),
-            service_type=service_type,
-        )
+    return await image_service.retrieve_image_and_create_thumbnail(
+        image_id=str(id),
+        version=version,
+        img_metadata=ThumbnailImageMetadata(**metadata_dict),
+        service_type=service_type,
     )
 
 
 @router.post("/{area}/thumbnail/")
 async def post_thumbnail(
-    area: str,
+    area: constr(regex=AREA_REGEX),
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -119,33 +118,27 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "shape": shape,
-        "crop_position": VerticalCropPositionEnum.CENTER,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
-        area=area, metadata_dict=metadata_dict
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        shape=shape,
+        crop_position=VerticalCropPositionEnum.CENTER,
+        area=area,
     )
-    return (
-        validation_errors
-        if validation_errors
-        else Response(
-            content=(
-                await image_service.process_raw_thumbnail(
-                    raw_content=file.file,
-                    img_metadata=ThumbnailImageMetadata(**metadata_dict),
-                )
-            ).read(),
-            media_type=f"image/{output_format.format()}",
-        )
+    return Response(
+        content=(
+            await image_service.process_raw_thumbnail(
+                raw_content=file.file,
+                img_metadata=ThumbnailImageMetadata(**metadata_dict),
+            )
+        ).read(),
+        media_type=f"image/{output_format.format()}",
     )
 
 
 @router.post("/{area}/")
 async def post_preview(
-    area: str,
+    area: constr(regex=AREA_REGEX),
     file: UploadFile,
     crop: bool = False,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -174,27 +167,22 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "crop": crop,
-        "crop_position": VerticalCropPositionEnum.CENTER,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
-        area=area, metadata_dict=metadata_dict
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        crop=crop,
+        crop_position=VerticalCropPositionEnum.CENTER,
+        area=area,
     )
-    return (
-        validation_errors
-        if validation_errors
-        else Response(
-            content=(
-                await image_service.process_raw_preview(
-                    raw_content=file.file,
-                    img_metadata=PreviewImageMetadata(**metadata_dict),
-                )
-            ).read(),
-            media_type=f"image/{output_format.format()}",
-        )
+
+    return Response(
+        content=(
+            await image_service.process_raw_preview(
+                raw_content=file.file,
+                img_metadata=PreviewImageMetadata(**metadata_dict),
+            )
+        ).read(),
+        media_type=f"image/{output_format.format()}",
     )
 
 
@@ -206,9 +194,9 @@ async def post_preview(
     },
 )
 async def get_preview(
-    id: str,
-    version: int,
-    area: str,
+    id: UUID,
+    version: NonNegativeInt,
+    area: constr(regex=AREA_REGEX),
     service_type: ServiceTypeEnum,
     crop: bool = False,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -242,21 +230,16 @@ async def get_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "crop": crop,
-        "crop_position": VerticalCropPositionEnum.CENTER,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
-        id=id, area=area, version=version, metadata_dict=metadata_dict
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        crop=crop,
+        crop_position=VerticalCropPositionEnum.CENTER,
+        area=area,
     )
-    return (
-        validation_errors
-        if validation_errors
-        else await image_service.retrieve_image_and_create_preview(
-            image_id=id,
-            img_metadata=PreviewImageMetadata(**metadata_dict),
-            service_type=service_type,
-        )
+    return await image_service.retrieve_image_and_create_preview(
+        image_id=str(id),
+        version=version,
+        img_metadata=PreviewImageMetadata(**metadata_dict),
+        service_type=service_type,
     )
