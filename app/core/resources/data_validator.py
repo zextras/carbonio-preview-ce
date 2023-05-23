@@ -2,27 +2,56 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-import uuid
-from typing import Optional
+from typing import Optional, Dict
 
+import pydantic
+from fastapi import HTTPException
+from pydantic import BaseModel, NonNegativeInt
 from starlette import status
 from starlette.responses import Response
 
 from app.core.resources.constants import message, service
+from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
+from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
+from app.core.resources.schemas.enums.vertical_crop_position_enum import (
+    VerticalCropPositionEnum,
+)
+
+AREA_REGEX: str = "^[0-9]+x[0-9]+$"
 
 
-def is_id_valid(file_id: str) -> bool:
+def create_image_metadata_dict(
+    quality: ImageQualityEnum,
+    output_format: ImageTypeEnum,
+    crop_position: VerticalCropPositionEnum,
+    area: str,
+    shape: Optional[ImageBorderShapeEnum] = None,
+    crop: Optional[bool] = None,
+) -> dict:
     """
-    Validate the id, compares it to the structure of UUID1 to UUID4
+    Helper function used to build an image metadata dict
     \f
-    :param file_id: id to validate
-    :return: True if there was no error parsing it
+    :param quality: valid value for "quality" key in dict
+    :param output_format: valid value for "format" key in dict
+    :param crop_position: valid value for "crop_position" key in dict
+    :param area: string that follows the format (numberXnumber)
+    :param shape: optional dict parameter for "shape" key in dict
+    :param crop: optional dict parameter for "crop" key in dict
     """
-    try:
-        uuid.UUID(file_id)
-        return True
-    except ValueError:
-        return False
+    width, height = map(int, area.lower().split("x"))
+    metadata_dict = {
+        "quality": quality,
+        "format": output_format,
+        "crop_position": crop_position,
+        "width": width,
+        "height": height,
+    }
+    if shape is not None:
+        metadata_dict["shape"] = shape
+    if crop is not None:
+        metadata_dict["crop"] = crop
+    return metadata_dict
 
 
 def check_for_storage_response_error(
@@ -50,80 +79,26 @@ def check_for_storage_response_error(
         )
 
 
-def check_for_document_metadata_errors(
-    first_page: int, last_page: int
-) -> Optional[Response]:
+class DocumentPagesMetadataModel(BaseModel):
     """
-    Function that handle validation of the given document parameters
-    \f
-    :param first_page: number representing the first page to convert
-    :param last_page: number representing the last page to convert
-    :return: a Response with status code 400 and content with detailed explanation
-    if there were invalid parameters, otherwise None
+    Model to validate for document metadata
     """
-    if first_page >= 1 and (first_page <= last_page or last_page == 0):
-        return None
-    else:
-        return Response(
-            content=message.NUMBER_OF_PAGES_NOT_VALID,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
 
+    first_page: NonNegativeInt = 1
+    last_page: NonNegativeInt = 0
 
-def check_for_image_metadata_errors(
-    id: str = None,
-    version: int = None,
-    area: str = None,
-    metadata_dict: dict = None,
-) -> Optional[Response]:
-    """
-    Function that handle validation of the given image parameters
-     and stores them in metadata_dict
-     \f
-    :param id: UUID of the image
-    :param area: width x height
-    :param version: version of the node
-    :param metadata_dict: dictionary with optional arguments
-     that will be filled with validated input
-    :return: a Response with status code 400 and content with detailed explanation
-    if there were invalid parameters, otherwise None
-    """
-    try:
-        width, height = area.split("x")
-    except ValueError:
-        return Response(
-            content=message.HEIGHT_OR_WIDTH_NOT_INSERTED_ERROR,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-    try:
-        width, height = int(width), int(height)
-    except ValueError:
-        return Response(
-            content=message.HEIGHT_WIDTH_NOT_VALID_ERROR,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-    if width >= 0 and height >= 0:
-        if id is None or is_id_valid(file_id=id):
-            if version is None or version > 0:
-                metadata_dict["height"] = height
-                metadata_dict["width"] = width
-                metadata_dict["version"] = version
-                return None
-            else:
-                return Response(
-                    content=message.VERSION_NOT_VALID_ERROR,
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
+    @pydantic.root_validator()
+    def first_page_must_be_less_than_last_page(
+        cls, field_values: Dict[str, int]
+    ) -> Dict[str, int]:
+        first_page = field_values.get("first_page")
+        last_page = field_values.get("last_page")
+        if first_page >= 1 and (first_page <= last_page or last_page == 0):
+            return field_values
         else:
-            return Response(
-                content=message.ID_NOT_VALID_ERROR,
-                status_code=status.HTTP_400_BAD_REQUEST,
+            raise HTTPException(
+                status_code=422, detail=message.NUMBER_OF_PAGES_NOT_VALID
             )
-    else:
-        return Response(
-            content=message.HEIGHT_WIDTH_NOT_VALID_ERROR,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
 
 
 def check_if_document_thumbnail_is_enabled() -> Optional[Response]:

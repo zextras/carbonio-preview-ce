@@ -3,17 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import unittest
-import uuid
-from unittest.mock import patch
 
 from requests import Response
 from starlette import status
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import (
-    is_id_valid,
     check_for_storage_response_error,
-    check_for_image_metadata_errors,
 )
 
 
@@ -28,13 +24,6 @@ class TestDataValidator(unittest.TestCase):
 
     def tearDown(self) -> None:
         super(TestDataValidator, self).tearDown()
-
-    def test_invalid_id(self):
-        self.assertEqual(False, is_id_valid("ciao"))
-
-    def test_valid_id(self):
-        test_id = str(uuid.uuid4())
-        self.assertEqual(True, is_id_valid(test_id))
 
     def test_check_for_response_error_no_error(self):
         test_response = Response()
@@ -58,56 +47,3 @@ class TestDataValidator(unittest.TestCase):
                 result.body.decode("utf-8"), message.GENERIC_ERROR_WITH_STORAGE
             )
             self.assertEqual(result.status_code, i)
-
-    @patch("app.core.resources.data_validator.is_id_valid", return_value=False)
-    def test_validate_id_not_valid(self, mock_is_id_valid):
-        result = check_for_image_metadata_errors(
-            id="test", version=1, area="300x200", metadata_dict=dict()
-        )
-        self.assertEqual(1, mock_is_id_valid.call_count)
-        self.assertEqual(status.HTTP_400_BAD_REQUEST, result.status_code)
-        self.assertEqual(message.ID_NOT_VALID_ERROR, result.body.decode())
-
-    @patch("app.core.resources.data_validator.is_id_valid", return_value=True)
-    def test_validate_success_with_0x0_area(self, mock_is_id_valid):
-        self.img_metadata["area"] = "0x0"
-        check_for_image_metadata_errors(
-            id="test",
-            version=self.img_metadata["version"],
-            area=self.img_metadata["area"],
-            metadata_dict=dict(),
-        )
-        self.assertEqual(1, mock_is_id_valid.call_count)
-
-    def test_validate_area_not_int(self):
-        self.img_metadata["area"] = "ciaox0"
-        result = check_for_image_metadata_errors(
-            id="test",
-            version=self.img_metadata["version"],
-            area=self.img_metadata["area"],
-            metadata_dict=dict(),
-        )
-        self.assertEqual(status.HTTP_400_BAD_REQUEST, result.status_code)
-        self.assertEqual(message.HEIGHT_WIDTH_NOT_VALID_ERROR, result.body.decode())
-
-    def test_validate_area_missing_values(self):
-        self.img_metadata["area"] = "0x"
-        result = check_for_image_metadata_errors(
-            id="test",
-            version=self.img_metadata["version"],
-            area=self.img_metadata["area"],
-            metadata_dict=dict(),
-        )
-        self.assertEqual(status.HTTP_400_BAD_REQUEST, result.status_code)
-        self.assertEqual(message.HEIGHT_WIDTH_NOT_VALID_ERROR, result.body.decode())
-
-    def test_validate_area_height_zero_invalid_id(self):
-        self.img_metadata["area"] = "0x0"
-        result = check_for_image_metadata_errors(
-            id="test",
-            version=self.img_metadata["version"],
-            area=self.img_metadata["area"],
-            metadata_dict=dict(),
-        )
-        self.assertEqual(status.HTTP_400_BAD_REQUEST, result.status_code)
-        self.assertEqual(message.ID_NOT_VALID_ERROR, result.body.decode())

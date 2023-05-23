@@ -40,6 +40,7 @@ class TestImageService(IsolatedAsyncioTestCase):
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
+                    version=1,
                     img_metadata=self.img_metadata,
                     service_type=ServiceTypeEnum.FILES,
                 )
@@ -63,6 +64,7 @@ class TestImageService(IsolatedAsyncioTestCase):
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
+                    version=1,
                     img_metadata=self.img_metadata,
                     service_type=ServiceTypeEnum.FILES,
                 )
@@ -90,6 +92,7 @@ class TestImageService(IsolatedAsyncioTestCase):
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
+                    version=1,
                     img_metadata=self.img_metadata,
                     service_type=ServiceTypeEnum.FILES,
                 )

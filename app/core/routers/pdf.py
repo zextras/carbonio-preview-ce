@@ -2,17 +2,17 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Optional
+from uuid import UUID
 
-from fastapi import APIRouter, UploadFile
-from starlette import status
+from fastapi import APIRouter, UploadFile, Depends
+from pydantic import NonNegativeInt, constr
 from starlette.responses import Response
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
-    is_id_valid,
-    check_for_image_metadata_errors,
-    check_for_document_metadata_errors,
+    DocumentPagesMetadataModel,
+    AREA_REGEX,
+    create_image_metadata_dict,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -36,11 +36,10 @@ router = APIRouter(
     responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
 )
 async def get_preview(
-    id: str,
-    version: int,
+    id: UUID,
+    version: NonNegativeInt,
     service_type: ServiceTypeEnum,
-    first_page: int = 1,
-    last_page: int = 0,
+    pages: DocumentPagesMetadataModel = Depends(),
 ) -> Response:
     """
     Create and returns a preview of the given file,
@@ -54,38 +53,24 @@ async def get_preview(
     (service that first uploaded the data to storage)
     \f
     :param id: UUID of the pdf
-    :param first_page: first page to convert
-    :param last_page: last page to convert
+    :param pages: first and last page to convert
     :param version: version of the file
     :param service_type: service that owns the resource
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf divided accordingly.
     """
-    validation_errors: Optional[Response] = check_for_document_metadata_errors(
-        first_page=first_page,
-        last_page=last_page,
+    return await pdf_service.retrieve_pdf_and_create_preview(
+        file_id=str(id),
+        version=version,
+        first_page_number=pages.first_page,
+        last_page_number=pages.last_page,
+        service_type=service_type,
     )
-    if validation_errors:
-        return validation_errors
-    else:
-        if is_id_valid(file_id=id):
-            return await pdf_service.retrieve_pdf_and_create_preview(
-                file_id=id,
-                version=version,
-                first_page_number=first_page,
-                last_page_number=last_page,
-                service_type=service_type,
-            )
-        else:
-            return Response(
-                content=message.ID_NOT_VALID_ERROR,
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
 
 
 @router.post("/")
 async def post_preview(
-    file: UploadFile, first_page: int = 1, last_page: int = 0
+    file: UploadFile, pages: DocumentPagesMetadataModel = Depends()
 ) -> Response:
     """
     Create and returns a preview of the given file,
@@ -96,35 +81,28 @@ async def post_preview(
     - **last_page**: integer value of last page to preview  (0 = last of the pdf)
     \f
     :param file: file uploaded with FormData
-    :param first_page: integer value of first page to preview
-    :param last_page: integer value of last page to preview
+    :param pages: integer value of first page and last to preview
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf divided accordingly.
     """
 
-    validation_errors: Optional[Response] = check_for_document_metadata_errors(
-        first_page=first_page,
-        last_page=last_page,
+    return Response(
+        content=(
+            await pdf_service.create_preview_from_raw(
+                first_page_number=pages.first_page,
+                last_page_number=pages.last_page,
+                file=file,
+            )
+        ).read(),
+        media_type="application/pdf",
     )
-
-    if validation_errors:
-        return validation_errors
-    else:
-        return Response(
-            content=(
-                await pdf_service.create_preview_from_raw(
-                    first_page_number=first_page, last_page_number=last_page, file=file
-                )
-            ).read(),
-            media_type="application/pdf",
-        )
 
 
 @router.post(
     "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
 )
 async def post_thumbnail(
-    area: str,
+    area: constr(regex=AREA_REGEX),
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -151,32 +129,26 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "shape": shape,
-        "crop_position": VerticalCropPositionEnum.TOP,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        shape=shape,
+        crop_position=VerticalCropPositionEnum.TOP,
         area=area,
-        metadata_dict=metadata_dict,
     )
 
-    if validation_errors:
-        return validation_errors
-    else:
-        content: io.BytesIO = await pdf_service.create_thumbnail_from_raw(
-            file=file, output_format=output_format.value
-        )
-        return Response(
-            content=(
-                await image_service.process_raw_thumbnail(
-                    raw_content=content,
-                    img_metadata=ThumbnailImageMetadata(**metadata_dict),
-                )
-            ).read(),
-            media_type=f"image/{output_format}",
-        )
+    content: io.BytesIO = await pdf_service.create_thumbnail_from_raw(
+        file=file, output_format=output_format.value
+    )
+    return Response(
+        content=(
+            await image_service.process_raw_thumbnail(
+                raw_content=content,
+                img_metadata=ThumbnailImageMetadata(**metadata_dict),
+            )
+        ).read(),
+        media_type=f"image/{output_format}",
+    )
 
 
 @router.get(
@@ -184,9 +156,9 @@ async def post_thumbnail(
     responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
 )
 async def get_thumbnail(
-    id: str,
-    version: int,
-    area: str,
+    id: UUID,
+    version: NonNegativeInt,
+    area: constr(regex=AREA_REGEX),
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -219,37 +191,30 @@ async def get_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf modified accordingly.
     """
-
-    metadata_dict = {
-        "quality": quality,
-        "format": output_format,
-        "shape": shape,
-        "crop_position": VerticalCropPositionEnum.TOP,
-    }
-    validation_errors: Optional[Response] = check_for_image_metadata_errors(
+    metadata_dict = create_image_metadata_dict(
+        quality=quality,
+        output_format=output_format,
+        shape=shape,
+        crop_position=VerticalCropPositionEnum.TOP,
         area=area,
-        metadata_dict=metadata_dict,
     )
 
-    if validation_errors:
-        return validation_errors
-    else:
-        image_response: Response = await pdf_service.retrieve_pdf_and_create_thumbnail(
-            file_id=id,
-            version=version,
-            output_format=output_format.value,
-            service_type=service_type,
+    image_response: Response = await pdf_service.retrieve_pdf_and_create_thumbnail(
+        file_id=str(id),
+        version=version,
+        output_format=output_format.value,
+        service_type=service_type,
+    )
+    if image_response.status_code == 200:
+        image_raw: io.BytesIO = io.BytesIO(image_response.body)
+        return Response(
+            content=(
+                await image_service.process_raw_thumbnail(
+                    raw_content=image_raw,
+                    img_metadata=ThumbnailImageMetadata(**metadata_dict),
+                )
+            ).read(),
+            media_type=f"image/{output_format}",
         )
-        if image_response.status_code == 200:
-            image_raw: io.BytesIO = io.BytesIO(image_response.body)
-            return Response(
-                content=(
-                    await image_service.process_raw_thumbnail(
-                        raw_content=image_raw,
-                        img_metadata=ThumbnailImageMetadata(**metadata_dict),
-                    )
-                ).read(),
-                media_type=f"image/{output_format}",
-            )
-        else:
-            return image_response
+    else:
+        return image_response
