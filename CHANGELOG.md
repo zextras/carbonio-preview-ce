@@ -6,11 +6,22 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Changelog
 
+## v0.3.2 (2023-05-25)
+
+#### Fixes
+
+* Allow versions greater or equals than 0 ([#36](https://github.com/Zextras/carbonio-preview-ce/issues/36))
+
+Full set of changes: [`v0.3.1...v0.3.2`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.1...v0.3.2)
+
 ## v0.3.1 (2023-05-08)
 
 #### Fixes
 
 * Swap deprecated render_topil  ([#34](https://github.com/Zextras/carbonio-preview-ce/issues/34))
+#### Others
+
+* (release): 0.3.1 ([#35](https://github.com/Zextras/carbonio-preview-ce/issues/35))
 
 Full set of changes: [`v0.3.0...v0.3.1`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.0...v0.3.1)
 
