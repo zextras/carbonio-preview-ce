@@ -6,11 +6,22 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Changelog
 
+## v0.3.3 (2023-05-26)
+
+#### Fixes
+
+* Return image type enum value and not name ([#38](https://github.com/Zextras/carbonio-preview-ce/issues/38))
+
+Full set of changes: [`v0.3.2...v0.3.3`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.2...v0.3.3)
+
 ## v0.3.2 (2023-05-25)
 
 #### Fixes
 
 * Allow versions greater or equals than 0 ([#36](https://github.com/Zextras/carbonio-preview-ce/issues/36))
+#### Others
+
+* (release): 0.3.2 ([#37](https://github.com/Zextras/carbonio-preview-ce/issues/37))
 
 Full set of changes: [`v0.3.1...v0.3.2`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.1...v0.3.2)
 
