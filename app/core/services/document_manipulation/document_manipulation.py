@@ -5,11 +5,10 @@ import io
 import logging
 import pypdfium2
 
-from typing import IO, Optional, Generator
+from typing import IO, Optional
 
 import requests
-from pdfrw import PdfReader, PdfWriter
-from pdfrw.errors import PdfParseError
+from pypdfium2 import PdfDocument, PdfiumError
 from starlette.exceptions import HTTPException
 
 from app.core.resources.constants import document_conversion, service
@@ -31,37 +30,29 @@ def split_pdf(
     :param last_page_number: last page to convert
     :return: pdf with the first n pages
     """
-    content.seek(_get_sanitize_offset(content))
-    raw_content: bytes = content.read()
-    pdf: PdfReader = _parse_if_valid_pdf(raw_content)
+    pdf: Optional[PdfDocument] = _parse_if_valid_pdf(content)
     if not pdf:
         return _write_pdf_to_buffer(None)  # returns empty pdf
 
-    if first_page_number == 1 and last_page_number == 0 or "/Encrypt" in pdf.keys():
-        # If the pdf is encrypted we cannot split it
+    if first_page_number == 1 and last_page_number == 0:
         content.seek(0)
         return content
-    pdf_pages: list = pdf.pages
-    pdf_page_count: int = len(pdf_pages)
-    start_page: int = first_page_number - 1  # metadata info starts
-    # at 0 but first_page_number is >=1
-    end_page: int = (
-        last_page_number if 0 < last_page_number < pdf_page_count else pdf_page_count
-    )
-    return _write_pdf_to_buffer(pdf_pages, start_page, end_page)
+    start_page: int = first_page_number - 1
+    end_page: int = last_page_number if 0 < last_page_number < len(pdf) else len(pdf)
+    return _write_pdf_to_buffer(pdf, start_page, end_page)
 
 
-def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
+def _parse_if_valid_pdf(raw_content: io.BytesIO) -> Optional[PdfDocument]:
     """
     Parses the given bytes into PdfReader, if the file is not valid returns None
     \f
-    :param raw_content: file to load into a PdfReader object
+    :param raw_content: file to load into a PdfDocument object
     :return: PdfReader object containing the pdf or Empty if not valid
     """
     pdf = None
     try:
-        pdf = PdfReader(fdata=raw_content)
-    except PdfParseError as e:  # not a valid pdf
+        pdf = PdfDocument(raw_content)
+    except PdfiumError as e:  # not a valid pdf
         logger.warning(
             f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
         )
@@ -70,7 +61,7 @@ def _parse_if_valid_pdf(raw_content: bytes) -> Optional[PdfReader]:
 
 
 def _write_pdf_to_buffer(
-    pdf: list = None, start_page: int = 0, end_page: int = 1
+    pdf: Optional[PdfDocument] = None, start_page: int = 0, end_page: int = 1
 ) -> io.BytesIO:
     """
     Writes file to PDF, if pdf is empty writes an empty pdf file
@@ -80,11 +71,11 @@ def _write_pdf_to_buffer(
     :param end_page: last page to write
     :return: io.BytesIO object with pdf content written in it
     """
-    buf: io.BytesIO = io.BytesIO()
-    writer: PdfWriter = PdfWriter(buf)
+    out_pdf: PdfDocument = PdfDocument.new()
     if pdf:
-        writer.addpages(pdf[start_page:end_page])
-    writer.write()
+        out_pdf.import_pages(pdf, list(range(start_page, end_page)))
+    buf: io.BytesIO = io.BytesIO()
+    out_pdf.save(buf)
     buf.seek(0)
     return buf
 
@@ -165,41 +156,6 @@ async def convert_pdf_to_image(
     except pypdfium2.PdfiumError as e:
         log.info(f"Wrong pdf file passed, error: {e}")
         raise HTTPException(status_code=400, detail="Invalid pdf file")
-
-
-def _get_sanitize_offset(buffer: io.BytesIO, pattern_to_find: bytes = b"%PDF") -> int:
-    """
-    Calculates how many bytes to skip to avoid extra headers, it continues until
-    it finds the pattern requested
-    \f
-    :param buffer: pdf to search inside, the pattern MUST be of
-    the same type of the buffer
-    :param pattern_to_find: pattern to search for inside the pdf,
-    every byte before the pattern will be summed up and returned
-    :returns: number of bytes before the pattern to find
-    """
-    offset = 0
-    # usually the extra headers are not many,
-    # it would be a waste to read all the file
-    for line in _read_buffer_line_by_line(buffer):
-        if line.startswith(pattern_to_find):
-            break
-        else:
-            offset_in_str = line.find(pattern_to_find)
-            if offset_in_str != -1:
-                offset += offset_in_str
-                break
-            else:
-                offset += len(line)
-    return offset
-
-
-def _read_buffer_line_by_line(buffer: IO) -> Generator:
-    while True:
-        curr_line = buffer.readline()
-        if not curr_line:
-            break
-        yield curr_line
 
 
 async def convert_pdf_to(
