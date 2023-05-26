@@ -119,7 +119,7 @@ async def _process_response_data(
         if response_error
         else Response(
             content=func(img_metadata=img_metadata, content=response_data.raw).read(),
-            media_type=f"image/{img_metadata.format}",
+            media_type=f"image/{img_metadata.format.value}",
         )
     )
 
