@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 from typing import Optional, Dict
-
 import pydantic
+import requests.models
 from fastapi import HTTPException
-from pydantic import BaseModel, NonNegativeInt
-from starlette import status
-from starlette.responses import Response
+from pydantic import BaseModel, NonNegativeInt, Field
+from returns.maybe import Maybe, Nothing
+from fastapi import status
+from fastapi.responses import Response
 
 from app.core.resources.constants import message, service
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
@@ -18,7 +19,12 @@ from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
 
-AREA_REGEX: str = "^[0-9]+x[0-9]+$"
+
+class AreaRegex(pydantic.BaseModel):
+    area: str = Field(regex="^[0-9]+x[0-9]+$")
+
+    def __str__(self) -> str:
+        return self.area
 
 
 def create_image_metadata_dict(
@@ -55,8 +61,8 @@ def create_image_metadata_dict(
 
 
 def check_for_storage_response_error(
-    response_data: Optional[Response],
-) -> Optional[Response]:
+    response_data: Maybe[requests.models.Response],
+) -> Maybe[Response]:
     """
     Checks if the storage response contains error and return them accordingly
     if no error is found return None
@@ -64,18 +70,21 @@ def check_for_storage_response_error(
     :param response_data: response object to analyze
     :return: None if no error was found, else the error
     """
-    if response_data is not None:
-        if response_data.ok:
-            return None
-        else:
-            return Response(
-                content=message.GENERIC_ERROR_WITH_STORAGE,
-                status_code=response_data.status_code,
-            )
-    else:
-        return Response(
-            content=message.STORAGE_UNAVAILABLE_STRING,
+    status_code = response_data.value_or(
+        Response(
             status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+    ).status_code
+    if 200 <= status_code < 400:
+        return Nothing
+    else:
+        return Maybe.from_value(
+            Response(
+                content=message.STORAGE_UNAVAILABLE_STRING
+                if status_code >= 500
+                else message.GENERIC_ERROR_WITH_STORAGE,
+                status_code=status_code,
+            )
         )
 
 
@@ -91,8 +100,8 @@ class DocumentPagesMetadataModel(BaseModel):
     def first_page_must_be_less_than_last_page(
         cls, field_values: Dict[str, int]
     ) -> Dict[str, int]:
-        first_page = field_values.get("first_page")
-        last_page = field_values.get("last_page")
+        first_page = field_values.get("first_page", 0)
+        last_page = field_values.get("last_page", 0)
         if first_page >= 1 and (first_page <= last_page or last_page == 0):
             return field_values
         else:

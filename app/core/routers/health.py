@@ -6,8 +6,8 @@ import logging
 
 from fastapi import APIRouter
 import requests
-from starlette import status
-from starlette.responses import Response
+from fastapi import status
+from fastapi.responses import Response
 
 from app.core.resources.constants import service, storage, message, document_conversion
 

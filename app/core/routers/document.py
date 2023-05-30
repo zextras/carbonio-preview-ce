@@ -6,16 +6,16 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, UploadFile, Depends
-from pydantic import NonNegativeInt, constr
-from starlette.responses import Response
+from pydantic import NonNegativeInt
+from fastapi.responses import Response
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
     check_if_document_preview_is_enabled,
     check_if_document_thumbnail_is_enabled,
     DocumentPagesMetadataModel,
-    AREA_REGEX,
     create_image_metadata_dict,
+    AreaRegex,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -117,7 +117,7 @@ async def post_preview(
     "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
 )
 async def post_thumbnail(
-    area: constr(regex=AREA_REGEX),
+    area: AreaRegex,
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -156,7 +156,7 @@ async def post_thumbnail(
         output_format=output_format,
         shape=shape,
         crop_position=VerticalCropPositionEnum.TOP,
-        area=area,
+        area=str(area),
     )
 
     content: io.BytesIO = await document_service.create_thumbnail_from_raw(
@@ -180,7 +180,7 @@ async def post_thumbnail(
 async def get_thumbnail(
     id: UUID,
     version: NonNegativeInt,
-    area: constr(regex=AREA_REGEX),
+    area: AreaRegex,
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -224,7 +224,7 @@ async def get_thumbnail(
         output_format=output_format,
         shape=shape,
         crop_position=VerticalCropPositionEnum.TOP,
-        area=area,
+        area=str(area),
     )
     image_response: Response = await document_service.retrieve_doc_and_create_thumbnail(
         file_id=str(id),

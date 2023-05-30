@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-from typing import Optional, IO
+from typing import Callable, Any
 
-from fastapi.responses import Response
+from fastapi.responses import Response as FastApiResp
+from requests.models import Response as RequestResp
+from returns.maybe import Maybe
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import check_for_storage_response_error
@@ -30,7 +32,7 @@ async def retrieve_image_and_create_thumbnail(
     version: int,
     img_metadata: ThumbnailImageMetadata,
     service_type: ServiceTypeEnum,
-) -> Response:
+) -> FastApiResp:
     """
     Contact storage and retrieves the image with the file id requested
     and calls process image.
@@ -41,7 +43,7 @@ async def retrieve_image_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Optional[Response] = await storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
     return await _process_response_data(
@@ -56,7 +58,7 @@ async def retrieve_image_and_create_preview(
     version: int,
     img_metadata: PreviewImageMetadata,
     service_type: ServiceTypeEnum,
-) -> Response:
+) -> FastApiResp:
     """
     Contact storage and retrieves the image with the file id requested
     and calls process image.
@@ -67,7 +69,7 @@ async def retrieve_image_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Optional[Response] = await storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
     return await _process_response_data(
@@ -78,7 +80,7 @@ async def retrieve_image_and_create_preview(
 
 
 async def process_raw_thumbnail(
-    raw_content: IO, img_metadata: ThumbnailImageMetadata
+    raw_content: io.BytesIO, img_metadata: ThumbnailImageMetadata
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -89,7 +91,7 @@ async def process_raw_thumbnail(
 
 
 async def process_raw_preview(
-    raw_content: IO, img_metadata: PreviewImageMetadata
+    raw_content: io.BytesIO, img_metadata: PreviewImageMetadata
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -100,25 +102,26 @@ async def process_raw_preview(
 
 
 async def _process_response_data(
-    response_data: Optional[Response], img_metadata, func
-) -> Response:
+    response_data: Maybe[RequestResp], img_metadata: Any, func: Callable
+) -> FastApiResp:
     """
     Validates response data and then process calling func passed.
     If the storage is not available returns
     Storage unavailable error and related error code
     :param response_data:
-    :param img_metadata:
+    :param img_metadata: object containing the image metadata fields.
     :param func:
     :return:
     """
-    response_error: Optional[Response] = check_for_storage_response_error(
+    response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data
     )
-    return (
-        response_error
-        if response_error
-        else Response(
-            content=func(img_metadata=img_metadata, content=response_data.raw).read(),
+    return response_error.value_or(
+        FastApiResp(
+            content=func(
+                img_metadata=img_metadata,
+                content=response_data.value_or(RequestResp()).content,
+            ).read(),
             media_type=f"image/{img_metadata.format.value}",
         )
     )

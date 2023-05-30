@@ -21,9 +21,9 @@ class ThumbnailImageMetadata(BaseModel):
     """
 
     version: Optional[int] = 1
-    quality: Optional[ImageQualityEnum] = ImageQualityEnum.MEDIUM
-    format: Optional[ImageTypeEnum] = ImageTypeEnum.JPEG
-    shape: Optional[ImageBorderShapeEnum] = ImageBorderShapeEnum.RECTANGULAR
-    crop_position: Optional[VerticalCropPositionEnum] = VerticalCropPositionEnum.CENTER
+    quality: ImageQualityEnum = ImageQualityEnum.MEDIUM
+    format: ImageTypeEnum = ImageTypeEnum.JPEG
+    shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR
+    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER
     height: int
     width: int

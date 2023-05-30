@@ -5,11 +5,11 @@ import io
 import logging
 import pypdfium2
 
-from typing import IO, Optional
+from typing import Optional
 
 import requests
 from pypdfium2 import PdfDocument, PdfiumError
-from starlette.exceptions import HTTPException
+from fastapi.exceptions import HTTPException
 
 from app.core.resources.constants import document_conversion, service
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -84,7 +84,7 @@ async def convert_to_pdf(
     content: io.BytesIO,
     first_page_number: int,
     last_page_number: int,
-    log: logging = logger,
+    log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts any Carbonio-docs-editor supported format to pdf
@@ -109,7 +109,7 @@ async def convert_to_pdf(
 async def convert_file_to(
     content: io.BytesIO,
     output_extension: str,
-    log: logging = logger,
+    log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts any Carbonio-docs-editor supported format to any Carbonio-docs-editor
@@ -128,7 +128,10 @@ async def convert_file_to(
 
 
 async def convert_pdf_to_image(
-    content: IO, output_extension: str, page_number: int, log: logging = logger
+    content: io.BytesIO,
+    output_extension: str,
+    page_number: int,
+    log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts pdf to any image supported format using PDFium
@@ -163,7 +166,7 @@ async def convert_pdf_to(
     output_extension: str,
     first_page_number: int,
     last_page_number: int,
-    log: logging = logger,
+    log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts pdf to any Carbonio-docs-editor supported format
@@ -174,18 +177,18 @@ async def convert_pdf_to(
     :param last_page_number: last page to convert
     :param log: logger to use
     """
-    content: io.BytesIO = split_pdf(
+    out_content: io.BytesIO = split_pdf(
         content=content,
         first_page_number=first_page_number,
         last_page_number=last_page_number,
     )
     return await convert_file_to(
-        content=content, output_extension=output_extension, log=log
+        content=out_content, output_extension=output_extension, log=log
     )
 
 
 async def _convert_with_libre(
-    content: io.BytesIO, output_extension: str, log: logging
+    content: io.BytesIO, output_extension: str, log: logging.Logger
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
 

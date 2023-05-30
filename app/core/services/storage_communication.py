@@ -2,11 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-from typing import Optional
-
 import requests
 import logging
 from requests.models import Response
+from returns.maybe import Maybe, Nothing
 
 from app.core.resources.constants import storage
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
@@ -19,7 +18,7 @@ async def retrieve_data(
     version: int = 1,
     service_type: ServiceTypeEnum = ServiceTypeEnum.FILES,
     log: logging.Logger = logger,
-) -> Optional[Response]:
+) -> Maybe[Response]:
     """
     Retrieves given node and version from the config storage
     :param file_id: Unique identifier (UUID4) of the file
@@ -34,12 +33,13 @@ async def retrieve_data(
         f"{storage.FULL_ADDRESS}/{storage.DOWNLOAD_API}"
         + f"?node={file_id}&version={version}&type={service_type.value}"
     )
-    response: Response = None
+    response: Maybe[Response] = Nothing
     try:
         s = requests.Session()
         s.stream = True
-        response = s.get(req, timeout=60)
-        response.raise_for_status()
+        resp = s.get(req, timeout=60)
+        resp.raise_for_status()
+        response = Maybe.from_value(resp)
     except requests.exceptions.HTTPError as http_error:
         log.debug(f"Http Error: {http_error}")
     except requests.exceptions.ConnectionError as connection_error:

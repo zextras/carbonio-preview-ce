@@ -35,14 +35,13 @@ def png_preview(
     :param crop_position: where should the image zoom when cropped
     :return: compressed image raw bytes
     """
+    img: Image.Image
     if _crop:
-        img: Image.Image = resize_with_crop_and_paddings(
+        img = resize_with_crop_and_paddings(
             content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
         )
     else:
-        img: Image.Image = resize_with_paddings(
-            content=content, requested_x=_x, requested_y=_y
-        )
+        img = resize_with_paddings(content=content, requested_x=_x, requested_y=_y)
     output: io.BytesIO = save_image_to_buffer(img=img, _format="PNG", _optimize=False)
     return output
 

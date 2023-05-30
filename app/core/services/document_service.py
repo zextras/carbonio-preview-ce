@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Optional
 
 from fastapi import UploadFile
-from starlette.responses import Response
+from returns.maybe import Maybe
+from fastapi.responses import Response as FastApiResp
+from requests.models import Response as RequestResp
 
 from app.core.resources.data_validator import check_for_storage_response_error
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
@@ -19,7 +20,7 @@ async def retrieve_doc_and_create_preview(
     first_page_number: int,
     last_page_number: int,
     service_type: ServiceTypeEnum,
-) -> Response:
+) -> FastApiResp:
     """
     Contact storage and retrieves the image with the nodeid requested
     and trims it to the number of pages requested.
@@ -32,25 +33,25 @@ async def retrieve_doc_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Optional[Response] = await retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
-    response_error: Optional[Response] = check_for_storage_response_error(
+    response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data
     )
-    if response_error:
-        return response_error
-    else:
-        pdf: io.BytesIO = await document_manipulation.convert_to_pdf(
-            first_page_number=first_page_number,
-            last_page_number=last_page_number,
-            content=io.BytesIO(response_data.content),
-        )
-        return Response(
-            content=pdf.read(),
+    return response_error.map(FastApiResp).value_or(
+        FastApiResp(
+            content=(
+                await document_manipulation.convert_to_pdf(
+                    first_page_number=first_page_number,
+                    last_page_number=last_page_number,
+                    content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                )
+            ).read(),
             media_type="application/pdf",
         )
+    )
 
 
 async def create_preview_from_raw(
@@ -66,7 +67,7 @@ async def create_preview_from_raw(
     return await document_manipulation.convert_to_pdf(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
-        content=file.file,
+        content=io.BytesIO(file.file.read()),
     )
 
 
@@ -78,13 +79,13 @@ async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.
     :param output_format: the image type that the thumbnail will have
     """
     return await document_manipulation.convert_file_to(
-        content=file.file, output_extension=output_format
+        content=io.BytesIO(file.file.read()), output_extension=output_format
     )
 
 
 async def retrieve_doc_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
-) -> Response:
+) -> FastApiResp:
     """
     Contact storage and retrieves the document
      with the nodeid requested and converts it to image.
@@ -96,22 +97,21 @@ async def retrieve_doc_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Optional[Response] = await retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
-    response_error: Optional[Response] = check_for_storage_response_error(
+    response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data
     )
-    if response_error:
-        return response_error
-    else:
-        return Response(
+    return response_error.map(FastApiResp).value_or(
+        FastApiResp(
             content=(
                 await document_manipulation.convert_file_to(
-                    content=io.BytesIO(response_data.content),
+                    content=io.BytesIO(response_data.value_or(RequestResp()).content),
                     output_extension=output_format,
                 )
             ).read(),
             media_type=f"image/{output_format}",
         )
+    )

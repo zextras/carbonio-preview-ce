@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import requests
 import responses
 from requests import Response
+from returns.maybe import Nothing
 
 import app.core.services.storage_communication as st_com
 from app.core.resources.constants import storage
@@ -68,7 +69,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_http_error(self):
@@ -102,7 +103,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(0, self.log_mock.critical.call_count)
         self.assertEqual(1, self.log_mock.debug.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_timeout_error(self):
@@ -115,7 +116,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(0, self.log_mock.critical.call_count)
         self.assertEqual(1, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_generic_error(self):
@@ -128,4 +129,4 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
