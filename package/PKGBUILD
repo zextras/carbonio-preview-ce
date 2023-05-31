@@ -30,12 +30,12 @@ depends:yum=(
 )
 
 makedepends:yum=(
-  "python38-pip"
+  "python39-pip"
 )
 
 makedepends:apt=(
-  "python3-pkg-resources"
-  "python3-pip"
+  "python3.9-pkg-resources"
+  "python3.9-pip"
 )
 
 provides:yum=(
@@ -45,7 +45,7 @@ provides:yum=(
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
   "libtiff-ac0c3d92.so.6.0.0(LIBTIFF_4.0)(64bit)"
-  "/bin/python3.8"
+  "/bin/python3.9"
 )
 
 sources=(
@@ -102,11 +102,11 @@ build:yum() {
   echo "#!/bin/sh" > /usr/lib/rpm/brp-strip-static-archive
   echo "#!/bin/sh" > /usr/lib/rpm/brp-strip
 
-  pip3.8 install \
+  pip3.9 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
 
-  python3.8 setup.py install \
+  python3.9 setup.py install \
     --no-compile \
     --prefix=/opt/zextras/common \
     --root="${pkgdir}"
