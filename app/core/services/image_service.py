@@ -120,7 +120,7 @@ def _process_response_data(
         FastApiResp(
             content=func(
                 img_metadata=img_metadata,
-                content=response_data.value_or(RequestResp()).content,
+                content=io.BytesIO(response_data.value_or(RequestResp()).content),
             ).read(),
             media_type=f"image/{img_metadata.format.value}",
         )
