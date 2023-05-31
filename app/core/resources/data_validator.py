@@ -6,7 +6,7 @@ from typing import Optional, Dict
 import pydantic
 import requests.models
 from fastapi import HTTPException
-from pydantic import BaseModel, NonNegativeInt, Field
+from pydantic import BaseModel, NonNegativeInt
 from returns.maybe import Maybe, Nothing
 from fastapi import status
 from fastapi.responses import Response
@@ -18,13 +18,6 @@ from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
-
-
-class AreaRegex(pydantic.BaseModel):
-    area: str = Field(regex="^[0-9]+x[0-9]+$")
-
-    def __str__(self) -> str:
-        return self.area
 
 
 def create_image_metadata_dict(

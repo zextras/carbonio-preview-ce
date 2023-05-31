@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, UploadFile, Depends
+from fastapi import APIRouter, UploadFile, Depends, Path
 from pydantic import NonNegativeInt
 from fastapi.responses import Response
 
@@ -12,7 +13,6 @@ from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
     DocumentPagesMetadataModel,
     create_image_metadata_dict,
-    AreaRegex,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -102,7 +102,7 @@ async def post_preview(
     "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
 )
 async def post_thumbnail(
-    area: AreaRegex,
+    area: Annotated[str, Path(regex="^[0-9]+x[0-9]+$")],
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -134,7 +134,7 @@ async def post_thumbnail(
         output_format=output_format,
         shape=shape,
         crop_position=VerticalCropPositionEnum.TOP,
-        area=str(area),
+        area=area,
     )
 
     content: io.BytesIO = pdf_service.create_thumbnail_from_raw(
@@ -158,7 +158,7 @@ async def post_thumbnail(
 async def get_thumbnail(
     id: UUID,
     version: NonNegativeInt,
-    area: AreaRegex,
+    area: Annotated[str, Path(regex="^[0-9]+x[0-9]+$")],
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -196,7 +196,7 @@ async def get_thumbnail(
         output_format=output_format,
         shape=shape,
         crop_position=VerticalCropPositionEnum.TOP,
-        area=str(area),
+        area=area,
     )
 
     image_response: Response = pdf_service.retrieve_pdf_and_create_thumbnail(
