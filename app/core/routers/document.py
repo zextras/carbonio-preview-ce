@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Optional, Annotated
+from typing import Optional
 from uuid import UUID
+from typing_extensions import Annotated
 
 from fastapi import APIRouter, UploadFile, Depends, Path
 from pydantic import NonNegativeInt

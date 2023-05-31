@@ -2,12 +2,12 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, UploadFile, Path
 from fastapi.responses import Response
 from pydantic import NonNegativeInt
+from typing_extensions import Annotated
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (

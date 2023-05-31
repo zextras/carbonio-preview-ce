@@ -18,19 +18,19 @@ license=("AGPL-3.0-only")
 
 depends:apt=(
    "pending-setups"
-   "python3>=3.9"
+   "python3>=3.8"
    "service-discover"
 )
 
 depends:yum=(
   "carbonio-docs-core"
   "pending-setups"
-  "python39"
+  "python38"
   "service-discover"
 )
 
 makedepends:yum=(
-  "python39-pip"
+  "python38-pip"
 )
 
 makedepends:apt=(
@@ -45,7 +45,7 @@ provides:yum=(
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
   "libtiff-ac0c3d92.so.6.0.0(LIBTIFF_4.0)(64bit)"
-  "/bin/python3.9"
+  "/bin/python3.8"
 )
 
 sources=(
@@ -102,11 +102,11 @@ build:yum() {
   echo "#!/bin/sh" > /usr/lib/rpm/brp-strip-static-archive
   echo "#!/bin/sh" > /usr/lib/rpm/brp-strip
 
-  pip3.9 install \
+  pip3.8 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
 
-  python3.9 setup.py install \
+  python3.8 setup.py install \
     --no-compile \
     --prefix=/opt/zextras/common \
     --root="${pkgdir}"
