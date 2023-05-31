@@ -18,14 +18,14 @@ license=("AGPL-3.0-only")
 
 depends:apt=(
    "pending-setups"
-   "python3>=3.8"
+   "python3>=3.9"
    "service-discover"
 )
 
 depends:yum=(
   "carbonio-docs-core"
   "pending-setups"
-  "python38"
+  "python39"
   "service-discover"
 )
 
