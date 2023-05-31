@@ -10,10 +10,10 @@ from returns.maybe import Maybe, Nothing
 from app.core.resources.constants import storage
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
-logger = logging.getLogger("Storage")
+logger = logging.getLogger(__name__)
 
 
-async def retrieve_data(
+def retrieve_data(
     file_id: str,
     version: int = 1,
     service_type: ServiceTypeEnum = ServiceTypeEnum.FILES,

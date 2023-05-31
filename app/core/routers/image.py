@@ -80,7 +80,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=str(area),
     )
-    return await image_service.retrieve_image_and_create_thumbnail(
+    return image_service.retrieve_image_and_create_thumbnail(
         image_id=str(id),
         version=version,
         img_metadata=ThumbnailImageMetadata(**metadata_dict),
@@ -128,7 +128,7 @@ async def post_thumbnail(
     )
     return Response(
         content=(
-            await image_service.process_raw_thumbnail(
+            image_service.process_raw_thumbnail(
                 raw_content=io.BytesIO(file.file.read()),
                 img_metadata=ThumbnailImageMetadata(**metadata_dict),
             )
@@ -178,7 +178,7 @@ async def post_preview(
 
     return Response(
         content=(
-            await image_service.process_raw_preview(
+            image_service.process_raw_preview(
                 raw_content=io.BytesIO(file.file.read()),
                 img_metadata=PreviewImageMetadata(**metadata_dict),
             )
@@ -238,7 +238,7 @@ async def get_preview(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=str(area),
     )
-    return await image_service.retrieve_image_and_create_preview(
+    return image_service.retrieve_image_and_create_preview(
         image_id=str(id),
         version=version,
         img_metadata=PreviewImageMetadata(**metadata_dict),

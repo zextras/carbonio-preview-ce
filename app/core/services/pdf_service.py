@@ -14,7 +14,7 @@ from app.core.services.document_manipulation import document_manipulation
 from app.core.services.storage_communication import retrieve_data
 
 
-async def retrieve_pdf_and_create_preview(
+def retrieve_pdf_and_create_preview(
     file_id: str,
     version: int,
     first_page_number: int,
@@ -32,7 +32,7 @@ async def retrieve_pdf_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = await retrieve_data(
+    response_data: Maybe[RequestResp] = retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -51,7 +51,7 @@ async def retrieve_pdf_and_create_preview(
     )
 
 
-async def create_preview_from_raw(
+def create_preview_from_raw(
     file: UploadFile, first_page_number: int, last_page_number: int
 ) -> io.BytesIO:
     """
@@ -67,20 +67,20 @@ async def create_preview_from_raw(
     )
 
 
-async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesIO:
+def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesIO:
     """
     Create image thumbnail of a given pdf
     :param file: uploaded pdf to convert
     :param output_format: the image type that the thumbnail will have
     """
-    return await document_manipulation.convert_pdf_to_image(
+    return document_manipulation.convert_pdf_to_image(
         content=io.BytesIO(file.file.read()),
         output_extension=output_format,
         page_number=0,
     )
 
 
-async def retrieve_pdf_and_create_thumbnail(
+def retrieve_pdf_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
 ) -> FastApiResp:
     """
@@ -93,7 +93,7 @@ async def retrieve_pdf_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = await retrieve_data(
+    response_data: Maybe[RequestResp] = retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -103,7 +103,7 @@ async def retrieve_pdf_and_create_thumbnail(
     return response_error.value_or(
         FastApiResp(
             content=(
-                await document_manipulation.convert_pdf_to_image(
+                document_manipulation.convert_pdf_to_image(
                     content=io.BytesIO(response_data.value_or(RequestResp()).content),
                     output_extension=output_format,
                     page_number=0,

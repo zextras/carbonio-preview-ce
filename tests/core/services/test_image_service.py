@@ -38,13 +38,11 @@ class TestImageService(IsolatedAsyncioTestCase):
             "app.core.services." "image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
@@ -63,13 +61,11 @@ class TestImageService(IsolatedAsyncioTestCase):
             "app.core.services." "image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
@@ -92,13 +88,11 @@ class TestImageService(IsolatedAsyncioTestCase):
             "app.core.services" ".image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Nothing
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)

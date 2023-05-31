@@ -80,7 +80,7 @@ def _write_pdf_to_buffer(
     return buf
 
 
-async def convert_to_pdf(
+def convert_to_pdf(
     content: io.BytesIO,
     first_page_number: int,
     last_page_number: int,
@@ -96,7 +96,7 @@ async def convert_to_pdf(
     """
 
     return split_pdf(
-        content=await convert_file_to(
+        content=convert_file_to(
             content=content,
             output_extension="pdf",
             log=log,
@@ -106,7 +106,7 @@ async def convert_to_pdf(
     )
 
 
-async def convert_file_to(
+def convert_file_to(
     content: io.BytesIO,
     output_extension: str,
     log: logging.Logger = logger,
@@ -122,12 +122,12 @@ async def convert_file_to(
      should be a format supported by Carbonio-docs-editor
     :param log: logger to use
     """
-    return await _convert_with_libre(
+    return _convert_with_libre(
         content=content, output_extension=output_extension, log=log
     )
 
 
-async def convert_pdf_to_image(
+def convert_pdf_to_image(
     content: io.BytesIO,
     output_extension: str,
     page_number: int,
@@ -161,7 +161,7 @@ async def convert_pdf_to_image(
         raise HTTPException(status_code=400, detail="Invalid pdf file")
 
 
-async def convert_pdf_to(
+def convert_pdf_to(
     content: io.BytesIO,
     output_extension: str,
     first_page_number: int,
@@ -182,12 +182,12 @@ async def convert_pdf_to(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
     )
-    return await convert_file_to(
+    return convert_file_to(
         content=out_content, output_extension=output_extension, log=log
     )
 
 
-async def _convert_with_libre(
+def _convert_with_libre(
     content: io.BytesIO, output_extension: str, log: logging.Logger
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)

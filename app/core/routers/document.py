@@ -69,7 +69,7 @@ async def get_preview(
     if document_preview_service_errors:
         return document_preview_service_errors
 
-    return await document_service.retrieve_doc_and_create_preview(
+    return document_service.retrieve_doc_and_create_preview(
         file_id=str(id),
         version=version,
         first_page_number=pages.first_page,
@@ -103,7 +103,7 @@ async def post_preview(
 
     return Response(
         content=(
-            await document_service.create_preview_from_raw(
+            document_service.create_preview_from_raw(
                 first_page_number=pages.first_page,
                 last_page_number=pages.last_page,
                 file=file,
@@ -159,12 +159,12 @@ async def post_thumbnail(
         area=str(area),
     )
 
-    content: io.BytesIO = await document_service.create_thumbnail_from_raw(
+    content: io.BytesIO = document_service.create_thumbnail_from_raw(
         file=file, output_format=output_format.value
     )
     return Response(
         content=(
-            await image_service.process_raw_thumbnail(
+            image_service.process_raw_thumbnail(
                 raw_content=content,
                 img_metadata=ThumbnailImageMetadata(**metadata_dict),
             )
@@ -226,7 +226,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.TOP,
         area=str(area),
     )
-    image_response: Response = await document_service.retrieve_doc_and_create_thumbnail(
+    image_response: Response = document_service.retrieve_doc_and_create_thumbnail(
         file_id=str(id),
         version=version,
         output_format=output_format.value,
@@ -236,7 +236,7 @@ async def get_thumbnail(
         image_raw: io.BytesIO = io.BytesIO(image_response.body)
         return Response(
             content=(
-                await image_service.process_raw_thumbnail(
+                image_service.process_raw_thumbnail(
                     raw_content=image_raw,
                     img_metadata=ThumbnailImageMetadata(**metadata_dict),
                 )

@@ -27,7 +27,7 @@ from app.core.services.image_manipulation.png_manipulation import (
 )
 
 
-async def retrieve_image_and_create_thumbnail(
+def retrieve_image_and_create_thumbnail(
     image_id: str,
     version: int,
     img_metadata: ThumbnailImageMetadata,
@@ -43,17 +43,17 @@ async def retrieve_image_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
-    return await _process_response_data(
+    return _process_response_data(
         response_data=response_data,
         img_metadata=img_metadata,
         func=_select_thumbnail_module,
     )
 
 
-async def retrieve_image_and_create_preview(
+def retrieve_image_and_create_preview(
     image_id: str,
     version: int,
     img_metadata: PreviewImageMetadata,
@@ -69,17 +69,17 @@ async def retrieve_image_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
-    return await _process_response_data(
+    return _process_response_data(
         response_data=response_data,
         img_metadata=img_metadata,
         func=_select_preview_module,
     )
 
 
-async def process_raw_thumbnail(
+def process_raw_thumbnail(
     raw_content: io.BytesIO, img_metadata: ThumbnailImageMetadata
 ) -> io.BytesIO:
     """
@@ -90,7 +90,7 @@ async def process_raw_thumbnail(
     return _select_thumbnail_module(img_metadata=img_metadata, content=raw_content)
 
 
-async def process_raw_preview(
+def process_raw_preview(
     raw_content: io.BytesIO, img_metadata: PreviewImageMetadata
 ) -> io.BytesIO:
     """
@@ -101,7 +101,7 @@ async def process_raw_preview(
     return _select_preview_module(img_metadata=img_metadata, content=raw_content)
 
 
-async def _process_response_data(
+def _process_response_data(
     response_data: Maybe[RequestResp], img_metadata: Any, func: Callable
 ) -> FastApiResp:
     """

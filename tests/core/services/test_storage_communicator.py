@@ -45,7 +45,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         # need to use context manager to patch async
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, json={"content": "found"}, status=200)
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
@@ -62,7 +62,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
                 self.req,
                 body=requests.exceptions.RequestException("test"),
             )
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
@@ -79,7 +79,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         for i in range(starting_point, ending_point):
             with responses.RequestsMock() as rsps:
                 rsps.add(responses.GET, self.req, json={"content": "found"}, status=i)
-                response: Optional[Response] = await st_com.retrieve_data(
+                response: Optional[Response] = st_com.retrieve_data(
                     file_id=self.test_id, version=self.version, log=self.log_mock
                 )
                 self.assertEqual(1, len(rsps.calls))
@@ -96,7 +96,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
                 self.req,
                 body=requests.exceptions.ConnectionError("test"),
             )
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
@@ -109,7 +109,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
     async def test_retrieve_data_timeout_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=requests.exceptions.Timeout("test"))
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
@@ -122,7 +122,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
     async def test_retrieve_data_generic_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=Exception("test"))
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
