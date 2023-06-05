@@ -42,16 +42,16 @@ def split_pdf(
     return _write_pdf_to_buffer(pdf, start_page, end_page)
 
 
-def _parse_if_valid_pdf(raw_content: io.BytesIO) -> Optional[PdfDocument]:
+def _parse_if_valid_pdf(content: io.BytesIO) -> Optional[PdfDocument]:
     """
-    Parses the given bytes into PdfReader, if the file is not valid returns None
+    Parses the given buffer of bytes into PdfReader, if the file is not valid returns None
     \f
-    :param raw_content: file to load into a PdfDocument object
+    :param content: file to load into a PdfDocument object
     :return: PdfReader object containing the pdf or Empty if not valid
     """
     pdf = None
     try:
-        pdf = PdfDocument(raw_content)
+        pdf = PdfDocument(content)
     except PdfiumError as e:  # not a valid pdf
         logger.warning(
             f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
@@ -64,9 +64,9 @@ def _write_pdf_to_buffer(
     pdf: Optional[PdfDocument] = None, start_page: int = 0, end_page: int = 1
 ) -> io.BytesIO:
     """
-    Writes file to PDF, if pdf is empty writes an empty pdf file
+    Writes PDF to io.BytesIO buffer, if PDF is empty writes an empty pdf file
     \f
-    :param pdf: list of PdfReader pages containing the content to write
+    :param pdf: PdfDocument containing the content to write
     :param start_page: first page to write
     :param end_page: last page to write
     :return: io.BytesIO object with pdf content written in it
