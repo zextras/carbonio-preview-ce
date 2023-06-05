@@ -4,9 +4,8 @@
 
 import io
 import pytest
-from pypdfium2 import PdfiumError, PdfDocument
+from pypdfium2 import PdfDocument
 from returns.maybe import Maybe
-from returns.result import Failure
 
 from app.core.services.document_manipulation import document_manipulation  # noqa
 
