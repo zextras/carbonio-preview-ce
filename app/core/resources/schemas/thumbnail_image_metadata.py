@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
@@ -20,7 +18,6 @@ class ThumbnailImageMetadata(BaseModel):
     Class representing all the image information
     """
 
-    version: Optional[int] = 1
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM
     format: ImageTypeEnum = ImageTypeEnum.JPEG
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR

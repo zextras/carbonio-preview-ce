@@ -17,7 +17,6 @@ class PreviewImageMetadata(BaseModel):
     Class representing all the image information
     """
 
-    version: int = 1
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM
     format: ImageTypeEnum = ImageTypeEnum.JPEG
     crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER
