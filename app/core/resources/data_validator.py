@@ -32,6 +32,8 @@ THUMBNAIL_NOT_ENABLED_RESPONSE: Final[FastApiResp] = FastApiResp(
     status_code=status.HTTP_400_BAD_REQUEST,
 )
 
+AREA_REGEX: Final[str] = "^[0-9]+x[0-9]+$"
+
 
 def create_image_metadata_dict(
     quality: ImageQualityEnum,

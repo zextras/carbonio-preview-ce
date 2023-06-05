@@ -16,6 +16,7 @@ from app.core.resources.data_validator import (
     create_image_metadata_dict,
     THUMBNAIL_NOT_ENABLED_RESPONSE,
     get_document_preview_enabled_response_error,
+    AREA_REGEX,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -109,7 +110,7 @@ async def post_preview(
     "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
 )
 async def post_thumbnail(
-    area: Annotated[str, Path(regex="^[0-9]+x[0-9]+$")],
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -168,7 +169,7 @@ async def post_thumbnail(
 async def get_thumbnail(
     id: UUID,
     version: NonNegativeInt,
-    area: Annotated[str, Path(regex="^[0-9]+x[0-9]+$")],
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
