@@ -5,11 +5,10 @@ import io
 import logging
 import pypdfium2
 
-from typing import Optional
-
 import requests
 from pypdfium2 import PdfDocument, PdfiumError
 from fastapi.exceptions import HTTPException
+from returns.result import Success, Failure, Result
 
 from app.core.resources.constants import document_conversion, service
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -30,38 +29,30 @@ def split_pdf(
     :param last_page_number: last page to convert
     :return: pdf with the first n pages
     """
-    pdf: Optional[PdfDocument] = _parse_if_valid_pdf(content)
-    if not pdf:
-        return _write_pdf_to_buffer(None)  # returns empty pdf
-
-    if first_page_number == 1 and last_page_number == 0:
-        content.seek(0)
-        return content
+    pdf: PdfDocument = _parse_if_valid_pdf(content).value_or(PdfDocument.new())
     start_page: int = first_page_number - 1
     end_page: int = last_page_number if 0 < last_page_number < len(pdf) else len(pdf)
     return _write_pdf_to_buffer(pdf, start_page, end_page)
 
 
-def _parse_if_valid_pdf(raw_content: io.BytesIO) -> Optional[PdfDocument]:
+def _parse_if_valid_pdf(raw_content: io.BytesIO) -> Result[PdfDocument, PdfiumError]:
     """
     Parses the given bytes into PdfReader, if the file is not valid returns None
     \f
     :param raw_content: file to load into a PdfDocument object
     :return: PdfReader object containing the pdf or Empty if not valid
     """
-    pdf = None
     try:
-        pdf = PdfDocument(raw_content)
+        return Success(PdfDocument(raw_content))
     except PdfiumError as e:  # not a valid pdf
         logger.warning(
             f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
         )
-    finally:
-        return pdf
+        return Failure(e)
 
 
 def _write_pdf_to_buffer(
-    pdf: Optional[PdfDocument] = None, start_page: int = 0, end_page: int = 1
+    pdf: PdfDocument, start_page: int = 0, end_page: int = 1
 ) -> io.BytesIO:
     """
     Writes file to PDF, if pdf is empty writes an empty pdf file
@@ -72,9 +63,14 @@ def _write_pdf_to_buffer(
     :return: io.BytesIO object with pdf content written in it
     """
     out_pdf: PdfDocument = PdfDocument.new()
-    if pdf:
-        out_pdf.import_pages(pdf, list(range(start_page, end_page)))
     buf: io.BytesIO = io.BytesIO()
+
+    end_page = len(pdf) if end_page == 0 else end_page
+    if start_page == 0 and end_page == len(pdf):
+        out_pdf = pdf
+    else:
+        out_pdf.import_pages(pdf, list(range(start_page, end_page)))
+
     out_pdf.save(buf)
     buf.seek(0)
     return buf

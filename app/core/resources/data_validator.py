@@ -3,13 +3,16 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 from typing import Optional, Dict
+from typing_extensions import Final
+from requests.models import Response as RequestResp
+
 import pydantic
-import requests.models
+
 from fastapi import HTTPException
 from pydantic import BaseModel, NonNegativeInt
 from returns.maybe import Maybe, Nothing
 from fastapi import status
-from fastapi.responses import Response
+from fastapi.responses import Response as FastApiResp
 
 from app.core.resources.constants import message, service
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
@@ -17,6 +20,16 @@ from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
+)
+
+PREVIEW_NOT_ENABLED_RESPONSE: Final[FastApiResp] = FastApiResp(
+    content=message.DOCUMENT_PREVIEW_NOT_ENABLED_ERROR,
+    status_code=status.HTTP_400_BAD_REQUEST,
+)
+
+THUMBNAIL_NOT_ENABLED_RESPONSE: Final[FastApiResp] = FastApiResp(
+    content=message.DOCUMENT_THUMBNAIL_NOT_ENABLED_ERROR,
+    status_code=status.HTTP_400_BAD_REQUEST,
 )
 
 
@@ -54,8 +67,8 @@ def create_image_metadata_dict(
 
 
 def check_for_storage_response_error(
-    response_data: Maybe[requests.models.Response],
-) -> Maybe[Response]:
+    response_data: Maybe[RequestResp],
+) -> Maybe[FastApiResp]:
     """
     Checks if the storage response contains error and return them accordingly
     if no error is found return None
@@ -64,7 +77,7 @@ def check_for_storage_response_error(
     :return: None if no error was found, else the error
     """
     status_code = response_data.value_or(
-        Response(
+        FastApiResp(
             status_code=status.HTTP_502_BAD_GATEWAY,
         )
     ).status_code
@@ -72,7 +85,7 @@ def check_for_storage_response_error(
         return Nothing
     else:
         return Maybe.from_value(
-            Response(
+            FastApiResp(
                 content=message.STORAGE_UNAVAILABLE_STRING
                 if status_code >= 500
                 else message.GENERIC_ERROR_WITH_STORAGE,
@@ -103,35 +116,34 @@ class DocumentPagesMetadataModel(BaseModel):
             )
 
 
-def check_if_document_thumbnail_is_enabled() -> Optional[Response]:
+def check_if_document_thumbnail_is_enabled() -> bool:
     """
     Checks if the document thumbnail option is enabled
     \f
-    :return: a Response with status code 400 and content with
-     detailed explanation if thumbnail is not enabled
+    :return: True if enabled
     """
-    return (
-        None
-        if service.ENABLE_DOCUMENT_THUMBNAIL
-        else Response(
-            content=message.DOCUMENT_THUMBNAIL_NOT_ENABLED_ERROR,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-    )
+    return service.ENABLE_DOCUMENT_THUMBNAIL
 
 
-def check_if_document_preview_is_enabled() -> Optional[Response]:
+def _check_if_document_preview_is_enabled() -> bool:
+    """
+    Checks if the document preview option is enabled
+    \f
+    :return: True if enabled
+    """
+    return service.ENABLE_DOCUMENT_PREVIEW
+
+
+def get_document_preview_enabled_response_error() -> Maybe[FastApiResp]:
     """
     Checks if the document preview option is enabled
     \f
     :return: a Response with status code 400 and content with
      detailed explanation if preview is not enabled
     """
+
     return (
-        None
-        if service.ENABLE_DOCUMENT_PREVIEW
-        else Response(
-            content=message.DOCUMENT_PREVIEW_NOT_ENABLED_ERROR,
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
+        Nothing
+        if _check_if_document_preview_is_enabled()
+        else Maybe.from_value(PREVIEW_NOT_ENABLED_RESPONSE)
     )

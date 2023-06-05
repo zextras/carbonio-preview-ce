@@ -25,7 +25,7 @@ def retrieve_data(
     :param version: Version of the file (Default 1)
     :param log: logging used to keep track of errors and program flow
     :param service_type: service that owns the resource
-    :return: Optional response,
+    :return: Maybe response,
     if there was a problem connecting with storage returns None,
      otherwise returns storage response
     """

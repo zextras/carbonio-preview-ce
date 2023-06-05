@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Optional
 from uuid import UUID
 from typing_extensions import Annotated
 
@@ -12,10 +11,11 @@ from fastapi.responses import Response
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
-    check_if_document_preview_is_enabled,
     check_if_document_thumbnail_is_enabled,
     DocumentPagesMetadataModel,
     create_image_metadata_dict,
+    THUMBNAIL_NOT_ENABLED_RESPONSE,
+    get_document_preview_enabled_response_error,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -63,18 +63,14 @@ async def get_preview(
     the requested file converted accordingly to pdf.
     """
 
-    document_preview_service_errors: Optional[
-        Response
-    ] = check_if_document_preview_is_enabled()
-    if document_preview_service_errors:
-        return document_preview_service_errors
-
-    return document_service.retrieve_doc_and_create_preview(
-        file_id=str(id),
-        version=version,
-        first_page_number=pages.first_page,
-        last_page_number=pages.last_page,
-        service_type=service_type,
+    return get_document_preview_enabled_response_error().value_or(
+        document_service.retrieve_doc_and_create_preview(
+            file_id=str(id),
+            version=version,
+            first_page_number=pages.first_page,
+            last_page_number=pages.last_page,
+            service_type=service_type,
+        )
     )
 
 
@@ -95,21 +91,17 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
-    document_preview_service_errors: Optional[
-        Response
-    ] = check_if_document_preview_is_enabled()
-    if document_preview_service_errors:
-        return document_preview_service_errors
-
-    return Response(
-        content=(
-            document_service.create_preview_from_raw(
-                first_page_number=pages.first_page,
-                last_page_number=pages.last_page,
-                file=file,
-            )
-        ).read(),
-        media_type="application/pdf",
+    return get_document_preview_enabled_response_error().value_or(
+        Response(
+            content=(
+                document_service.create_preview_from_raw(
+                    first_page_number=pages.first_page,
+                    last_page_number=pages.last_page,
+                    file=file,
+                )
+            ).read(),
+            media_type="application/pdf",
+        )
     )
 
 
@@ -144,12 +136,8 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-
-    document_thumbnail_service_errors: Optional[
-        Response
-    ] = check_if_document_thumbnail_is_enabled()
-    if document_thumbnail_service_errors:
-        return document_thumbnail_service_errors
+    if check_if_document_thumbnail_is_enabled():
+        return THUMBNAIL_NOT_ENABLED_RESPONSE
 
     metadata_dict = create_image_metadata_dict(
         quality=quality,
@@ -213,12 +201,9 @@ async def get_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf modified accordingly.
     """
+    if check_if_document_thumbnail_is_enabled():
+        return THUMBNAIL_NOT_ENABLED_RESPONSE
 
-    document_thumbnail_service_errors: Optional[
-        Response
-    ] = check_if_document_thumbnail_is_enabled()
-    if document_thumbnail_service_errors:
-        return document_thumbnail_service_errors
     metadata_dict = create_image_metadata_dict(
         quality=quality,
         output_format=output_format,

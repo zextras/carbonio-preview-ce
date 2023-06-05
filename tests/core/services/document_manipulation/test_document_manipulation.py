@@ -4,6 +4,9 @@
 
 import io
 import pytest
+from pypdfium2 import PdfiumError, PdfDocument
+from returns.maybe import Maybe
+from returns.result import Failure
 
 from app.core.services.document_manipulation import document_manipulation  # noqa
 
@@ -16,7 +19,7 @@ def test_parse_if_valid_pdf_not_valid():
     result = document_manipulation._parse_if_valid_pdf(buf)
 
     # Then
-    assert result is None
+    assert result.value_or(None) is None
 
 
 def test_split_pdf_invalid_pdf(expect):
@@ -25,13 +28,15 @@ def test_split_pdf_invalid_pdf(expect):
     buff_argument = io.BytesIO()
     expect(document_manipulation, times=1)._parse_if_valid_pdf(
         buff_argument
-    ).thenReturn(None)
-    expect(document_manipulation, times=1)._write_pdf_to_buffer(None).thenReturn(
-        empty_pdf
-    )
+    ).thenReturn(
+        Maybe.from_value([buff_argument])
+    )  # so it can have a len
+    expect(document_manipulation, times=1)._write_pdf_to_buffer(
+        [buff_argument], 0, 1
+    ).thenReturn(empty_pdf)
 
     # When
-    result = document_manipulation.split_pdf(buff_argument, 0, 1)
+    result = document_manipulation.split_pdf(buff_argument, 1, 1)
 
     # Then
     assert result is empty_pdf
@@ -40,15 +45,19 @@ def test_split_pdf_invalid_pdf(expect):
 def test_split_pdf_valid_pdf_no_pages_to_split(expect):
     # Given
     buff_argument = io.BytesIO()
+    new_doc = PdfDocument.new()
+    expected_result = io.BytesIO()
+    new_doc.save(expected_result)
+    expected_result.seek(0)
     expect(document_manipulation, times=1)._parse_if_valid_pdf(
         buff_argument
-    ).thenReturn(True)
+    ).thenReturn(Maybe.from_value(new_doc))
 
     # When
     result = document_manipulation.split_pdf(buff_argument, 1, 0)
 
     # Then
-    assert result.read() is b""
+    assert result.read() == expected_result.read()
 
 
 @pytest.mark.parametrize(
