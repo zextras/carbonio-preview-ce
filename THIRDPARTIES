@@ -267,23 +267,6 @@ flake8
 2011-2013, Copyright Tarek Ziade <tarek@ziade.org>,
 2012-2016, Copyright Ian Cordasco <graffatcolmingov@gmail.com>;
 pre-commit, 2014, Copyright pre-commit dev team: Anthony Sottile, Ken Struys;
-pdfrw
-2006-2017, Copyright Patrick Maupin,
-2010, Copyright Attila Tajti,
-2012, Copyright Nerijus Mika,
-2015, Copyright Bastien Gandouet,
-2015, Copyright Tzerjen Wei,
-2015, Copyright Jorj X. McKie,
-2015, Copyright Nicholas Devenish,
-2015-2016, Copyright Jonatan Dellagostin,
-2016-2017, Copyright Thomas Kluyver,
-2016, Copyright James Laird-Wah,
-2016, Copyright Marcus Brinkmann,
-2016, Copyright Edward Betts,
-2016, Copyright Patrick Mazulo,
-2017, Copyright Haochen Wu,
-2017, Copyright Jon Lund Steffensen,
-2017, Copyright Henddher Pedroza;
 
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
