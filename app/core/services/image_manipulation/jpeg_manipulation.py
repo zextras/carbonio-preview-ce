@@ -16,6 +16,7 @@ from app.core.services.image_manipulation.image_manipulation import (
     save_image_to_buffer,
     resize_with_paddings,
     add_circle_margins_to_image,
+    parse_to_valid_image,
 )
 
 
@@ -39,13 +40,13 @@ def jpeg_preview(
     :return: compressed image raw bytes
     """
     _quality_value = _quality.get_jpeg_int_quality()
-    img: Image.Image
+    img: Image.Image = parse_to_valid_image(content)
     if _crop:
         img = resize_with_crop_and_paddings(
-            content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
+            img=img, requested_x=_x, requested_y=_y, crop_position=crop_position
         )
     else:
-        img = resize_with_paddings(content=content, requested_x=_x, requested_y=_y)
+        img = resize_with_paddings(img=img, requested_x=_x, requested_y=_y)
     # JPEG does not support RGBA or P
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
@@ -75,8 +76,9 @@ def jpeg_thumbnail(
     :return: compressed image raw bytes
     """
     _quality_value = _quality.get_jpeg_int_quality()
-    img: Image.Image = resize_with_crop_and_paddings(
-        content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
+    img: Image.Image = parse_to_valid_image(content)
+    img = resize_with_crop_and_paddings(
+        img=img, requested_x=_x, requested_y=_y, crop_position=crop_position
     )
     if border == ImageBorderShapeEnum.ROUNDED:
         img = add_circle_margins_to_image(img)
