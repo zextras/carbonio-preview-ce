@@ -7,6 +7,7 @@ from unittest import mock, IsolatedAsyncioTestCase
 from unittest.mock import patch, MagicMock
 
 from requests.models import Response
+from returns.maybe import Maybe, Nothing
 from starlette import status
 
 from app.core.resources.constants import message
@@ -36,14 +37,12 @@ class TestImageService(IsolatedAsyncioTestCase):
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
-            retrieve_data_mock.return_value = self.fake_response
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
@@ -53,23 +52,22 @@ class TestImageService(IsolatedAsyncioTestCase):
             self.assertEqual("image/jpeg", stream_response.media_type)
 
     @patch(
-        "app.core.services.image_service." "_select_preview_module", return_value=None
+        "app.core.services.image_service." "_select_preview_module",
+        return_value=io.BytesIO(),
     )
     async def test_create_preview_failure_retrieving(self, mock_selection: MagicMock):
         self.fake_response.status_code = status.HTTP_404_NOT_FOUND
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
-            retrieve_data_mock.return_value = self.fake_response
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
-            self.assertEqual(0, mock_selection.call_count)
+            self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
             self.assertEqual(
                 self.fake_response.status_code, stream_response.status_code
@@ -80,7 +78,8 @@ class TestImageService(IsolatedAsyncioTestCase):
             )
 
     @patch(
-        "app.core.services.image_service." "_select_preview_module", return_value=None
+        "app.core.services.image_service." "_select_preview_module",
+        return_value=io.BytesIO(),
     )
     async def test_create_preview_failure_contacting_storage(
         self, mock_selection: MagicMock
@@ -88,16 +87,14 @@ class TestImageService(IsolatedAsyncioTestCase):
         with mock.patch(
             "app.core.services" ".image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
-            retrieve_data_mock.return_value = None
-            stream_response: Response = (
-                await image_service.retrieve_image_and_create_preview(
-                    image_id="test",
-                    version=1,
-                    img_metadata=self.img_metadata,
-                    service_type=ServiceTypeEnum.FILES,
-                )
+            retrieve_data_mock.return_value = Nothing
+            stream_response: Response = image_service.retrieve_image_and_create_preview(
+                image_id="test",
+                version=1,
+                img_metadata=self.img_metadata,
+                service_type=ServiceTypeEnum.FILES,
             )
-            self.assertEqual(0, mock_selection.call_count)
+            self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
             self.assertEqual(status.HTTP_502_BAD_GATEWAY, stream_response.status_code)
             self.assertEqual(None, stream_response.media_type)

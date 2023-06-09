@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+import io
 from uuid import UUID
 
-from fastapi import APIRouter, UploadFile
-from pydantic import NonNegativeInt, constr
-from starlette.responses import Response
+from fastapi import APIRouter, UploadFile, Path
+from fastapi.responses import Response
+from pydantic import NonNegativeInt
+from typing_extensions import Annotated
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
-    AREA_REGEX,
     create_image_metadata_dict,
+    AREA_REGEX,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -40,7 +42,7 @@ router = APIRouter(
 async def get_thumbnail(
     id: UUID,
     version: NonNegativeInt,
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -79,7 +81,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=area,
     )
-    return await image_service.retrieve_image_and_create_thumbnail(
+    return image_service.retrieve_image_and_create_thumbnail(
         image_id=str(id),
         version=version,
         img_metadata=ThumbnailImageMetadata(**metadata_dict),
@@ -89,7 +91,7 @@ async def get_thumbnail(
 
 @router.post("/{area}/thumbnail/")
 async def post_thumbnail(
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -127,8 +129,8 @@ async def post_thumbnail(
     )
     return Response(
         content=(
-            await image_service.process_raw_thumbnail(
-                raw_content=file.file,
+            image_service.process_raw_thumbnail(
+                raw_content=io.BytesIO(file.file.read()),
                 img_metadata=ThumbnailImageMetadata(**metadata_dict),
             )
         ).read(),
@@ -138,7 +140,7 @@ async def post_thumbnail(
 
 @router.post("/{area}/")
 async def post_preview(
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     file: UploadFile,
     crop: bool = False,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -177,8 +179,8 @@ async def post_preview(
 
     return Response(
         content=(
-            await image_service.process_raw_preview(
-                raw_content=file.file,
+            image_service.process_raw_preview(
+                raw_content=io.BytesIO(file.file.read()),
                 img_metadata=PreviewImageMetadata(**metadata_dict),
             )
         ).read(),
@@ -196,7 +198,7 @@ async def post_preview(
 async def get_preview(
     id: UUID,
     version: NonNegativeInt,
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     service_type: ServiceTypeEnum,
     crop: bool = False,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -237,7 +239,7 @@ async def get_preview(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=area,
     )
-    return await image_service.retrieve_image_and_create_preview(
+    return image_service.retrieve_image_and_create_preview(
         image_id=str(id),
         version=version,
         img_metadata=PreviewImageMetadata(**metadata_dict),

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import requests
 import responses
 from requests import Response
+from returns.maybe import Nothing
 
 import app.core.services.storage_communication as st_com
 from app.core.resources.constants import storage
@@ -44,7 +45,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         # need to use context manager to patch async
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, json={"content": "found"}, status=200)
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
@@ -61,14 +62,14 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
                 self.req,
                 body=requests.exceptions.RequestException("test"),
             )
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_http_error(self):
@@ -78,7 +79,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         for i in range(starting_point, ending_point):
             with responses.RequestsMock() as rsps:
                 rsps.add(responses.GET, self.req, json={"content": "found"}, status=i)
-                response: Optional[Response] = await st_com.retrieve_data(
+                response: Optional[Response] = st_com.retrieve_data(
                     file_id=self.test_id, version=self.version, log=self.log_mock
                 )
                 self.assertEqual(1, len(rsps.calls))
@@ -95,37 +96,37 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
                 self.req,
                 body=requests.exceptions.ConnectionError("test"),
             )
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
         self.assertEqual(0, self.log_mock.critical.call_count)
         self.assertEqual(1, self.log_mock.debug.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_timeout_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=requests.exceptions.Timeout("test"))
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
         self.assertEqual(0, self.log_mock.critical.call_count)
         self.assertEqual(1, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)
 
     @responses.activate
     async def test_retrieve_data_generic_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=Exception("test"))
-            response: Optional[Response] = await st_com.retrieve_data(
+            response: Optional[Response] = st_com.retrieve_data(
                 file_id=self.test_id, version=self.version, log=self.log_mock
             )
             self.assertEqual(1, len(rsps.calls))
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
         self.assertEqual(1, self.log_mock.info.call_count)
-        self.assertIsNone(response)
+        self.assertEqual(Nothing, response)

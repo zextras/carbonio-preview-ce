@@ -5,6 +5,7 @@
 import unittest
 
 from requests import Response
+from returns.maybe import Maybe, Nothing
 from starlette import status
 
 from app.core.resources.constants import message
@@ -29,21 +30,34 @@ class TestDataValidator(unittest.TestCase):
         test_response = Response()
         for i in range(200, 400):
             test_response.status_code = i
-            self.assertEqual(None, check_for_storage_response_error(test_response))
+            self.assertEqual(
+                None,
+                check_for_storage_response_error(
+                    Maybe.from_value(test_response)
+                ).value_or(None),
+            )
 
     def test_check_for_response_error_no_response(self):
-        result = check_for_storage_response_error(response_data=None)
+        result = check_for_storage_response_error(response_data=Nothing)
         self.assertEqual(
-            result.body.decode("utf-8"), message.STORAGE_UNAVAILABLE_STRING
+            result.value_or(Response()).body.decode("utf-8"),
+            message.STORAGE_UNAVAILABLE_STRING,
         )
-        self.assertEqual(result.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(
+            result.value_or(Response()).status_code, status.HTTP_502_BAD_GATEWAY
+        )
 
     def test_check_for_response_error_with_error(self):
         test_response = Response()
         for i in range(400, 600):
             test_response.status_code = i
-            result = check_for_storage_response_error(response_data=test_response)
-            self.assertEqual(
-                result.body.decode("utf-8"), message.GENERIC_ERROR_WITH_STORAGE
+            result = check_for_storage_response_error(
+                response_data=Maybe.from_value(test_response)
             )
-            self.assertEqual(result.status_code, i)
+            self.assertEqual(
+                result.value_or(Response()).body.decode("utf-8"),
+                message.STORAGE_UNAVAILABLE_STRING
+                if i >= 500
+                else message.GENERIC_ERROR_WITH_STORAGE,
+            )
+            self.assertEqual(result.value_or(Response()).status_code, i)

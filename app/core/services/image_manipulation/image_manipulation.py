@@ -4,7 +4,7 @@
 
 import io
 import logging
-from typing import List
+from typing import List, Tuple
 
 import PIL
 from PIL import Image, ImageDraw, ImageOps, ImageFilter
@@ -22,7 +22,7 @@ def save_image_to_buffer(
     _format: str = "JPEG",
     _optimize: bool = False,
     _quality_value: int = 0,
-    log: logging = logger,
+    log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Saves the given image object to a buffer object,
@@ -49,8 +49,8 @@ def _find_greater_scaled_dimensions(
     original_y: int,
     requested_x: int,
     requested_y: int,
-    log: logging = logger,
-) -> [int, int]:
+    log: logging.Logger = logger,
+) -> Tuple[int, int]:
     """
     Finds new width and new height that are >=
     than requested and with x/y == new width/new height
@@ -89,8 +89,8 @@ def _find_smaller_scaled_dimensions(
     original_y: int,
     requested_x: int,
     requested_y: int,
-    log: logging = logger,
-) -> [int, int]:
+    log: logging.Logger = logger,
+) -> Tuple[int, int]:
     """
     Finds new width and new height that are <=
     than requested and with x/y == new width/new height
@@ -208,7 +208,9 @@ def _add_borders_to_crop(
     return img
 
 
-def _add_borders_to_image(img: Image.Image, requested_x: int, requested_y: int):
+def _add_borders_to_image(
+    img: Image.Image, requested_x: int, requested_y: int
+) -> Image.Image:
     """
     Add borders to the image to fill the requested width and height
     \f
@@ -235,8 +237,8 @@ def _convert_requested_size_to_true_res_to_scale(
     requested_y: int,
     original_width: int,
     original_height: int,
-    log: logging = logger,
-) -> [int, int]:
+    log: logging.Logger = logger,
+) -> Tuple[int, int]:
     """
     Converts requested size to original image size if requested size
     is 0 (if 100x0 it will become 100xOriginalHeight). Otherwise, if
@@ -298,7 +300,7 @@ def _convert_requested_size_to_true_res_to_scale(
     return requested_x, requested_y
 
 
-def _parse_to_valid_image(content: io.BytesIO):
+def _parse_to_valid_image(content: io.BytesIO) -> Image.Image:
     """
     Parses an image into a valid Pil Image rotating it according to EXIF metadata,
     if the image is empty returns empty MinxMin RGB image

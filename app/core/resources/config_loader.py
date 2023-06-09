@@ -4,7 +4,7 @@
 
 import configparser
 import os
-from typing import List, Any
+from typing import List, Any, Optional
 
 config = configparser.ConfigParser()
 message_config = configparser.ConfigParser()
@@ -19,13 +19,13 @@ def _create_default_path_list(file_name: str) -> List[str]:
     ]
 
 
-def load_message_config(path_list=None) -> List[str]:
+def load_message_config(path_list: Optional[List[str]] = None) -> List[str]:
     if path_list is None:
         path_list = _create_default_path_list("messages.ini")
     return message_config.read(path_list)
 
 
-def load_config(path_list=None) -> List[str]:
+def load_config(path_list: Optional[List[str]] = None) -> List[str]:
     if path_list is None:
         path_list = _create_default_path_list("config.ini")
     return config.read(path_list)

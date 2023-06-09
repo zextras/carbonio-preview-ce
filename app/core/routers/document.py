@@ -2,20 +2,21 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-from typing import Optional
 from uuid import UUID
+from typing_extensions import Annotated
 
-from fastapi import APIRouter, UploadFile, Depends
-from pydantic import NonNegativeInt, constr
-from starlette.responses import Response
+from fastapi import APIRouter, UploadFile, Depends, Path
+from pydantic import NonNegativeInt
+from fastapi.responses import Response
 
 from app.core.resources.constants import service, message
 from app.core.resources.data_validator import (
-    check_if_document_preview_is_enabled,
     check_if_document_thumbnail_is_enabled,
     DocumentPagesMetadataModel,
-    AREA_REGEX,
     create_image_metadata_dict,
+    THUMBNAIL_NOT_ENABLED_RESPONSE,
+    get_document_preview_enabled_response_error,
+    AREA_REGEX,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -63,18 +64,14 @@ async def get_preview(
     the requested file converted accordingly to pdf.
     """
 
-    document_preview_service_errors: Optional[
-        Response
-    ] = check_if_document_preview_is_enabled()
-    if document_preview_service_errors:
-        return document_preview_service_errors
-
-    return await document_service.retrieve_doc_and_create_preview(
-        file_id=str(id),
-        version=version,
-        first_page_number=pages.first_page,
-        last_page_number=pages.last_page,
-        service_type=service_type,
+    return get_document_preview_enabled_response_error().value_or(
+        document_service.retrieve_doc_and_create_preview(
+            file_id=str(id),
+            version=version,
+            first_page_number=pages.first_page,
+            last_page_number=pages.last_page,
+            service_type=service_type,
+        )
     )
 
 
@@ -95,21 +92,17 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
-    document_preview_service_errors: Optional[
-        Response
-    ] = check_if_document_preview_is_enabled()
-    if document_preview_service_errors:
-        return document_preview_service_errors
-
-    return Response(
-        content=(
-            await document_service.create_preview_from_raw(
-                first_page_number=pages.first_page,
-                last_page_number=pages.last_page,
-                file=file,
-            )
-        ).read(),
-        media_type="application/pdf",
+    return get_document_preview_enabled_response_error().value_or(
+        Response(
+            content=(
+                document_service.create_preview_from_raw(
+                    first_page_number=pages.first_page,
+                    last_page_number=pages.last_page,
+                    file=file,
+                )
+            ).read(),
+            media_type="application/pdf",
+        )
     )
 
 
@@ -117,7 +110,7 @@ async def post_preview(
     "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
 )
 async def post_thumbnail(
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     file: UploadFile,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -144,12 +137,8 @@ async def post_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested image modified accordingly.
     """
-
-    document_thumbnail_service_errors: Optional[
-        Response
-    ] = check_if_document_thumbnail_is_enabled()
-    if document_thumbnail_service_errors:
-        return document_thumbnail_service_errors
+    if check_if_document_thumbnail_is_enabled():
+        return THUMBNAIL_NOT_ENABLED_RESPONSE
 
     metadata_dict = create_image_metadata_dict(
         quality=quality,
@@ -159,12 +148,12 @@ async def post_thumbnail(
         area=area,
     )
 
-    content: io.BytesIO = await document_service.create_thumbnail_from_raw(
+    content: io.BytesIO = document_service.create_thumbnail_from_raw(
         file=file, output_format=output_format.value
     )
     return Response(
         content=(
-            await image_service.process_raw_thumbnail(
+            image_service.process_raw_thumbnail(
                 raw_content=content,
                 img_metadata=ThumbnailImageMetadata(**metadata_dict),
             )
@@ -180,7 +169,7 @@ async def post_thumbnail(
 async def get_thumbnail(
     id: UUID,
     version: NonNegativeInt,
-    area: constr(regex=AREA_REGEX),
+    area: Annotated[str, Path(regex=AREA_REGEX)],
     service_type: ServiceTypeEnum,
     shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
     quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
@@ -213,12 +202,9 @@ async def get_thumbnail(
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf modified accordingly.
     """
+    if check_if_document_thumbnail_is_enabled():
+        return THUMBNAIL_NOT_ENABLED_RESPONSE
 
-    document_thumbnail_service_errors: Optional[
-        Response
-    ] = check_if_document_thumbnail_is_enabled()
-    if document_thumbnail_service_errors:
-        return document_thumbnail_service_errors
     metadata_dict = create_image_metadata_dict(
         quality=quality,
         output_format=output_format,
@@ -226,7 +212,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.TOP,
         area=area,
     )
-    image_response: Response = await document_service.retrieve_doc_and_create_thumbnail(
+    image_response: Response = document_service.retrieve_doc_and_create_thumbnail(
         file_id=str(id),
         version=version,
         output_format=output_format.value,
@@ -236,7 +222,7 @@ async def get_thumbnail(
         image_raw: io.BytesIO = io.BytesIO(image_response.body)
         return Response(
             content=(
-                await image_service.process_raw_thumbnail(
+                image_service.process_raw_thumbnail(
                     raw_content=image_raw,
                     img_metadata=ThumbnailImageMetadata(**metadata_dict),
                 )

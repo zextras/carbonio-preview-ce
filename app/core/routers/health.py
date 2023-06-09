@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import logging
+import requests
 
 from fastapi import APIRouter
-import requests
-from starlette import status
-from starlette.responses import Response
+from fastapi import status
+from fastapi.responses import Response
 
 from app.core.resources.constants import service, storage, message, document_conversion
 

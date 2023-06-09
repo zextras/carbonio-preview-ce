@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -19,10 +17,9 @@ class PreviewImageMetadata(BaseModel):
     Class representing all the image information
     """
 
-    version: Optional[int] = 1
-    quality: Optional[ImageQualityEnum] = ImageQualityEnum.MEDIUM
-    format: Optional[ImageTypeEnum] = ImageTypeEnum.JPEG
-    crop_position: Optional[VerticalCropPositionEnum] = VerticalCropPositionEnum.CENTER
-    crop: Optional[bool] = False
+    quality: ImageQualityEnum = ImageQualityEnum.MEDIUM
+    format: ImageTypeEnum = ImageTypeEnum.JPEG
+    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER
+    crop: bool = False
     height: int
     width: int

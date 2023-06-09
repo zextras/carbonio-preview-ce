@@ -39,14 +39,13 @@ def jpeg_preview(
     :return: compressed image raw bytes
     """
     _quality_value = _quality.get_jpeg_int_quality()
+    img: Image.Image
     if _crop:
-        img: Image.Image = resize_with_crop_and_paddings(
+        img = resize_with_crop_and_paddings(
             content=content, requested_x=_x, requested_y=_y, crop_position=crop_position
         )
     else:
-        img: Image.Image = resize_with_paddings(
-            content=content, requested_x=_x, requested_y=_y
-        )
+        img = resize_with_paddings(content=content, requested_x=_x, requested_y=_y)
     # JPEG does not support RGBA or P
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
