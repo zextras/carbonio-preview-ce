@@ -48,16 +48,15 @@ def parse_to_valid_gif(
         if gif.is_animated:
             return gif
         else:
-            log.debug("content was not a valid GIF, replacing with an empty one")
+            log.debug("File could be loaded as a GIF but it's not animated")
     except SyntaxError as e:
-        log.debug(f"content could not be parsed as a valid GIF file: {e}")
+        log.debug(f"Content could not be parsed as a valid GIF file: {e}")
     except AttributeError as e:
         log.debug(
-            f"content was parsed with success,"
-            f" but raised an exception while checking if animated: {e}"
+            f"Content was parsed with success (valid image), "
+            f"but raised an exception while checking if animated: {e}"
         )
-
-    return GifImagePlugin.GifImageFile()
+    raise ValueError("Content is not a valid GIF")
 
 
 def _get_generator_from_gif(gif: Image.Image) -> Generator[Image.Image, Any, None]:
@@ -152,9 +151,8 @@ def _resize_gif_frame_by_frame(
     """
     # Get sequence iterator
     for frame in ImageSequence.Iterator(gif):
-        thumbnail: Image.Image = frame.copy()
-        thumbnail.resize(size)
-        yield thumbnail
+        # resize does not do side effect on thumbnail, returns a new image
+        yield frame.resize(size)
 
 
 def _crop_gif_frame_by_frame(
@@ -168,9 +166,8 @@ def _crop_gif_frame_by_frame(
     """
     # Get sequence iterator
     for frame in ImageSequence.Iterator(gif):
-        thumbnail: Image.Image = frame.copy()
-        thumbnail.crop(box)
-        yield thumbnail
+        # crop does not do side effect on thumbnail, returns a new image
+        yield frame.crop(box)
 
 
 def _paste_gif_frame_by_frame(
@@ -203,7 +200,9 @@ def _mask_gif_frame_by_frame(
     :returns: each frame one at a time masked
     """
     for frame in ImageSequence.Iterator(gif):
-        modified_frame = ImageOps.fit(frame, mask.size, centering=(0.5, 0.5))
+        modified_frame: Image.Image = ImageOps.fit(
+            frame, mask.size, centering=(0.5, 0.5)
+        )
         modified_frame.paste(0, mask=mask)
         yield modified_frame
 
