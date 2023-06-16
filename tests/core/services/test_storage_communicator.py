@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import logging
+import unittest
 from typing import Optional
-from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
 import requests
@@ -17,7 +17,7 @@ from app.core.resources.constants import storage
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 
-class TestStorageCommunicator(IsolatedAsyncioTestCase):
+class TestStorageCommunicator(unittest.TestCase):
     def setUp(self) -> None:
         super().setUp()
         self.log_mock = logging.Logger("test")
@@ -41,7 +41,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.log_mock.error = MagicMock(return_value=False)
 
     @responses.activate
-    async def test_retrieve_data_success(self):
+    def test_retrieve_data_success(self):
         # need to use context manager to patch async
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, json={"content": "found"}, status=200)
@@ -55,7 +55,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertIsNotNone(response)
 
     @responses.activate
-    async def test_retrieve_data_request_exception(self):
+    def test_retrieve_data_request_exception(self):
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -72,7 +72,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(Nothing, response)
 
     @responses.activate
-    async def test_retrieve_data_http_error(self):
+    def test_retrieve_data_http_error(self):
         # Status code from 400 to 600 raise http error
         starting_point = 400
         ending_point = 600
@@ -89,7 +89,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
             self.assertIsNotNone(response)
 
     @responses.activate
-    async def test_retrieve_data_connection_error(self):
+    def test_retrieve_data_connection_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -106,7 +106,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(Nothing, response)
 
     @responses.activate
-    async def test_retrieve_data_timeout_error(self):
+    def test_retrieve_data_timeout_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=requests.exceptions.Timeout("test"))
             response: Optional[Response] = st_com.retrieve_data(
@@ -119,7 +119,7 @@ class TestStorageCommunicator(IsolatedAsyncioTestCase):
         self.assertEqual(Nothing, response)
 
     @responses.activate
-    async def test_retrieve_data_generic_error(self):
+    def test_retrieve_data_generic_error(self):
         with responses.RequestsMock() as rsps:
             rsps.add(responses.GET, self.req, body=Exception("test"))
             response: Optional[Response] = st_com.retrieve_data(

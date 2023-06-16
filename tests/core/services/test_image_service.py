@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-from unittest import mock, IsolatedAsyncioTestCase
+import unittest
+from unittest import mock
 from unittest.mock import patch, MagicMock
 
 from requests.models import Response
 from returns.maybe import Maybe, Nothing
-from starlette import status
+from fastapi import status
 
 from app.core.resources.constants import message
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -17,7 +18,7 @@ from app.core.resources.schemas.preview_image_metadata import PreviewImageMetada
 from app.core.services import image_service
 
 
-class TestImageService(IsolatedAsyncioTestCase):
+class TestImageService(unittest.TestCase):
     def setUp(self) -> None:
         super(TestImageService, self).setUp()
         self.img_metadata = PreviewImageMetadata(
@@ -32,7 +33,7 @@ class TestImageService(IsolatedAsyncioTestCase):
         "app.core.services.image_service" "._select_preview_module",
         return_value=io.BytesIO(),
     )
-    async def test_create_preview_success(self, mock_selection: MagicMock):
+    def test_create_preview_success(self, mock_selection: MagicMock):
         self.fake_response.status_code = status.HTTP_200_OK
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data"
@@ -55,7 +56,7 @@ class TestImageService(IsolatedAsyncioTestCase):
         "app.core.services.image_service." "_select_preview_module",
         return_value=io.BytesIO(),
     )
-    async def test_create_preview_failure_retrieving(self, mock_selection: MagicMock):
+    def test_create_preview_failure_retrieving(self, mock_selection: MagicMock):
         self.fake_response.status_code = status.HTTP_404_NOT_FOUND
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data"
@@ -81,9 +82,7 @@ class TestImageService(IsolatedAsyncioTestCase):
         "app.core.services.image_service." "_select_preview_module",
         return_value=io.BytesIO(),
     )
-    async def test_create_preview_failure_contacting_storage(
-        self, mock_selection: MagicMock
-    ):
+    def test_create_preview_failure_contacting_storage(self, mock_selection: MagicMock):
         with mock.patch(
             "app.core.services" ".image_service." "storage_communication.retrieve_data"
         ) as retrieve_data_mock:
