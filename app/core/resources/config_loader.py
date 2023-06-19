@@ -16,6 +16,7 @@ def _create_default_path_list(file_name: str) -> List[str]:
         os.path.join("/", "etc", "carbonio", "preview", file_name),
         os.path.join("app", "core", "resources", file_name),
         os.path.join(starting_dir, file_name),
+        os.path.join(os.getcwd(), "package", file_name),
     ]
 
 
