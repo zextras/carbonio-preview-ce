@@ -13,6 +13,13 @@ from app.core.resources.constants.image import constants as consts
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
+from app.core.services.image_manipulation.gif_utility_functions import (
+    save_gif_to_buffer,
+    resize_gif,
+    crop_gif,
+    paste_gif,
+    is_img_a_gif,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +44,67 @@ def save_image_to_buffer(
     :return: buffer pointing at the start of the file, containing raw image
     """
     buffer = io.BytesIO()
-    img = ImageOps.exif_transpose(img)
-    img.save(buffer, format=_format, optimize=_optimize, quality=_quality_value)
+    if _format == "GIF":
+        save_gif_to_buffer(gif=img, out_buffer=buffer, quality=_quality_value)
+        log.debug("PIL GIF successfully saved to buffer.")
+    else:
+        img = ImageOps.exif_transpose(img)
+        img.save(buffer, format=_format, optimize=_optimize, quality=_quality_value)
+        log.debug("PIL Image successfully saved to buffer.")
     buffer.seek(0)
-    log.debug("PIL Image successfully saved to buffer.")
+
     return buffer
+
+
+def _resize_image_given_size(img: Image.Image, size: Tuple[int, int]) -> Image.Image:
+    """
+    This function must be used instead of the basic Pillow function
+    It handles the gif images as well (pillow does not by default)
+    """
+    if is_img_a_gif(img):
+        return resize_gif(gif=img, size=size)
+    else:
+        return img.resize(size)
+
+
+def _crop_image_given_box(
+    img: Image.Image, box: Tuple[int, int, int, int]
+) -> Image.Image:
+    """
+    This function must be used instead of the basic Pillow function
+    It handles the gif images as well (pillow does not by default)
+    :param img: image/gif to crop
+    :param box: box used for cropping
+    :returns: the cropped image/gif
+    """
+    if is_img_a_gif(img):
+        return crop_gif(gif=img, box=box)
+    else:
+        return img.crop(box)
+
+
+def _paste_image_into_given_background_using_box(
+    background_img: Image.Image,
+    img: Image.Image,
+    paste_coordinates_box: Tuple[int, int],
+) -> Image.Image:
+    """
+    This function must be used instead of the basic Pillow function
+    It handles the gif images as well (pillow does not by default)
+    :param background_img: background in which the image wil be pasted on
+    :param img: image/gif to paste on the background
+    :param paste_coordinates_box: coordinates used to paste
+    :returns: image/gif with changed background
+    """
+    if is_img_a_gif(img):
+        return paste_gif(
+            static_background=background_img,
+            gif=img,
+            paste_coordinates_box=paste_coordinates_box,
+        )
+    else:
+        background_img.paste(img, paste_coordinates_box)
+        return background_img
 
 
 def _find_greater_scaled_dimensions(
@@ -138,7 +201,7 @@ def _crop_image(
     [upper, right, bottom, left] = _get_crop_coordinates(
         requested_x, requested_y, height, width, crop_position
     )
-    img = img.crop((left, upper, left + right, upper + bottom))
+    img = _crop_image_given_box(img, (left, upper, left + right, upper + bottom))
     img = _add_borders_to_crop(
         img=img, requested_x=requested_x, requested_y=requested_y
     )
@@ -220,16 +283,16 @@ def _add_borders_to_image(
     :return: Image filled to requested size with borders if necessary
     """
     width, height = img.size
-    new_img = Image.new("RGB", (requested_x, requested_y))
-    new_img.paste(
-        img,
-        (
+    background_img = Image.new("RGB", (requested_x, requested_y))
+    return _paste_image_into_given_background_using_box(
+        background_img=background_img,
+        img=img,
+        paste_coordinates_box=(
             # // returns int and not float like /
             (requested_x - width) // 2,
             (requested_y - height) // 2,
         ),
     )
-    return new_img
 
 
 def _convert_requested_size_to_true_res_to_scale(
@@ -300,7 +363,7 @@ def _convert_requested_size_to_true_res_to_scale(
     return requested_x, requested_y
 
 
-def _parse_to_valid_image(content: io.BytesIO) -> Image.Image:
+def parse_to_valid_image(content: io.BytesIO) -> Image.Image:
     """
     Parses an image into a valid Pil Image rotating it according to EXIF metadata,
     if the image is empty returns empty MinxMin RGB image
@@ -317,7 +380,7 @@ def _parse_to_valid_image(content: io.BytesIO) -> Image.Image:
 
 
 def resize_with_crop_and_paddings(
-    content: io.BytesIO,
+    img: Image.Image,
     requested_x: int,
     requested_y: int,
     crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
@@ -325,13 +388,12 @@ def resize_with_crop_and_paddings(
     """
     Resize the image and crop it if necessary
     \f
-    :param content: content to resize
+    :param img: content to resize
     :param requested_x: width to resize to
     :param requested_y: height to resize to
     :param crop_position: where should the image zoom when cropped
     :return: PIL Image containing resized image to fit requested x and y
     """
-    img: Image.Image = _parse_to_valid_image(content=content)
     original_width, original_height = img.size
     to_crop = False
     to_scale_x, to_scale_y = _convert_requested_size_to_true_res_to_scale(
@@ -358,7 +420,7 @@ def resize_with_crop_and_paddings(
             requested_x=to_scale_x,
             requested_y=to_scale_y,
         )
-    img = img.resize((new_width, new_height))
+    img = _resize_image_given_size(img, (new_width, new_height))
 
     if to_crop:
         img = _crop_image(
@@ -382,17 +444,17 @@ def resize_with_crop_and_paddings(
 
 
 def resize_with_paddings(
-    content: io.BytesIO, requested_x: int, requested_y: int
+    img: Image.Image, requested_x: int, requested_y: int
 ) -> Image.Image:
     """
     Resize the image and add borders it if necessary
     \f
-    :param content: content to resize
+    :param img: content to resize
     :param requested_x: width to resize to
     :param requested_y: height to resize to
     :return: PIL Image containing resized image to fit requested x and y
     """
-    img: Image.Image = _parse_to_valid_image(content=content)
+
     original_width, original_height = img.size
     to_scale_x, to_scale_y = _convert_requested_size_to_true_res_to_scale(
         requested_x=requested_x,
@@ -413,7 +475,7 @@ def resize_with_paddings(
             requested_x=to_scale_x,
             requested_y=to_scale_y,
         )
-    img = img.resize((new_width, new_height))
+    img = _resize_image_given_size(img, (new_width, new_height))
     img = _add_borders_to_image(
         img=img,
         requested_x=to_scale_x

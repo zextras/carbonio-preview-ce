@@ -134,7 +134,7 @@ async def post_thumbnail(
                 img_metadata=ThumbnailImageMetadata(**metadata_dict),
             )
         ).read(),
-        media_type=f"image/{output_format.format()}",
+        media_type=f"image/{output_format.value}",
     )
 
 
@@ -184,7 +184,7 @@ async def post_preview(
                 img_metadata=PreviewImageMetadata(**metadata_dict),
             )
         ).read(),
-        media_type=f"image/{output_format.format()}",
+        media_type=f"image/{output_format.value}",
     )
 
 

@@ -5,6 +5,7 @@
 import io
 from typing import Callable, Any
 
+from fastapi import HTTPException
 from fastapi.responses import Response as FastApiResp
 from requests.models import Response as RequestResp
 from returns.maybe import Maybe
@@ -16,6 +17,10 @@ from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 from app.core.resources.schemas.preview_image_metadata import PreviewImageMetadata
 from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
 from app.core.services import storage_communication
+from app.core.services.image_manipulation.gif_manipulation import (
+    gif_preview,
+    gif_thumbnail,
+)
 
 from app.core.services.image_manipulation.jpeg_manipulation import (
     jpeg_preview,
@@ -46,11 +51,14 @@ def retrieve_image_and_create_thumbnail(
     response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
-    return _process_response_data(
-        response_data=response_data,
-        img_metadata=img_metadata,
-        func=_select_thumbnail_module,
-    )
+    try:
+        return _process_response_data(
+            response_data=response_data,
+            img_metadata=img_metadata,
+            func=_select_thumbnail_module,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def retrieve_image_and_create_preview(
@@ -72,11 +80,14 @@ def retrieve_image_and_create_preview(
     response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
-    return _process_response_data(
-        response_data=response_data,
-        img_metadata=img_metadata,
-        func=_select_preview_module,
-    )
+    try:
+        return _process_response_data(
+            response_data=response_data,
+            img_metadata=img_metadata,
+            func=_select_preview_module,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def process_raw_thumbnail(
@@ -87,7 +98,10 @@ def process_raw_thumbnail(
     :param raw_content: content to process
     :param img_metadata: Instance of ThumbnailImageMetadata class
     """
-    return _select_thumbnail_module(img_metadata=img_metadata, content=raw_content)
+    try:
+        return _select_thumbnail_module(img_metadata=img_metadata, content=raw_content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def process_raw_preview(
@@ -98,7 +112,10 @@ def process_raw_preview(
     :param raw_content: content to process
     :param img_metadata: Instance of PreviewImageMetadata class
     """
-    return _select_preview_module(img_metadata=img_metadata, content=raw_content)
+    try:
+        return _select_preview_module(img_metadata=img_metadata, content=raw_content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _process_response_data(
@@ -155,6 +172,15 @@ def _select_thumbnail_module(
             content=content,
             crop_position=img_metadata.crop_position,
         )
+    elif _format == ImageTypeEnum.GIF:
+        return gif_thumbnail(
+            _x=img_metadata.width,
+            _y=img_metadata.height,
+            _quality=img_metadata.quality,
+            border=img_metadata.shape,
+            content=content,
+            crop_position=img_metadata.crop_position,
+        )
     else:
         raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
 
@@ -186,6 +212,15 @@ def _select_preview_module(
             content=content,
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
+        )
+    elif _format == ImageTypeEnum.GIF:
+        return gif_preview(
+            _x=img_metadata.width,
+            _y=img_metadata.height,
+            content=content,
+            _crop=img_metadata.crop,
+            crop_position=img_metadata.crop_position,
+            _quality=img_metadata.quality,
         )
     else:
         raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
