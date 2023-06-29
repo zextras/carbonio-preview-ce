@@ -61,7 +61,7 @@ async def get_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested pdf divided accordingly.
     """
-    return pdf_service.retrieve_pdf_and_create_preview(
+    return await pdf_service.retrieve_pdf_and_create_preview(
         file_id=str(id),
         version=version,
         first_page_number=pages.first_page,
@@ -201,7 +201,7 @@ async def get_thumbnail(
         area=area,
     )
 
-    image_response: Response = pdf_service.retrieve_pdf_and_create_thumbnail(
+    image_response: Response = await pdf_service.retrieve_pdf_and_create_thumbnail(
         file_id=str(id),
         version=version,
         output_format=output_format.value,

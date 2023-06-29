@@ -24,7 +24,6 @@ repos:
               - "pydantic"
               - "returns"
               - "types-Pillow"
-              - "types-requests"
 
 -   repo: https://github.com/PyCQA/bandit
     rev: 1.7.4
@@ -53,8 +52,8 @@ repos:
         entry: python3 -m pytest
         language: python
         additional_dependencies: [
-            python-multipart,FastAPI,uvicorn,gunicorn,Pillow, pdfrw,
-            responses, psutil, pypdfium2, pytest, pytest-mockito, returns
+            python-multipart, FastAPI, httpx, uvicorn, gunicorn, Pillow, pdfrw,
+            respx, psutil, pypdfium2, pytest, pytest-mockito, returns
         ]
         'types': [python]
         pass_filenames: false

@@ -4,9 +4,9 @@
 
 import unittest
 
-from requests import Response
+from httpx import Response
 from returns.maybe import Maybe, Nothing
-from starlette import status
+from fastapi import status
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import (
@@ -27,7 +27,7 @@ class TestDataValidator(unittest.TestCase):
         super(TestDataValidator, self).tearDown()
 
     def test_check_for_response_error_no_error(self):
-        test_response = Response()
+        test_response = Response(status_code=200)
         for i in range(200, 400):
             test_response.status_code = i
             self.assertEqual(
@@ -40,24 +40,25 @@ class TestDataValidator(unittest.TestCase):
     def test_check_for_response_error_no_response(self):
         result = check_for_storage_response_error(response_data=Nothing)
         self.assertEqual(
-            result.value_or(Response()).body.decode("utf-8"),
+            result.value_or(Response(status_code=200)).body.decode("utf-8"),
             message.STORAGE_UNAVAILABLE_STRING,
         )
         self.assertEqual(
-            result.value_or(Response()).status_code, status.HTTP_502_BAD_GATEWAY
+            result.value_or(Response(status_code=200)).status_code,
+            status.HTTP_502_BAD_GATEWAY,
         )
 
     def test_check_for_response_error_with_error(self):
-        test_response = Response()
+        test_response = Response(status_code=200)
         for i in range(400, 600):
             test_response.status_code = i
             result = check_for_storage_response_error(
                 response_data=Maybe.from_value(test_response)
             )
             self.assertEqual(
-                result.value_or(Response()).body.decode("utf-8"),
+                result.value_or(Response(status_code=200)).body.decode("utf-8"),
                 message.STORAGE_UNAVAILABLE_STRING
                 if i >= 500
                 else message.GENERIC_ERROR_WITH_STORAGE,
             )
-            self.assertEqual(result.value_or(Response()).status_code, i)
+            self.assertEqual(result.value_or(Response(status_code=200)).status_code, i)

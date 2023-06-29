@@ -7,7 +7,7 @@ from typing import Callable, Any
 
 from fastapi import HTTPException
 from fastapi.responses import Response as FastApiResp
-from requests.models import Response as RequestResp
+from httpx import Response as RequestResp
 from returns.maybe import Maybe
 
 from app.core.resources.constants import message
@@ -32,7 +32,7 @@ from app.core.services.image_manipulation.png_manipulation import (
 )
 
 
-def retrieve_image_and_create_thumbnail(
+async def retrieve_image_and_create_thumbnail(
     image_id: str,
     version: int,
     img_metadata: ThumbnailImageMetadata,
@@ -48,11 +48,11 @@ def retrieve_image_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
     try:
-        return _process_response_data(
+        return await _process_response_data(
             response_data=response_data,
             img_metadata=img_metadata,
             func=_select_thumbnail_module,
@@ -61,7 +61,7 @@ def retrieve_image_and_create_thumbnail(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def retrieve_image_and_create_preview(
+async def retrieve_image_and_create_preview(
     image_id: str,
     version: int,
     img_metadata: PreviewImageMetadata,
@@ -77,11 +77,11 @@ def retrieve_image_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = storage_communication.retrieve_data(
+    response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
         file_id=image_id, version=version, service_type=service_type
     )
     try:
-        return _process_response_data(
+        return await _process_response_data(
             response_data=response_data,
             img_metadata=img_metadata,
             func=_select_preview_module,
@@ -118,7 +118,7 @@ def process_raw_preview(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _process_response_data(
+async def _process_response_data(
     response_data: Maybe[RequestResp], img_metadata: Any, func: Callable
 ) -> FastApiResp:
     """
@@ -135,9 +135,11 @@ def _process_response_data(
     )
     return response_error.value_or(
         FastApiResp(
-            content=func(
+            content=await func(
                 img_metadata=img_metadata,
-                content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                content=io.BytesIO(
+                    response_data.value_or(RequestResp(status_code=200)).content
+                ),
             ).read(),
             media_type=f"image/{img_metadata.format.value}",
         )

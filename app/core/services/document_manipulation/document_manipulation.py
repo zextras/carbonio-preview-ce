@@ -5,7 +5,7 @@ import io
 import logging
 import pypdfium2
 
-import requests
+import httpx
 from pypdfium2 import PdfDocument, PdfiumError
 from fastapi.exceptions import HTTPException
 from returns.result import Success, Failure, Result
@@ -76,7 +76,7 @@ def _write_pdf_to_buffer(
     return buf
 
 
-def convert_to_pdf(
+async def convert_to_pdf(
     content: io.BytesIO,
     first_page_number: int,
     last_page_number: int,
@@ -92,7 +92,7 @@ def convert_to_pdf(
     """
 
     return split_pdf(
-        content=convert_file_to(
+        content=await convert_file_to(
             content=content,
             output_extension="pdf",
             log=log,
@@ -102,7 +102,7 @@ def convert_to_pdf(
     )
 
 
-def convert_file_to(
+async def convert_file_to(
     content: io.BytesIO,
     output_extension: str,
     log: logging.Logger = logger,
@@ -118,7 +118,7 @@ def convert_file_to(
      should be a format supported by Carbonio-docs-editor
     :param log: logger to use
     """
-    return _convert_with_libre(
+    return await _convert_with_libre(
         content=content, output_extension=output_extension, log=log
     )
 
@@ -157,7 +157,7 @@ def convert_pdf_to_image(
         raise HTTPException(status_code=400, detail="Invalid pdf file")
 
 
-def convert_pdf_to(
+async def convert_pdf_to(
     content: io.BytesIO,
     output_extension: str,
     first_page_number: int,
@@ -178,12 +178,12 @@ def convert_pdf_to(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
     )
-    return convert_file_to(
+    return await convert_file_to(
         content=out_content, output_extension=output_extension, log=log
     )
 
 
-def _convert_with_libre(
+async def _convert_with_libre(
     content: io.BytesIO, output_extension: str, log: logging.Logger
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
@@ -191,25 +191,20 @@ def _convert_with_libre(
     url = f"{document_conversion.FULL_CONVERT_ADDRESS}/{output_extension}"
 
     files = {"files": ("docs-editor-file", content)}
-
-    s = requests.Session()
-    s.stream = True
-    response = s.post(url, timeout=service.DOCS_TIMEOUT, files=files)
     out_data = io.BytesIO()
-    try:
-        response.raise_for_status()
-        converted_file_bytes: bytes = response.content
-        out_data = io.BytesIO(converted_file_bytes)
 
-    except requests.exceptions.HTTPError as http_error:
-        log.critical(f"Http Error: {http_error}")
-    except requests.exceptions.ConnectionError as connection_error:
-        log.critical(f"Connection Error: {connection_error}")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, timeout=service.DOCS_TIMEOUT, files=files)
+            response.raise_for_status()
+            out_data = io.BytesIO(response.content)
+    except httpx.HTTPStatusError as http_error:
+        log.debug(f"Http Error: {http_error}")
     # from this onward are not related to the raise_for_status,
     # these are all critical errors.
-    except requests.exceptions.Timeout as timeout_error:
+    except httpx.ConnectTimeout as timeout_error:
         log.error(f"Timeout Error: {timeout_error}")
-    except requests.exceptions.RequestException as request_error:
+    except httpx.RequestError as request_error:
         log.critical(f"Unexpected Error: {request_error}")
     except Exception as crit_err:
         log.critical(f"Critical Error: {crit_err}")

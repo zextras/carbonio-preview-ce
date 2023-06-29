@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import logging
-import requests
+import httpx
 
 from fastapi import APIRouter
 from fastapi import status
@@ -30,10 +30,12 @@ async def health() -> dict:
     \f
     :return: json with status of service and optional dependencies
     """
-    is_storage_up: bool = _is_dependency_up(
+    is_storage_up: bool = await _is_dependency_up(
         f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
     )
-    is_libre_up: bool = _is_dependency_up(document_conversion.FULL_SERVICE_ADDRESS)
+    is_libre_up: bool = await _is_dependency_up(
+        document_conversion.FULL_SERVICE_ADDRESS
+    )
 
     result_dict = {
         "ready": True,
@@ -87,7 +89,7 @@ async def health_live() -> Response:
     return Response(status_code=status.HTTP_200_OK)
 
 
-def _is_dependency_up(dependency_url: str, timeout: int = 5) -> bool:
+async def _is_dependency_up(dependency_url: str, timeout: int = 5) -> bool:
     """
     Checks if the requested dependency is up
     \f
@@ -97,8 +99,9 @@ def _is_dependency_up(dependency_url: str, timeout: int = 5) -> bool:
     :return: True if the dependency is up
     """
     try:
-        response = requests.get(dependency_url, timeout=timeout)
-        response.raise_for_status()
-        return True
-    except requests.exceptions.RequestException:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(dependency_url, timeout=timeout)
+            resp.raise_for_status()
+            return True
+    except httpx.HTTPError:
         return False
