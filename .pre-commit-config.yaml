@@ -52,7 +52,7 @@ repos:
         entry: python3 -m pytest
         language: python
         additional_dependencies: [
-            python-multipart, FastAPI, httpx, uvicorn, gunicorn, Pillow, pdfrw,
+            python-multipart, FastAPI, httpx, uvicorn, gunicorn, Pillow,
             respx, psutil, pypdfium2, pytest, pytest-mockito, returns
         ]
         'types': [python]
