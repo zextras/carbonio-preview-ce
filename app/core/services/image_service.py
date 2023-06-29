@@ -52,7 +52,7 @@ async def retrieve_image_and_create_thumbnail(
         file_id=image_id, version=version, service_type=service_type
     )
     try:
-        return await _process_response_data(
+        return _process_response_data(
             response_data=response_data,
             img_metadata=img_metadata,
             func=_select_thumbnail_module,
@@ -81,7 +81,7 @@ async def retrieve_image_and_create_preview(
         file_id=image_id, version=version, service_type=service_type
     )
     try:
-        return await _process_response_data(
+        return _process_response_data(
             response_data=response_data,
             img_metadata=img_metadata,
             func=_select_preview_module,
@@ -118,7 +118,7 @@ def process_raw_preview(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-async def _process_response_data(
+def _process_response_data(
     response_data: Maybe[RequestResp], img_metadata: Any, func: Callable
 ) -> FastApiResp:
     """
@@ -135,7 +135,7 @@ async def _process_response_data(
     )
     return response_error.value_or(
         FastApiResp(
-            content=await func(
+            content=func(
                 img_metadata=img_metadata,
                 content=io.BytesIO(
                     response_data.value_or(RequestResp(status_code=200)).content
