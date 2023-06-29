@@ -16,4 +16,3 @@ pytest~=7.4.0
 pytest-mockito~=0.0.4
 
 types-Pillow~=9.5.0.5
-types-requests~=2.31.0.1
