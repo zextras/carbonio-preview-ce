@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.98.0
+FastAPI~=0.99.1
 
-pydantic
+pydantic~=2.0
 returns~=0.21.0
 
 uvicorn~=0.22.0
