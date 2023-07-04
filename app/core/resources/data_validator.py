@@ -4,7 +4,7 @@
 
 from typing import Optional, Dict
 from typing_extensions import Final
-from requests.models import Response as RequestResp
+from httpx import Response as RequestResp
 
 import pydantic
 

@@ -81,7 +81,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=area,
     )
-    return image_service.retrieve_image_and_create_thumbnail(
+    return await image_service.retrieve_image_and_create_thumbnail(
         image_id=str(id),
         version=version,
         img_metadata=ThumbnailImageMetadata(**metadata_dict),
@@ -239,7 +239,7 @@ async def get_preview(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=area,
     )
-    return image_service.retrieve_image_and_create_preview(
+    return await image_service.retrieve_image_and_create_preview(
         image_id=str(id),
         version=version,
         img_metadata=PreviewImageMetadata(**metadata_dict),

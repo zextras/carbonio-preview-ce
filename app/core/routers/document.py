@@ -65,7 +65,7 @@ async def get_preview(
     """
 
     return get_document_preview_enabled_response_error().value_or(
-        document_service.retrieve_doc_and_create_preview(
+        await document_service.retrieve_doc_and_create_preview(
             file_id=str(id),
             version=version,
             first_page_number=pages.first_page,
@@ -95,7 +95,7 @@ async def post_preview(
     return get_document_preview_enabled_response_error().value_or(
         Response(
             content=(
-                document_service.create_preview_from_raw(
+                await document_service.create_preview_from_raw(
                     first_page_number=pages.first_page,
                     last_page_number=pages.last_page,
                     file=file,
@@ -148,7 +148,7 @@ async def post_thumbnail(
         area=area,
     )
 
-    content: io.BytesIO = document_service.create_thumbnail_from_raw(
+    content: io.BytesIO = await document_service.create_thumbnail_from_raw(
         file=file, output_format=output_format.value
     )
     return Response(
@@ -212,7 +212,7 @@ async def get_thumbnail(
         crop_position=VerticalCropPositionEnum.TOP,
         area=area,
     )
-    image_response: Response = document_service.retrieve_doc_and_create_thumbnail(
+    image_response: Response = await document_service.retrieve_doc_and_create_thumbnail(
         file_id=str(id),
         version=version,
         output_format=output_format.value,

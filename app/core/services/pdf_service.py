@@ -5,7 +5,7 @@ import io
 
 from fastapi import UploadFile
 from fastapi.responses import Response as FastApiResp
-from requests.models import Response as RequestResp
+from httpx import Response as RequestResp
 from returns.maybe import Maybe
 
 from app.core.resources.data_validator import check_for_storage_response_error
@@ -14,7 +14,7 @@ from app.core.services.document_manipulation import document_manipulation
 from app.core.services.storage_communication import retrieve_data
 
 
-def retrieve_pdf_and_create_preview(
+async def retrieve_pdf_and_create_preview(
     file_id: str,
     version: int,
     first_page_number: int,
@@ -32,7 +32,7 @@ def retrieve_pdf_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -44,7 +44,9 @@ def retrieve_pdf_and_create_preview(
             content=document_manipulation.split_pdf(
                 first_page_number=first_page_number,
                 last_page_number=last_page_number,
-                content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                content=io.BytesIO(
+                    response_data.value_or(RequestResp(status_code=200)).content
+                ),
             ).read(),
             media_type="application/pdf",
         )
@@ -80,7 +82,7 @@ def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesI
     )
 
 
-def retrieve_pdf_and_create_thumbnail(
+async def retrieve_pdf_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
 ) -> FastApiResp:
     """
@@ -93,7 +95,7 @@ def retrieve_pdf_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -104,7 +106,9 @@ def retrieve_pdf_and_create_thumbnail(
         FastApiResp(
             content=(
                 document_manipulation.convert_pdf_to_image(
-                    content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                    content=io.BytesIO(
+                        response_data.value_or(RequestResp(status_code=200)).content
+                    ),
                     output_extension=output_format,
                     page_number=0,
                 )

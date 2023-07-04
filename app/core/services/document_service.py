@@ -6,7 +6,7 @@ import io
 from fastapi import UploadFile
 from returns.maybe import Maybe
 from fastapi.responses import Response as FastApiResp
-from requests.models import Response as RequestResp
+from httpx import Response as RequestResp
 
 from app.core.resources.data_validator import check_for_storage_response_error
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
@@ -14,7 +14,7 @@ from app.core.services.document_manipulation import document_manipulation
 from app.core.services.storage_communication import retrieve_data
 
 
-def retrieve_doc_and_create_preview(
+async def retrieve_doc_and_create_preview(
     file_id: str,
     version: int,
     first_page_number: int,
@@ -33,7 +33,7 @@ def retrieve_doc_and_create_preview(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -43,10 +43,12 @@ def retrieve_doc_and_create_preview(
     return response_error.map(FastApiResp).value_or(
         FastApiResp(
             content=(
-                document_manipulation.convert_to_pdf(
+                await document_manipulation.convert_to_pdf(
                     first_page_number=first_page_number,
                     last_page_number=last_page_number,
-                    content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                    content=io.BytesIO(
+                        response_data.value_or(RequestResp(status_code=200)).content
+                    ),
                 )
             ).read(),
             media_type="application/pdf",
@@ -54,7 +56,7 @@ def retrieve_doc_and_create_preview(
     )
 
 
-def create_preview_from_raw(
+async def create_preview_from_raw(
     file: UploadFile, first_page_number: int, last_page_number: int
 ) -> io.BytesIO:
     """
@@ -64,26 +66,26 @@ def create_preview_from_raw(
     :param first_page_number: the first page of the pdf to return
     :param last_page_number: the last page of the pdf to return
     """
-    return document_manipulation.convert_to_pdf(
+    return await document_manipulation.convert_to_pdf(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
         content=io.BytesIO(file.file.read()),
     )
 
 
-def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesIO:
+async def create_thumbnail_from_raw(file: UploadFile, output_format: str) -> io.BytesIO:
     """
     Create image thumbnail of a given file
     \f
     :param file: uploaded file to convert
     :param output_format: the image type that the thumbnail will have
     """
-    return document_manipulation.convert_file_to(
+    return await document_manipulation.convert_file_to(
         content=io.BytesIO(file.file.read()), output_extension=output_format
     )
 
 
-def retrieve_doc_and_create_thumbnail(
+async def retrieve_doc_and_create_thumbnail(
     file_id: str, version: int, output_format: str, service_type: ServiceTypeEnum
 ) -> FastApiResp:
     """
@@ -97,7 +99,7 @@ def retrieve_doc_and_create_thumbnail(
     :param service_type: service that owns the resource
     :return response: a Response with metadata or error message.
     """
-    response_data: Maybe[RequestResp] = retrieve_data(
+    response_data: Maybe[RequestResp] = await retrieve_data(
         file_id=file_id, version=version, service_type=service_type
     )
 
@@ -107,8 +109,10 @@ def retrieve_doc_and_create_thumbnail(
     return response_error.map(FastApiResp).value_or(
         FastApiResp(
             content=(
-                document_manipulation.convert_file_to(
-                    content=io.BytesIO(response_data.value_or(RequestResp()).content),
+                await document_manipulation.convert_file_to(
+                    content=io.BytesIO(
+                        response_data.value_or(RequestResp(status_code=200)).content
+                    ),
                     output_extension=output_format,
                 )
             ).read(),
