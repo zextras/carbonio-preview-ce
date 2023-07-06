@@ -6,11 +6,27 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Changelog
 
+## v0.3.4 (2023-07-06)
+
+#### New Features
+
+* Implement async fetch from storage ([#43](https://github.com/Zextras/carbonio-preview-ce/issues/43))
+* Support GIF ([#42](https://github.com/Zextras/carbonio-preview-ce/issues/42))
+* Validate preview with mypy ([#41](https://github.com/Zextras/carbonio-preview-ce/issues/41))
+#### Fixes
+
+* Allow preview of new PDF versions ([#40](https://github.com/Zextras/carbonio-preview-ce/issues/40))
+
+Full set of changes: [`v0.3.3...v0.3.4`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.3...v0.3.4)
+
 ## v0.3.3 (2023-05-26)
 
 #### Fixes
 
 * Return image type enum value and not name ([#38](https://github.com/Zextras/carbonio-preview-ce/issues/38))
+#### Others
+
+* (release): 0.3.3 ([#39](https://github.com/Zextras/carbonio-preview-ce/issues/39))
 
 Full set of changes: [`v0.3.2...v0.3.3`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.2...v0.3.3)
 
