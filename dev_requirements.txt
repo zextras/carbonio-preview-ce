@@ -4,7 +4,7 @@
 
 -r requirements.txt
 
-black~=23.3.0
+black~=23.7.0
 flake8~=6.0.0
 Flake8-pyproject~=1.2.2
 bandit~=1.7.4
@@ -15,4 +15,4 @@ respx~=0.20.1
 pytest~=7.4.0
 pytest-mockito~=0.0.4
 
-types-Pillow~=9.5.0.5
+types-Pillow~=10.0.0.1
