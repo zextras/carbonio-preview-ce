@@ -4,15 +4,15 @@
 import io
 from uuid import UUID
 
-from fastapi import APIRouter, UploadFile, Path
+from fastapi import APIRouter, Path, UploadFile
 from fastapi.responses import Response
 from pydantic import NonNegativeInt
 from typing_extensions import Annotated
 
-from app.core.resources.constants import service, message
+from app.core.resources.constants import message, service
 from app.core.resources.data_validator import (
-    create_image_metadata_dict,
     AREA_REGEX,
+    create_image_metadata_dict,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum

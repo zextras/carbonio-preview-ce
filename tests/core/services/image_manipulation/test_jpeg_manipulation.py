@@ -23,11 +23,14 @@ def test_jpeg_compression_rgb_success_with_crop(expect):
     content_data: io.BytesIO = io.BytesIO()
 
     expect(jpeg_manipulation, times=1).parse_to_valid_image(content_data).thenReturn(
-        parse_img
+        parse_img,
     )
 
     expect(jpeg_manipulation, times=1).resize_with_crop_and_paddings(
-        img=parse_img, requested_x=x, requested_y=y, crop_position=crop_position
+        img=parse_img,
+        requested_x=x,
+        requested_y=y,
+        crop_position=crop_position,
     ).thenReturn(parse_img)
 
     expect(jpeg_manipulation, times=1).save_image_to_buffer(
@@ -39,7 +42,11 @@ def test_jpeg_compression_rgb_success_with_crop(expect):
 
     # When
     result = jpeg_manipulation.jpeg_preview(
-        _x=0, _y=0, _quality=quality, content=content_data, _crop=True
+        _x=0,
+        _y=0,
+        _quality=quality,
+        content=content_data,
+        _crop=True,
     )
 
     # Then
@@ -56,11 +63,13 @@ def test_jpeg_compression_rgb_success_without_crop(expect):
     content_data: io.BytesIO = io.BytesIO()
 
     expect(jpeg_manipulation, times=1).parse_to_valid_image(content_data).thenReturn(
-        parse_img
+        parse_img,
     )
 
     expect(jpeg_manipulation, times=1).resize_with_paddings(
-        img=parse_img, requested_x=x, requested_y=y
+        img=parse_img,
+        requested_x=x,
+        requested_y=y,
     ).thenReturn(parse_img)
 
     expect(jpeg_manipulation, times=1).save_image_to_buffer(
@@ -72,7 +81,11 @@ def test_jpeg_compression_rgb_success_without_crop(expect):
 
     # When
     result = jpeg_manipulation.jpeg_preview(
-        _x=x, _y=y, _quality=quality, content=content_data, _crop=False
+        _x=x,
+        _y=y,
+        _quality=quality,
+        content=content_data,
+        _crop=False,
     )
 
     # Then
@@ -89,7 +102,7 @@ def test_jpeg_compression_rgba_success_with_crop(expect):
     content_data: io.BytesIO = io.BytesIO()
 
     expect(jpeg_manipulation, times=1).parse_to_valid_image(content_data).thenReturn(
-        parse_img
+        parse_img,
     )
 
     expect(jpeg_manipulation, times=1).resize_with_crop_and_paddings(
@@ -108,7 +121,11 @@ def test_jpeg_compression_rgba_success_with_crop(expect):
 
     # When
     result = jpeg_manipulation.jpeg_preview(
-        _x=0, _y=0, _quality=quality, content=content_data, _crop=True
+        _x=0,
+        _y=0,
+        _quality=quality,
+        content=content_data,
+        _crop=True,
     )
 
     # Then
@@ -125,11 +142,13 @@ def test_jpeg_compression_rgba_success_without_crop(expect):
     content_data: io.BytesIO = io.BytesIO()
 
     expect(jpeg_manipulation, times=1).parse_to_valid_image(content_data).thenReturn(
-        parse_img
+        parse_img,
     )
 
     expect(jpeg_manipulation, times=1).resize_with_paddings(
-        img=parse_img, requested_x=x, requested_y=y
+        img=parse_img,
+        requested_x=x,
+        requested_y=y,
     ).thenReturn(parse_img)
 
     expect(jpeg_manipulation, times=1).save_image_to_buffer(
@@ -141,7 +160,11 @@ def test_jpeg_compression_rgba_success_without_crop(expect):
 
     # When
     result = jpeg_manipulation.jpeg_preview(
-        _x=0, _y=0, _quality=quality, content=content_data, _crop=False
+        _x=0,
+        _y=0,
+        _quality=quality,
+        content=content_data,
+        _crop=False,
     )
 
     # Then

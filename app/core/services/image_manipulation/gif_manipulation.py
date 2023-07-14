@@ -4,8 +4,7 @@
 
 import io
 import logging
-
-from PIL import Image
+from typing import TYPE_CHECKING
 
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -17,10 +16,13 @@ from app.core.services.image_manipulation.gif_utility_functions import (
     parse_to_valid_gif,
 )
 from app.core.services.image_manipulation.image_manipulation import (
-    save_image_to_buffer,
     resize_with_crop_and_paddings,
     resize_with_paddings,
+    save_image_to_buffer,
 )
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -48,13 +50,19 @@ def gif_preview(
     gif: Image.Image = parse_to_valid_gif(content)
     if _crop:
         gif = resize_with_crop_and_paddings(
-            img=gif, requested_x=_x, requested_y=_y, crop_position=crop_position
+            img=gif,
+            requested_x=_x,
+            requested_y=_y,
+            crop_position=crop_position,
         )
     else:
         gif = resize_with_paddings(img=gif, requested_x=_x, requested_y=_y)
 
     output: io.BytesIO = save_image_to_buffer(
-        img=gif, _format="GIF", _optimize=False, _quality_value=_quality_value
+        img=gif,
+        _format="GIF",
+        _optimize=False,
+        _quality_value=_quality_value,
     )
     return output
 
@@ -81,12 +89,18 @@ def gif_thumbnail(
     _quality_value = _quality.get_jpeg_int_quality()
     gif: Image.Image = parse_to_valid_gif(content=content)
     gif = resize_with_crop_and_paddings(
-        img=gif, requested_x=_x, requested_y=_y, crop_position=crop_position
+        img=gif,
+        requested_x=_x,
+        requested_y=_y,
+        crop_position=crop_position,
     )
     if border == ImageBorderShapeEnum.ROUNDED:
         gif = add_circle_margins_to_gif(gif)
 
     output: io.BytesIO = save_image_to_buffer(
-        img=gif, _format="GIF", _optimize=False, _quality_value=_quality_value
+        img=gif,
+        _format="GIF",
+        _optimize=False,
+        _quality_value=_quality_value,
     )
     return output

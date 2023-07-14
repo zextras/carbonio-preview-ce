@@ -23,19 +23,19 @@ class ImageQualityEnum(str, Enum):
 
     HIGHEST = "highest"
 
-    def get_jpeg_int_quality(self) -> int:
+    def get_jpeg_int_quality(self: "ImageQualityEnum") -> int:
         """
         Returns the numerical value (from 0 to 95) correlated to the enum value
         :param self: the enum to estimate as int
-        :return: int corresponding to the quality
+        :return: integer corresponding to the quality
         """
         if self.value == ImageQualityEnum.LOWEST:
             return quality.JPEG_LOWEST_INT
-        elif self.value == ImageQualityEnum.LOW:
+        if self.value == ImageQualityEnum.LOW:
             return quality.JPEG_LOW_INT
-        elif self.value == ImageQualityEnum.MEDIUM:
+        if self.value == ImageQualityEnum.MEDIUM:
             return quality.JPEG_MEDIUM_INT
-        elif self.value == ImageQualityEnum.HIGH:
+        if self.value == ImageQualityEnum.HIGH:
             return quality.JPEG_HIGH_INT
-        else:
-            return quality.JPEG_HIGHEST_INT
+
+        return quality.JPEG_HIGHEST_INT

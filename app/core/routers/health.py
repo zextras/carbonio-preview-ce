@@ -3,13 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import logging
-import httpx
 
-from fastapi import APIRouter
-from fastapi import status
+import httpx
+from fastapi import APIRouter, status
 from fastapi.responses import Response
 
-from app.core.resources.constants import service, storage, message, document_conversion
+from app.core.resources.constants import document_conversion, message, service, storage
 
 router = APIRouter(
     prefix=f"/{service.HEALTH_NAME}",
@@ -31,10 +30,10 @@ async def health() -> dict:
     :return: json with status of service and optional dependencies
     """
     is_storage_up: bool = await _is_dependency_up(
-        f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}"
+        f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}",
     )
     is_libre_up: bool = await _is_dependency_up(
-        document_conversion.FULL_SERVICE_ADDRESS
+        document_conversion.FULL_SERVICE_ADDRESS,
     )
 
     result_dict = {
@@ -66,16 +65,16 @@ async def health_ready() -> Response:
     :return: returns 200 if service and carbonio-docs-editor are running
     """
     if not service.ARE_DOCS_ENABLED or _is_dependency_up(
-        document_conversion.FULL_SERVICE_ADDRESS
+        document_conversion.FULL_SERVICE_ADDRESS,
     ):
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)
-    else:
-        logger.debug("Health ready with status code 429 (Carbonio-docs-editor not up)")
-        return Response(
-            content=message.DOCS_EDITOR_UNAVAILABLE_STRING,
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        )
+
+    logger.debug("Health ready with status code 429 (Carbonio-docs-editor not up)")
+    return Response(
+        content=message.DOCS_EDITOR_UNAVAILABLE_STRING,
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
 
 
 @router.get("/live/")
@@ -93,7 +92,8 @@ async def _is_dependency_up(dependency_url: str, timeout: int = 5) -> bool:
     """
     Checks if the requested dependency is up
     \f
-    :param dependency_url: address to ping, it should be the health API of the dependency
+    :param dependency_url: address to ping,
+     it should be the health API of the dependency
     :param timeout: if the service does not respond in the given timeout frame,
      it's considered down
     :return: True if the dependency is up

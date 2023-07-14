@@ -4,9 +4,9 @@
 
 import unittest
 
+from fastapi import status
 from httpx import Response
 from returns.maybe import Maybe, Nothing
-from fastapi import status
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import (
@@ -16,15 +16,15 @@ from app.core.resources.data_validator import (
 
 class TestDataValidator(unittest.TestCase):
     def setUp(self) -> None:
-        super(TestDataValidator, self).setUp()
-        self.img_metadata = dict(
-            id="da2dcce7-cd87-423c-a6c9-38c527ab6e6a",
-            version=1,
-            area="100x200",
-        )
+        super().setUp()
+        self.img_metadata = {
+            "id": "da2dcce7-cd87-423c-a6c9-38c527ab6e6a",
+            "version": 1,
+            "area": "100x200",
+        }
 
     def tearDown(self) -> None:
-        super(TestDataValidator, self).tearDown()
+        super().tearDown()
 
     def test_check_for_response_error_no_error(self):
         test_response = Response(status_code=200)
@@ -33,7 +33,7 @@ class TestDataValidator(unittest.TestCase):
             self.assertEqual(
                 None,
                 check_for_storage_response_error(
-                    Maybe.from_value(test_response)
+                    Maybe.from_value(test_response),
                 ).value_or(None),
             )
 
@@ -53,7 +53,7 @@ class TestDataValidator(unittest.TestCase):
         for i in range(400, 600):
             test_response.status_code = i
             result = check_for_storage_response_error(
-                response_data=Maybe.from_value(test_response)
+                response_data=Maybe.from_value(test_response),
             )
             self.assertEqual(
                 result.value_or(Response(status_code=200)).body.decode("utf-8"),

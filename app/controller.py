@@ -2,13 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
+import uvicorn
 from fastapi import FastAPI
 
 from app.core.resources.constants import service
-
-import uvicorn
-
-from app.core.routers import image, health, pdf, document
+from app.core.routers import document, health, image, pdf
 
 app = FastAPI(
     title=service.NAME,

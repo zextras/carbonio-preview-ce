@@ -3,8 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-
-from PIL import Image
+from typing import TYPE_CHECKING
 
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -12,12 +11,15 @@ from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
 from app.core.services.image_manipulation.image_manipulation import (
-    resize_with_crop_and_paddings,
-    save_image_to_buffer,
-    resize_with_paddings,
     add_circle_margins_to_image,
     parse_to_valid_image,
+    resize_with_crop_and_paddings,
+    resize_with_paddings,
+    save_image_to_buffer,
 )
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 
 def jpeg_preview(
@@ -43,7 +45,10 @@ def jpeg_preview(
     img: Image.Image = parse_to_valid_image(content)
     if _crop:
         img = resize_with_crop_and_paddings(
-            img=img, requested_x=_x, requested_y=_y, crop_position=crop_position
+            img=img,
+            requested_x=_x,
+            requested_y=_y,
+            crop_position=crop_position,
         )
     else:
         img = resize_with_paddings(img=img, requested_x=_x, requested_y=_y)
@@ -51,7 +56,10 @@ def jpeg_preview(
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     output: io.BytesIO = save_image_to_buffer(
-        img=img, _format="JPEG", _optimize=False, _quality_value=_quality_value
+        img=img,
+        _format="JPEG",
+        _optimize=False,
+        _quality_value=_quality_value,
     )
     return output
 
@@ -78,7 +86,10 @@ def jpeg_thumbnail(
     _quality_value = _quality.get_jpeg_int_quality()
     img: Image.Image = parse_to_valid_image(content)
     img = resize_with_crop_and_paddings(
-        img=img, requested_x=_x, requested_y=_y, crop_position=crop_position
+        img=img,
+        requested_x=_x,
+        requested_y=_y,
+        crop_position=crop_position,
     )
     if border == ImageBorderShapeEnum.ROUNDED:
         img = add_circle_margins_to_image(img)
@@ -87,6 +98,9 @@ def jpeg_thumbnail(
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     output: io.BytesIO = save_image_to_buffer(
-        img=img, _format="JPEG", _optimize=False, _quality_value=_quality_value
+        img=img,
+        _format="JPEG",
+        _optimize=False,
+        _quality_value=_quality_value,
     )
     return output

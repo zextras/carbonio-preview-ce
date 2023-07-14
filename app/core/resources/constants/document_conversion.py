@@ -9,10 +9,12 @@ PROTOCOL: str = read_config(section=_document_conversion_section, value="protoco
 IP: str = read_config(section=_document_conversion_section, value="ip")
 PORT: str = read_config(section=_document_conversion_section, value="port")
 SERVICE_ENDPOINT: str = read_config(
-    section=_document_conversion_section, value="service_endpoint"
+    section=_document_conversion_section,
+    value="service_endpoint",
 )
 CONVERT_API: str = read_config(
-    section=_document_conversion_section, value="convert_api"
+    section=_document_conversion_section,
+    value="convert_api",
 )
 
 BASE_ADDRESS: str = f"{PROTOCOL}://{IP}:{PORT}"

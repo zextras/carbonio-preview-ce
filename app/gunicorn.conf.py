@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import logging
 import multiprocessing
-import os
-from logging.handlers import QueueListener, QueueHandler, TimedRotatingFileHandler
+from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
+from pathlib import Path
 
 from app.core.resources.constants import service
-from app.core.resources.constants.settings import LOG_FORMAT, LOG_PATH, LOG_LEVEL
+from app.core.resources.constants.settings import LOG_FORMAT, LOG_LEVEL, LOG_PATH
 
 #
 # Server socket
@@ -150,7 +150,7 @@ tmp_upload_dir = None
 #       A string of "debug", "info", "warning", "error", "critical"
 #
 
-log_path = f"{os.path.join(LOG_PATH, service.NAME)}.log"
+log_path = f"{Path(LOG_PATH, service.NAME)!s}.log"
 capture_output = False
 
 # Set up a queue to communicate with the handlers
@@ -243,33 +243,33 @@ proc_name = "carbonio-preview-manager"
 #
 
 
-def child_exit(server, worker):
+def child_exit(server, worker) -> None:
     server.log.info(f"Worker killed: {worker.pid}")
 
 
-def post_worker_init(worker):
+def post_worker_init(worker) -> None:
     worker.log.info("Post worker init")
 
 
-def pre_exec(server):
+def pre_exec(server) -> None:
     server.log.info("Forked child, re-executing.")
 
 
-def when_ready(server):
+def when_ready(server) -> None:
     server.log.info("Server is ready. Spawning workers")
 
 
-def worker_abort(worker):
+def worker_abort(worker) -> None:
     worker.log.info("worker received SIGABRT signal")
 
 
-def on_starting(server):
+def on_starting(server) -> None:
     server.log.info("Starting server")
 
 
-def on_reload(server):
+def on_reload(server) -> None:
     server.log.info("Restarting server")
 
 
-def on_shutdown(server):
+def on_shutdown(server) -> None:
     server.log.info("Closing server")
