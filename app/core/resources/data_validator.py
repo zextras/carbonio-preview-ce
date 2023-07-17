@@ -104,7 +104,7 @@ class DocumentPagesMetadataModel(BaseModel):
     first_page: NonNegativeInt = 1
     last_page: NonNegativeInt = 0
 
-    @pydantic.root_validator()
+    @pydantic.model_validator(mode="before")
     def first_page_must_be_less_than_last_page(
         cls, field_values: Dict[str, int]
     ) -> Dict[str, int]:

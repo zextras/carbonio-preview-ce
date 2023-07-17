@@ -11,7 +11,7 @@ repos:
         args: []
 
 -   repo: https://github.com/python/black.git
-    rev: 23.3.0
+    rev: 23.7.0
     hooks:
       - id: black
 
@@ -52,7 +52,7 @@ repos:
         entry: python3 -m pytest
         language: python
         additional_dependencies: [
-            python-multipart, FastAPI, httpx, uvicorn, gunicorn, Pillow,
+            python-multipart, FastAPI, pydantic, httpx, uvicorn, gunicorn, Pillow,
             respx, psutil, pypdfium2, pytest, pytest-mockito, returns
         ]
         'types': [python]
