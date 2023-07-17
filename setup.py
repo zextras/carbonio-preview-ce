@@ -15,7 +15,7 @@ with Path.open(Path(this_directory, "README.md"), encoding="utf-8") as f:
 setup(
     name="carbonio-preview-ce",
     packages=find_packages(),
-    version="0.3.4-1",
+    version="0.3.4-3",
     entry_points={"console_scripts": ["controller = controller:main"]},
     description="Carbonio Preview.",
     long_description=Path.open(Path("README.md")).read(),
