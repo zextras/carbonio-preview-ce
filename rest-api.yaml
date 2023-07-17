@@ -6,7 +6,7 @@ openapi: 3.0.2
 info:
   title: preview
   description: "\nPreview service. \U0001F680 \n\nYou can preview the following type of files:\n\n* **images(png/jpeg)**\n* **pdf**\n* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**\n\nYou will be able to:\n\n* **Preview images**.\n* **Generate smart thumbnails**.\n\nThe main difference between thumbnail and preview\n functionality is that preview tends to be more faithful\nwhile thumbnail tends to elaborate on it, cropping\n it by default and rounding the image if asked.\nPreview should always output the file in its original format,\n while thumbnail will convert it to an image.\nThere is no difference in quality between the two,\n the difference in quality can be achieved only\nby asking for a jpeg format and changing the quality parameter.\n"
-  version: 0.3.4-1
+  version: 0.3.4-2
 paths:
   '/preview/image/{id}/{version}/{area}/thumbnail/':
     get:
