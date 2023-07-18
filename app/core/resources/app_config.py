@@ -6,7 +6,12 @@ import ipaddress
 from pathlib import Path
 from typing import Final, Type
 
-from pydantic import Field, field_validator
+from pydantic import (
+    Field,
+    NonNegativeInt,
+    PositiveInt,
+    field_validator,
+)
 from pydantic.main import BaseModel
 
 from app.core.resources.config_loader import config_dict
@@ -19,10 +24,10 @@ class AppConfig(BaseModel):
     # Service
     service_name: str
     service_ip: str
-    service_port: int
-    service_timeout_in_seconds: int
+    service_port: NonNegativeInt = Field(ge=PORT_MIN_NUMBER, le=PORT_MAX_NUMBER)
+    service_timeout_in_seconds: PositiveInt
 
-    number_of_workers: int = Field(alias="service_workers")
+    number_of_workers: PositiveInt = Field(alias="service_workers")
 
     service_image_name: str
     service_health_name: str
@@ -38,7 +43,7 @@ class AppConfig(BaseModel):
         alias="service_enable_document_thumbnail",
     )
 
-    docs_timeout: int = Field(default=5, alias="service_docs-timeout")
+    docs_timeout: PositiveInt = Field(default=5, alias="service_docs-timeout")
 
     # log
     log_path: str
@@ -46,7 +51,7 @@ class AppConfig(BaseModel):
     log_level: str
 
     # image
-    image_constants_minimum_resolution: int
+    image_constants_minimum_resolution: NonNegativeInt
 
     # storage
     storage_name: str
@@ -55,48 +60,24 @@ class AppConfig(BaseModel):
 
     storage_protocol: str
     storage_ip: str
-    storage_port: int
+    storage_port: NonNegativeInt = Field(ge=PORT_MIN_NUMBER, le=PORT_MAX_NUMBER)
 
     # document conv
     document_conversion_protocol: str
     document_conversion_ip: str
-    document_conversion_port: int
+    document_conversion_port: NonNegativeInt = Field(
+        ge=PORT_MIN_NUMBER,
+        le=PORT_MAX_NUMBER,
+    )
 
     document_conversion_service_endpoint: str
     document_conversion_convert_api: str
-
-    @field_validator(
-        "number_of_workers",
-        "service_timeout_in_seconds",
-        "image_constants_minimum_resolution",
-    )
-    @classmethod
-    def number_must_be_valid(cls: Type["AppConfig"], value: int) -> int:
-        if value <= 0:
-            msg = (
-                f"number is not valid. Given value {value}. "
-                f"It must be a positive integer"
-            )
-            raise ValueError(msg)
-
-        return value
 
     @field_validator("service_ip", "storage_ip", "document_conversion_ip")
     @classmethod
     def ip_must_be_valid(cls: Type["AppConfig"], value: str) -> str:
         # raises a ValueError if ip is not a valid ipV4 or V6
         ipaddress.ip_address(value)
-        return value
-
-    @field_validator("service_port", "storage_port", "document_conversion_port")
-    @classmethod
-    def port_must_be_valid(cls: Type["AppConfig"], value: int) -> int:
-        if not PORT_MIN_NUMBER <= value <= PORT_MAX_NUMBER:
-            msg = (
-                f"number is not valid. Given value {value}. "
-                f"It must be a value between {PORT_MIN_NUMBER}-{PORT_MAX_NUMBER}"
-            )
-            raise ValueError(msg)
         return value
 
     @field_validator("log_level")
