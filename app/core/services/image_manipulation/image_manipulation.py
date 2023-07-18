@@ -9,7 +9,7 @@ from typing import List, Tuple
 import PIL
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
-from app.core.resources.constants.image import constants as consts
+from app.core.resources.app_config import IMAGE_MIN_RES
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
@@ -268,12 +268,8 @@ def _add_borders_to_crop(
     if width < requested_x or height < requested_y:
         img = _add_borders_to_image(
             img=img,
-            requested_x=requested_x
-            if requested_x >= consts.MINIMUM_RESOLUTION
-            else consts.MINIMUM_RESOLUTION,
-            requested_y=requested_y
-            if requested_y >= consts.MINIMUM_RESOLUTION
-            else consts.MINIMUM_RESOLUTION,
+            requested_x=requested_x if requested_x >= IMAGE_MIN_RES else IMAGE_MIN_RES,
+            requested_y=requested_y if requested_y >= IMAGE_MIN_RES else IMAGE_MIN_RES,
         )
     return img
 
@@ -334,17 +330,17 @@ def _convert_requested_size_to_true_res_to_scale(
         log.debug("Using original height of fetched image.")
 
     # Check if the requested size is higher than the minimum
-    if requested_x < consts.MINIMUM_RESOLUTION:
-        requested_x = consts.MINIMUM_RESOLUTION
+    if requested_x < IMAGE_MIN_RES:
+        requested_x = IMAGE_MIN_RES
         log.debug(
             f"requested width is too small."
-            f"Resizing width to the minimum resolution of {consts.MINIMUM_RESOLUTION}",
+            f"Resizing width to the minimum resolution of {IMAGE_MIN_RES}",
         )
-    if requested_y < consts.MINIMUM_RESOLUTION:
-        requested_y = consts.MINIMUM_RESOLUTION
+    if requested_y < IMAGE_MIN_RES:
+        requested_y = IMAGE_MIN_RES
         log.debug(
             f"requested height is too small."
-            f"Resizing height to the minimum resolution of {consts.MINIMUM_RESOLUTION}",
+            f"Resizing height to the minimum resolution of {IMAGE_MIN_RES}",
         )
 
     # check if the original image is lower than the minimum and the requested
@@ -353,22 +349,19 @@ def _convert_requested_size_to_true_res_to_scale(
     # However, if requested_x=200 then it is more than double, and it will not
     # be resized, leaving it under the minimum. On the other hand, setting everything
     # under the minimum to the minimum will lose information if it can still be resized.
-    if original_width < consts.MINIMUM_RESOLUTION and requested_x / 2 > original_width:
-        requested_x = consts.MINIMUM_RESOLUTION
+    if original_width < IMAGE_MIN_RES and requested_x / 2 > original_width:
+        requested_x = IMAGE_MIN_RES
         log.debug(
             f"original image width is too small and cannot"
             f" be resized to requested width without stretching."
-            f"Setting the requested width to {consts.MINIMUM_RESOLUTION}",
+            f"Setting the requested width to {IMAGE_MIN_RES}",
         )
-    if (
-        original_height < consts.MINIMUM_RESOLUTION
-        and requested_y / 2 > original_height
-    ):
-        requested_y = consts.MINIMUM_RESOLUTION
+    if original_height < IMAGE_MIN_RES and requested_y / 2 > original_height:
+        requested_y = IMAGE_MIN_RES
         log.debug(
             f"original image height is too small and "
             f"cannot be resized to requested width without stretching."
-            f"Setting the requested height to {consts.MINIMUM_RESOLUTION}",
+            f"Setting the requested height to {IMAGE_MIN_RES}",
         )
     return requested_x, requested_y
 
@@ -386,7 +379,7 @@ def parse_to_valid_image(content: io.BytesIO) -> Image.Image:
         return ImageOps.exif_transpose(img)
     except PIL.UnidentifiedImageError as e:
         logger.debug(f"Invalid or empty image caused error: {e}")
-        return Image.new("RGB", (consts.MINIMUM_RESOLUTION, consts.MINIMUM_RESOLUTION))
+        return Image.new("RGB", (IMAGE_MIN_RES, IMAGE_MIN_RES))
 
 
 def resize_with_crop_and_paddings(
@@ -442,12 +435,8 @@ def resize_with_crop_and_paddings(
     else:
         img = _add_borders_to_image(
             img=img,
-            requested_x=to_scale_x
-            if to_scale_x >= consts.MINIMUM_RESOLUTION
-            else consts.MINIMUM_RESOLUTION,
-            requested_y=to_scale_y
-            if to_scale_y >= consts.MINIMUM_RESOLUTION
-            else consts.MINIMUM_RESOLUTION,
+            requested_x=to_scale_x if to_scale_x >= IMAGE_MIN_RES else IMAGE_MIN_RES,
+            requested_y=to_scale_y if to_scale_y >= IMAGE_MIN_RES else IMAGE_MIN_RES,
         )
 
     return img
@@ -475,8 +464,8 @@ def resize_with_paddings(
         original_height=original_height,
     )
     if (
-        consts.MINIMUM_RESOLUTION <= original_width <= to_scale_x / 2
-        and consts.MINIMUM_RESOLUTION <= original_height <= to_scale_y / 2
+        IMAGE_MIN_RES <= original_width <= to_scale_x / 2
+        and IMAGE_MIN_RES <= original_height <= to_scale_y / 2
     ):
         new_width, new_height = original_width, original_height
     else:
@@ -489,12 +478,8 @@ def resize_with_paddings(
     img = _resize_image_given_size(img, (new_width, new_height))
     return _add_borders_to_image(
         img=img,
-        requested_x=to_scale_x
-        if to_scale_x >= consts.MINIMUM_RESOLUTION
-        else consts.MINIMUM_RESOLUTION,
-        requested_y=to_scale_y
-        if to_scale_y >= consts.MINIMUM_RESOLUTION
-        else consts.MINIMUM_RESOLUTION,
+        requested_x=to_scale_x if to_scale_x >= IMAGE_MIN_RES else IMAGE_MIN_RES,
+        requested_y=to_scale_y if to_scale_y >= IMAGE_MIN_RES else IMAGE_MIN_RES,
     )
 
 

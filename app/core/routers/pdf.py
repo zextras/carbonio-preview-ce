@@ -9,7 +9,8 @@ from fastapi.responses import Response
 from pydantic import NonNegativeInt
 from typing_extensions import Annotated
 
-from app.core.resources.constants import message, service
+from app.core.resources.app_config import PDF_NAME, SERVICE_NAME
+from app.core.resources.constants import message
 from app.core.resources.data_validator import (
     AREA_REGEX,
     DocumentPagesMetadataModel,
@@ -26,8 +27,8 @@ from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMe
 from app.core.services import image_service, pdf_service
 
 router = APIRouter(
-    prefix=f"/{service.NAME}/{service.PDF_NAME}",
-    tags=[service.PDF_NAME],
+    prefix=f"/{SERVICE_NAME}/{PDF_NAME}",
+    tags=[PDF_NAME],
     responses={404: {"description": message.ITEM_NOT_FOUND}},
 )
 

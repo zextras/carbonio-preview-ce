@@ -109,8 +109,7 @@ def test_crop_image_image_same_size_as_requested(expect):
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     30,
 )
 @patch(
@@ -130,8 +129,7 @@ def test_add_border_to_crop_image_image_more_then_requested(mock_borders):
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     30,
 )
 @patch(
@@ -230,8 +228,7 @@ def test_find_smaller_scaled_dimension_4():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     0,
 )
 def test_convert_requested_to_true_res_x_zero_y_zero():
@@ -251,8 +248,7 @@ def test_convert_requested_to_true_res_x_zero_y_zero():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     0,
 )
 def test_convert_requested_to_true_res_x_zero_y_something():
@@ -272,8 +268,7 @@ def test_convert_requested_to_true_res_x_zero_y_something():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     400,
 )
 def test_convert_requested_to_true_res_x_less_than_min():
@@ -293,8 +288,7 @@ def test_convert_requested_to_true_res_x_less_than_min():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     400,
 )
 def test_convert_requested_to_true_res_y_less_than_min():
@@ -314,8 +308,7 @@ def test_convert_requested_to_true_res_y_less_than_min():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     400,
 )
 def test_convert_requested_to_true_res_x_and_y_less_than_min():
@@ -335,8 +328,7 @@ def test_convert_requested_to_true_res_x_and_y_less_than_min():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origx_less_than_min_but_can_scale():
@@ -356,8 +348,7 @@ def test_convert_requested_to_true_res_origx_less_than_min_but_can_scale():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origy_less_than_min_but_can_scale():
@@ -377,8 +368,7 @@ def test_convert_requested_to_true_res_origy_less_than_min_but_can_scale():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origxy_less_than_min_but_can_scale():
@@ -398,8 +388,7 @@ def test_convert_requested_to_true_res_origxy_less_than_min_but_can_scale():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origx_less_than_min_but_cannot_scale():
@@ -419,8 +408,7 @@ def test_convert_requested_to_true_res_origx_less_than_min_but_cannot_scale():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origy_less_than_min_but_cannot_scale():
@@ -440,8 +428,7 @@ def test_convert_requested_to_true_res_origy_less_than_min_but_cannot_scale():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     80,
 )
 def test_convert_requested_to_true_res_origxy_less_than_min_but_cannot_scale():
@@ -509,8 +496,7 @@ def test_get_crop_coordinates_center_not_enough_space():
 
 
 @patch(
-    "app.core.services.image_manipulation"
-    ".image_manipulation.consts.MINIMUM_RESOLUTION",
+    "app.core.services.image_manipulation" ".image_manipulation.IMAGE_MIN_RES",
     40,
 )
 def test_parse_to_valid_image_invalid_image():

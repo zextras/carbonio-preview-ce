@@ -8,11 +8,18 @@ import httpx
 from fastapi import APIRouter, status
 from fastapi.responses import Response
 
-from app.core.resources.constants import document_conversion, message, service, storage
+from app.core.resources.app_config import (
+    ARE_DOCS_ENABLED,
+    DOCUMENT_CONVERSION_FULL_SERVICE_ADDRESS,
+    HEALTH_NAME,
+    STORAGE_FULL_ADDRESS,
+    STORAGE_HEALTH_CHECK_API,
+)
+from app.core.resources.constants import message
 
 router = APIRouter(
-    prefix=f"/{service.HEALTH_NAME}",
-    tags=[service.HEALTH_NAME],
+    prefix=f"/{HEALTH_NAME}",
+    tags=[HEALTH_NAME],
     responses={
         502: {"description": message.STORAGE_UNAVAILABLE_STRING},
         429: {"description": message.DOCS_EDITOR_UNAVAILABLE_STRING},
@@ -30,10 +37,10 @@ async def health() -> dict:
     :return: json with status of service and optional dependencies
     """
     is_storage_up: bool = await _is_dependency_up(
-        f"{storage.FULL_ADDRESS}/{storage.HEALTH_CHECK_API}",
+        f"{STORAGE_FULL_ADDRESS}/{STORAGE_HEALTH_CHECK_API}",
     )
     is_libre_up: bool = await _is_dependency_up(
-        document_conversion.FULL_SERVICE_ADDRESS,
+        DOCUMENT_CONVERSION_FULL_SERVICE_ADDRESS,
     )
 
     result_dict = {
@@ -64,8 +71,8 @@ async def health_ready() -> Response:
     \f
     :return: returns 200 if service and carbonio-docs-editor are running
     """
-    if not service.ARE_DOCS_ENABLED or _is_dependency_up(
-        document_conversion.FULL_SERVICE_ADDRESS,
+    if not ARE_DOCS_ENABLED or _is_dependency_up(
+        DOCUMENT_CONVERSION_FULL_SERVICE_ADDRESS,
     ):
         logger.debug("Health ready with status code 200")
         return Response(status_code=status.HTTP_200_OK)

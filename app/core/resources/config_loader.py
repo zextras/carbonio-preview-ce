@@ -6,7 +6,7 @@ import configparser
 from pathlib import Path
 from typing import Any, List, Optional
 
-config = configparser.ConfigParser()
+config = configparser.ConfigParser(interpolation=None)
 message_config = configparser.ConfigParser()
 
 
@@ -33,6 +33,7 @@ def load_config(path_list: Optional[List[str]] = None) -> List[str]:
 
 
 load_config()
+config_dict = {section: dict(config.items(section)) for section in config.sections()}
 load_message_config()
 
 

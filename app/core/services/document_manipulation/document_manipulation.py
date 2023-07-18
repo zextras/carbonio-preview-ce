@@ -10,7 +10,10 @@ from fastapi.exceptions import HTTPException
 from pypdfium2 import PdfDocument, PdfiumError
 from returns.result import Failure, Result, Success
 
-from app.core.resources.constants import document_conversion, service
+from app.core.resources.app_config import (
+    DOCS_TIMEOUT,
+    DOCUMENT_CONVERSION_FULL_CONVERT_ADDRESS,
+)
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.services.image_manipulation import image_manipulation
@@ -199,14 +202,14 @@ async def _convert_with_libre(
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
 
-    url = f"{document_conversion.FULL_CONVERT_ADDRESS}/{output_extension}"
+    url = f"{DOCUMENT_CONVERSION_FULL_CONVERT_ADDRESS}/{output_extension}"
 
     files = {"files": ("docs-editor-file", content)}
     out_data = io.BytesIO()
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, timeout=service.DOCS_TIMEOUT, files=files)
+            response = await client.post(url, timeout=DOCS_TIMEOUT, files=files)
             response.raise_for_status()
             out_data = io.BytesIO(response.content)
     except httpx.HTTPStatusError as http_error:

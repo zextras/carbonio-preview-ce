@@ -13,7 +13,7 @@ from httpx import Response
 from returns.maybe import Nothing
 
 import app.core.services.storage_communication as st_com
-from app.core.resources.constants import storage
+from app.core.resources.app_config import STORAGE_DOWNLOAD_API, STORAGE_FULL_ADDRESS
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 
@@ -25,7 +25,7 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
         self.test_id = "da2dcce7-cd87-423c-a6c9-38c527ab6e6a"
         self.version = 1
         self.req = (
-            f"{storage.FULL_ADDRESS}/{storage.DOWNLOAD_API}"
+            f"{STORAGE_FULL_ADDRESS}/{STORAGE_DOWNLOAD_API}"
             f"?node={self.test_id}&version={self.version}&type={ServiceTypeEnum.FILES.value}"
         )
 
