@@ -74,14 +74,12 @@ class AppConfig(BaseModel):
     document_conversion_convert_api: str
 
     @field_validator("service_ip", "storage_ip", "document_conversion_ip")
-    @classmethod
     def ip_must_be_valid(cls: Type["AppConfig"], value: str) -> str:
         # raises a ValueError if ip is not a valid ipV4 or V6
         ipaddress.ip_address(value)
         return value
 
     @field_validator("log_level")
-    @classmethod
     def log_level_must_be_valid(cls: Type["AppConfig"], value: str) -> str:
         if value.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             msg = f"Log level is not valid. Given value {value}"
@@ -90,7 +88,6 @@ class AppConfig(BaseModel):
         return value
 
     @field_validator("log_path")
-    @classmethod
     def log_path_must_exist(cls: Type["AppConfig"], value: str) -> str:
         if not Path(value).resolve().exists():
             msg = "Log path is not valid or does not exist."
