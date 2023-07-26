@@ -177,6 +177,7 @@ LOGGING_CONFIG = {
         "handlers": ["console_standard", "queue"],
         "level": app_config.LOG_LEVEL,
     },
+    # BE CAREFUL! LOG LEVEL MUST BE UPPER CASE
     "loggers": {
         "gunicorn.access": {
             "level": app_config.LOG_LEVEL,

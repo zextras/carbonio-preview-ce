@@ -151,7 +151,7 @@ by asking for a jpeg format and changing the quality parameter.
 
 LOG_FORMAT: Final[str] = app_config.log_format
 LOG_PATH: Final[str] = str(Path(app_config.log_path).resolve())
-LOG_LEVEL: Final[str] = app_config.log_level
+LOG_LEVEL: Final[str] = app_config.log_level.upper()
 
 # STORAGE
 STORAGE_NAME: Final[str] = app_config.storage_name
