@@ -29,13 +29,17 @@ from app.core.services import image_service, pdf_service
 router = APIRouter(
     prefix=f"/{SERVICE_NAME}/{PDF_NAME}",
     tags=[PDF_NAME],
-    responses={404: {"description": message.ITEM_NOT_FOUND}},
+    responses={status.HTTP_404_NOT_FOUND: {"description": message.ITEM_NOT_FOUND}},
 )
 
 
 @router.get(
     "/{id}/{version}/",
-    responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+    },
 )
 async def get_preview(
     id: UUID,
@@ -103,7 +107,7 @@ async def post_preview(
 
 @router.post(
     "/{area}/thumbnail/",
-    responses={400: {"description": message.INPUT_ERROR}},
+    responses={status.HTTP_400_BAD_REQUEST: {"description": message.INPUT_ERROR}},
 )
 async def post_thumbnail(
     area: Annotated[str, Path(regex=AREA_REGEX)],
@@ -158,7 +162,11 @@ async def post_thumbnail(
 
 @router.get(
     "/{id}/{version}/{area}/thumbnail/",
-    responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+    },
 )
 async def get_thumbnail(
     id: UUID,

@@ -6,6 +6,7 @@ import logging
 
 import httpx
 import pypdfium2
+from fastapi import status
 from fastapi.exceptions import HTTPException
 from pypdfium2 import PdfDocument, PdfiumError
 from returns.result import Failure, Result, Success
@@ -164,7 +165,10 @@ def convert_pdf_to_image(
         )
     except pypdfium2.PdfiumError as e:
         log.info(f"Wrong pdf file passed, error: {e}")
-        raise HTTPException(status_code=400, detail="Invalid pdf file") from e
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pdf file",
+        ) from e
 
 
 async def convert_pdf_to(

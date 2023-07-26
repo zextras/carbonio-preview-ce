@@ -21,8 +21,12 @@ router = APIRouter(
     prefix=f"/{HEALTH_NAME}",
     tags=[HEALTH_NAME],
     responses={
-        502: {"description": message.STORAGE_UNAVAILABLE_STRING},
-        429: {"description": message.DOCS_EDITOR_UNAVAILABLE_STRING},
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": message.DOCS_EDITOR_UNAVAILABLE_STRING,
+        },
     },
 )
 logger = logging.getLogger(__name__)

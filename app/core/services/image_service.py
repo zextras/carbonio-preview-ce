@@ -5,7 +5,7 @@
 import io
 from typing import Any, Callable
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from fastapi.responses import Response as FastApiResp
 from httpx import Response as RequestResp
 from returns.maybe import Maybe
@@ -59,7 +59,10 @@ async def retrieve_image_and_create_thumbnail(
             func=_select_thumbnail_module,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 async def retrieve_image_and_create_preview(
@@ -90,7 +93,10 @@ async def retrieve_image_and_create_preview(
             func=_select_preview_module,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 def process_raw_thumbnail(
@@ -105,7 +111,10 @@ def process_raw_thumbnail(
     try:
         return _select_thumbnail_module(img_metadata=img_metadata, content=raw_content)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 def process_raw_preview(
@@ -120,7 +129,10 @@ def process_raw_preview(
     try:
         return _select_preview_module(img_metadata=img_metadata, content=raw_content)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 def _process_response_data(
@@ -145,7 +157,9 @@ def _process_response_data(
             content=func(
                 img_metadata=img_metadata,
                 content=io.BytesIO(
-                    response_data.value_or(RequestResp(status_code=200)).content,
+                    response_data.value_or(
+                        RequestResp(status_code=status.HTTP_200_OK),
+                    ).content,
                 ),
             ).read(),
             media_type=f"image/{img_metadata.format.value}",

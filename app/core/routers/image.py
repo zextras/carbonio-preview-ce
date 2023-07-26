@@ -4,7 +4,7 @@
 import io
 from uuid import UUID
 
-from fastapi import APIRouter, Path, UploadFile
+from fastapi import APIRouter, Path, UploadFile, status
 from fastapi.responses import Response
 from pydantic import NonNegativeInt
 from typing_extensions import Annotated
@@ -29,15 +29,17 @@ from app.core.services import image_service
 router = APIRouter(
     prefix=f"/{SERVICE_NAME}/{IMAGE_NAME}",
     tags=[IMAGE_NAME],
-    responses={400: {"description": message.INPUT_ERROR}},
+    responses={status.HTTP_400_BAD_REQUEST: {"description": message.INPUT_ERROR}},
 )
 
 
 @router.get(
     "/{id}/{version}/{area}/thumbnail/",
     responses={
-        502: {"description": message.STORAGE_UNAVAILABLE_STRING},
-        404: {"description": message.ITEM_NOT_FOUND},
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+        status.HTTP_404_NOT_FOUND: {"description": message.ITEM_NOT_FOUND},
     },
 )
 async def get_thumbnail(
@@ -192,8 +194,10 @@ async def post_preview(
 @router.get(
     "/{id}/{version}/{area}/",
     responses={
-        502: {"description": message.STORAGE_UNAVAILABLE_STRING},
-        404: {"description": message.ITEM_NOT_FOUND},
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+        status.HTTP_404_NOT_FOUND: {"description": message.ITEM_NOT_FOUND},
     },
 )
 async def get_preview(
