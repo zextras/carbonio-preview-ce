@@ -5,13 +5,18 @@
 import uvicorn
 from fastapi import FastAPI
 
-from app.core.resources.constants import service
+from app.core.resources.app_config import (
+    SERVICE_DESCRIPTION,
+    SERVICE_IP,
+    SERVICE_NAME,
+    SERVICE_PORT,
+)
 from app.core.routers import document, health, image, pdf
 
 app = FastAPI(
-    title=service.NAME,
-    version="0.3.4-3",
-    description=service.DESCRIPTION,
+    title=SERVICE_NAME,
+    version="0.3.4-4",
+    description=SERVICE_DESCRIPTION,
 )
 
 app.include_router(image.router)
@@ -20,4 +25,4 @@ app.include_router(document.router)
 app.include_router(health.router)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=service.IP, port=service.PORT)
+    uvicorn.run(app, host=SERVICE_IP, port=SERVICE_PORT)

@@ -11,7 +11,11 @@ from httpx import Response as RequestResp
 from pydantic import BaseModel, NonNegativeInt
 from returns.maybe import Maybe, Nothing
 
-from app.core.resources.constants import message, service
+from app.core.resources.app_config import (
+    ENABLE_DOCUMENT_PREVIEW,
+    ENABLE_DOCUMENT_THUMBNAIL,
+)
+from app.core.resources.constants import message
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
@@ -124,7 +128,7 @@ def check_if_document_thumbnail_is_enabled() -> bool:
     \f
     :return: True if enabled
     """
-    return service.ENABLE_DOCUMENT_THUMBNAIL
+    return ENABLE_DOCUMENT_THUMBNAIL
 
 
 def _check_if_document_preview_is_enabled() -> bool:
@@ -133,7 +137,7 @@ def _check_if_document_preview_is_enabled() -> bool:
     \f
     :return: True if enabled
     """
-    return service.ENABLE_DOCUMENT_PREVIEW
+    return ENABLE_DOCUMENT_PREVIEW
 
 
 def get_document_preview_enabled_response_error() -> Maybe[FastApiResp]:

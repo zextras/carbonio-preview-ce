@@ -7,7 +7,7 @@ import httpx
 from httpx import Response
 from returns.maybe import Maybe, Nothing
 
-from app.core.resources.constants import storage
+from app.core.resources.app_config import STORAGE_DOWNLOAD_API, STORAGE_FULL_ADDRESS
 from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ async def retrieve_data(
      otherwise returns storage response
     """
     req = (
-        f"{storage.FULL_ADDRESS}/{storage.DOWNLOAD_API}"
+        f"{STORAGE_FULL_ADDRESS}/{STORAGE_DOWNLOAD_API}"
         + f"?node={file_id}&version={version}&type={service_type.value}"
     )
     try:

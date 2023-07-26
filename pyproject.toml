@@ -134,3 +134,7 @@ line-length = 88
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.pep8-naming]
+# Allow Pydantic's `@field_validator` decorator to trigger class method treatment.
+classmethod-decorators = ["pydantic.field_validator"]

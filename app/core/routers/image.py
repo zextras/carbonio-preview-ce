@@ -9,7 +9,8 @@ from fastapi.responses import Response
 from pydantic import NonNegativeInt
 from typing_extensions import Annotated
 
-from app.core.resources.constants import message, service
+from app.core.resources.app_config import IMAGE_NAME, SERVICE_NAME
+from app.core.resources.constants import message
 from app.core.resources.data_validator import (
     AREA_REGEX,
     create_image_metadata_dict,
@@ -26,8 +27,8 @@ from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMe
 from app.core.services import image_service
 
 router = APIRouter(
-    prefix=f"/{service.NAME}/{service.IMAGE_NAME}",
-    tags=[service.IMAGE_NAME],
+    prefix=f"/{SERVICE_NAME}/{IMAGE_NAME}",
+    tags=[IMAGE_NAME],
     responses={status.HTTP_400_BAD_REQUEST: {"description": message.INPUT_ERROR}},
 )
 

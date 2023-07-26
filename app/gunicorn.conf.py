@@ -6,8 +6,7 @@ import multiprocessing
 from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
 from pathlib import Path
 
-from app.core.resources.constants import service
-from app.core.resources.constants.settings import LOG_FORMAT, LOG_LEVEL, LOG_PATH
+from app.core.resources import app_config
 
 #
 # Server socket
@@ -71,13 +70,13 @@ from app.core.resources.constants.settings import LOG_FORMAT, LOG_LEVEL, LOG_PAT
 #       A positive integer. Generally set in the 1-5 seconds range.
 #
 
-bind = f"{service.IP}:{service.PORT}"
+bind = f"{app_config.SERVICE_IP}:{app_config.SERVICE_PORT}"
 backlog = 2048
 
-workers = service.NUMBER_OF_WORKERS
+workers = app_config.SERVICE_NUMBER_OF_WORKERS
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
-timeout = service.TIMEOUT
+timeout = app_config.SERVICE_TIMEOUT
 keepalive = 2
 
 #
@@ -150,7 +149,7 @@ tmp_upload_dir = None
 #       A string of "debug", "info", "warning", "error", "critical"
 #
 
-log_path = f"{Path(LOG_PATH, service.NAME)!s}.log"
+log_path = f"{Path(app_config.LOG_PATH, app_config.SERVICE_NAME)!s}.log"
 capture_output = False
 
 # Set up a queue to communicate with the handlers
@@ -162,7 +161,7 @@ queue_timed_rotating_handler = TimedRotatingFileHandler(
     encoding="utf8",
     backupCount=50,
 )
-queue_timed_rotating_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+queue_timed_rotating_handler.setFormatter(logging.Formatter(app_config.LOG_FORMAT))
 
 listener = QueueListener(log_queue, queue_timed_rotating_handler)
 listener.start()
@@ -176,11 +175,12 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": True,
     "root": {
         "handlers": ["console_standard", "queue"],
-        "level": LOG_LEVEL,
+        "level": app_config.LOG_LEVEL,
     },
+    # BE CAREFUL! LOG LEVEL MUST BE UPPER CASE
     "loggers": {
         "gunicorn.access": {
-            "level": LOG_LEVEL,
+            "level": app_config.LOG_LEVEL,
             "handlers": ["console_gunicorn", "queue"],
             "propagate": False,
             "qualname": "gunicorn.access",
@@ -203,7 +203,7 @@ LOGGING_CONFIG = {
         },
     },
     "formatters": {
-        "syslog": {"format": LOG_FORMAT},
+        "syslog": {"format": app_config.LOG_FORMAT},
     },
 }
 
