@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-from typing import Callable, Any
+from typing import Any, Callable
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from fastapi.responses import Response as FastApiResp
 from httpx import Response as RequestResp
 from returns.maybe import Maybe
@@ -21,7 +21,6 @@ from app.core.services.image_manipulation.gif_manipulation import (
     gif_preview,
     gif_thumbnail,
 )
-
 from app.core.services.image_manipulation.jpeg_manipulation import (
     jpeg_preview,
     jpeg_thumbnail,
@@ -49,7 +48,9 @@ async def retrieve_image_and_create_thumbnail(
     :return response: a Response with metadata or error message.
     """
     response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
-        file_id=image_id, version=version, service_type=service_type
+        file_id=image_id,
+        version=version,
+        service_type=service_type,
     )
     try:
         return _process_response_data(
@@ -58,7 +59,10 @@ async def retrieve_image_and_create_thumbnail(
             func=_select_thumbnail_module,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 async def retrieve_image_and_create_preview(
@@ -78,7 +82,9 @@ async def retrieve_image_and_create_preview(
     :return response: a Response with metadata or error message.
     """
     response_data: Maybe[RequestResp] = await storage_communication.retrieve_data(
-        file_id=image_id, version=version, service_type=service_type
+        file_id=image_id,
+        version=version,
+        service_type=service_type,
     )
     try:
         return _process_response_data(
@@ -87,11 +93,15 @@ async def retrieve_image_and_create_preview(
             func=_select_preview_module,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 def process_raw_thumbnail(
-    raw_content: io.BytesIO, img_metadata: ThumbnailImageMetadata
+    raw_content: io.BytesIO,
+    img_metadata: ThumbnailImageMetadata,
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -101,11 +111,15 @@ def process_raw_thumbnail(
     try:
         return _select_thumbnail_module(img_metadata=img_metadata, content=raw_content)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
 
 
 def process_raw_preview(
-    raw_content: io.BytesIO, img_metadata: PreviewImageMetadata
+    raw_content: io.BytesIO,
+    img_metadata: PreviewImageMetadata,
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -115,11 +129,16 @@ def process_raw_preview(
     try:
         return _select_preview_module(img_metadata=img_metadata, content=raw_content)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 def _process_response_data(
-    response_data: Maybe[RequestResp], img_metadata: Any, func: Callable
+    response_data: Maybe[RequestResp],
+    img_metadata: Any,
+    func: Callable,
 ) -> FastApiResp:
     """
     Validates response data and then process calling func passed.
@@ -131,23 +150,26 @@ def _process_response_data(
     :return:
     """
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
-        response_data=response_data
+        response_data=response_data,
     )
     return response_error.value_or(
         FastApiResp(
             content=func(
                 img_metadata=img_metadata,
                 content=io.BytesIO(
-                    response_data.value_or(RequestResp(status_code=200)).content
+                    response_data.value_or(
+                        RequestResp(status_code=status.HTTP_200_OK),
+                    ).content,
                 ),
             ).read(),
             media_type=f"image/{img_metadata.format.value}",
-        )
+        ),
     )
 
 
 def _select_thumbnail_module(
-    img_metadata: ThumbnailImageMetadata, content: io.BytesIO
+    img_metadata: ThumbnailImageMetadata,
+    content: io.BytesIO,
 ) -> io.BytesIO:
     """
     Based on the given format chooses the correct module to call
@@ -166,7 +188,7 @@ def _select_thumbnail_module(
             content=content,
             crop_position=img_metadata.crop_position,
         )
-    elif _format == ImageTypeEnum.PNG:
+    if _format == ImageTypeEnum.PNG:
         return png_thumbnail(
             _x=img_metadata.width,
             _y=img_metadata.height,
@@ -174,7 +196,7 @@ def _select_thumbnail_module(
             content=content,
             crop_position=img_metadata.crop_position,
         )
-    elif _format == ImageTypeEnum.GIF:
+    if _format == ImageTypeEnum.GIF:
         return gif_thumbnail(
             _x=img_metadata.width,
             _y=img_metadata.height,
@@ -183,12 +205,13 @@ def _select_thumbnail_module(
             content=content,
             crop_position=img_metadata.crop_position,
         )
-    else:
-        raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
+
+    raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
 
 
 def _select_preview_module(
-    img_metadata: PreviewImageMetadata, content: io.BytesIO
+    img_metadata: PreviewImageMetadata,
+    content: io.BytesIO,
 ) -> io.BytesIO:
     """
     Based on the given format chooses the correct module to call
@@ -207,7 +230,7 @@ def _select_preview_module(
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
         )
-    elif _format == ImageTypeEnum.PNG:
+    if _format == ImageTypeEnum.PNG:
         return png_preview(
             _x=img_metadata.width,
             _y=img_metadata.height,
@@ -215,7 +238,7 @@ def _select_preview_module(
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
         )
-    elif _format == ImageTypeEnum.GIF:
+    if _format == ImageTypeEnum.GIF:
         return gif_preview(
             _x=img_metadata.width,
             _y=img_metadata.height,
@@ -224,5 +247,5 @@ def _select_preview_module(
             crop_position=img_metadata.crop_position,
             _quality=img_metadata.quality,
         )
-    else:
-        raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
+
+    raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)

@@ -3,23 +3,26 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
 import logging
-import pypdfium2
 
 import httpx
-from pypdfium2 import PdfDocument, PdfiumError
+import pypdfium2
+from fastapi import status
 from fastapi.exceptions import HTTPException
-from returns.result import Success, Failure, Result
+from pypdfium2 import PdfDocument, PdfiumError
+from returns.result import Failure, Result, Success
 
 from app.core.resources.constants import document_conversion, service
-from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
+from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
 from app.core.services.image_manipulation import image_manipulation
 
 logger = logging.getLogger(__name__)
 
 
 def split_pdf(
-    content: io.BytesIO, first_page_number: int, last_page_number: int
+    content: io.BytesIO,
+    first_page_number: int,
+    last_page_number: int,
 ) -> io.BytesIO:
     """
     Gets n pages of the pdf, with n = last_page_number - first_page_number.
@@ -37,7 +40,8 @@ def split_pdf(
 
 def _parse_if_valid_pdf(content: io.BytesIO) -> Result[PdfDocument, PdfiumError]:
     """
-    Parses the given buffer of bytes into PdfReader, if the file is not valid returns None
+    Parses the given buffer of bytes into PdfReader,
+     if the file is not valid returns None
     \f
     :param content: file to load into a PdfDocument object
     :return: PdfReader object containing the pdf or Empty if not valid
@@ -46,13 +50,15 @@ def _parse_if_valid_pdf(content: io.BytesIO) -> Result[PdfDocument, PdfiumError]
         return Success(PdfDocument(content))
     except PdfiumError as e:  # not a valid pdf
         logger.warning(
-            f"Not a valid pdf file, replacing it with an empty one. Error: {e}"
+            f"Not a valid pdf file, replacing it with an empty one. Error: {e}",
         )
         return Failure(e)
 
 
 def _write_pdf_to_buffer(
-    pdf: PdfDocument, start_page: int = 0, end_page: int = 1
+    pdf: PdfDocument,
+    start_page: int = 0,
+    end_page: int = 1,
 ) -> io.BytesIO:
     """
     Writes PDF to io.BytesIO buffer, if PDF is empty writes an empty pdf file
@@ -119,7 +125,9 @@ async def convert_file_to(
     :param log: logger to use
     """
     return await _convert_with_libre(
-        content=content, output_extension=output_extension, log=log
+        content=content,
+        output_extension=output_extension,
+        log=log,
     )
 
 
@@ -142,10 +150,10 @@ def convert_pdf_to_image(
         page = pdf.get_page(page_number)
         pil_image = page.render().to_pil()
         return image_manipulation.save_image_to_buffer(
-            pil_image,
-            output_extension,
-            False,
-            ImageQualityEnum.HIGHEST.get_jpeg_int_quality(),
+            img=pil_image,
+            _format=output_extension,
+            _optimize=False,
+            _quality_value=ImageQualityEnum.HIGHEST.get_jpeg_int_quality(),
             # the render is automatically done at the highest quality.
             # The desired quality will be set while processing the image
             # at the end of the api call because
@@ -154,7 +162,10 @@ def convert_pdf_to_image(
         )
     except pypdfium2.PdfiumError as e:
         log.info(f"Wrong pdf file passed, error: {e}")
-        raise HTTPException(status_code=400, detail="Invalid pdf file")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pdf file",
+        ) from e
 
 
 async def convert_pdf_to(
@@ -179,12 +190,16 @@ async def convert_pdf_to(
         last_page_number=last_page_number,
     )
     return await convert_file_to(
-        content=out_content, output_extension=output_extension, log=log
+        content=out_content,
+        output_extension=output_extension,
+        log=log,
     )
 
 
 async def _convert_with_libre(
-    content: io.BytesIO, output_extension: str, log: logging.Logger
+    content: io.BytesIO,
+    output_extension: str,
+    log: logging.Logger,
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
 

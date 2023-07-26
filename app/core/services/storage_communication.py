@@ -33,22 +33,23 @@ async def retrieve_data(
         f"{storage.FULL_ADDRESS}/{storage.DOWNLOAD_API}"
         + f"?node={file_id}&version={version}&type={service_type.value}"
     )
-    response: Maybe[Response] = Nothing
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(req)
             resp.raise_for_status()
-            response = Maybe.from_value(resp)
+            log.info(f"[Requested: {req}, Response: {resp}]")
+            return Maybe.from_value(resp)
     except httpx.HTTPStatusError as http_error:
-        log.debug(f"Http Error: {http_error}")
+        log.debug(f"Http Error: {http_error} for request {req}")
+        return Nothing
     # from this onward are not related to the raise_for_status,
     # these are all critical errors.
     except httpx.ConnectTimeout as timeout_error:
-        log.error(f"Timeout Error: {timeout_error}")
+        log.error(f"Timeout Error: {timeout_error} for request {req}")
+        return Nothing
     except httpx.RequestError as request_error:
-        log.critical(f"Unexpected Error: {request_error}")
+        log.critical(f"Unexpected Error: {request_error} for request {req}")
+        return Nothing
     except Exception as crit_err:
-        log.critical(f"Critical Error: {crit_err}")
-    finally:
-        log.info(f"[Requested: {req}, Response: {response}]")
-        return response
+        log.critical(f"Critical Error: {crit_err} for request {req}")
+        return Nothing

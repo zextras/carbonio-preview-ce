@@ -2,19 +2,18 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-
-from typing_extensions import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, UploadFile, Depends, Path
-from pydantic import NonNegativeInt
+from fastapi import APIRouter, Depends, Path, UploadFile, status
 from fastapi.responses import Response
+from pydantic import NonNegativeInt
+from typing_extensions import Annotated
 
-from app.core.resources.constants import service, message
+from app.core.resources.constants import message, service
 from app.core.resources.data_validator import (
+    AREA_REGEX,
     DocumentPagesMetadataModel,
     create_image_metadata_dict,
-    AREA_REGEX,
 )
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
@@ -24,18 +23,22 @@ from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
 from app.core.resources.schemas.thumbnail_image_metadata import ThumbnailImageMetadata
-from app.core.services import pdf_service, image_service
+from app.core.services import image_service, pdf_service
 
 router = APIRouter(
     prefix=f"/{service.NAME}/{service.PDF_NAME}",
     tags=[service.PDF_NAME],
-    responses={404: {"description": message.ITEM_NOT_FOUND}},
+    responses={status.HTTP_404_NOT_FOUND: {"description": message.ITEM_NOT_FOUND}},
 )
 
 
 @router.get(
     "/{id}/{version}/",
-    responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+    },
 )
 async def get_preview(
     id: UUID,
@@ -72,7 +75,8 @@ async def get_preview(
 
 @router.post("/")
 async def post_preview(
-    file: UploadFile, pages: DocumentPagesMetadataModel = Depends()
+    file: UploadFile,
+    pages: DocumentPagesMetadataModel = Depends(),
 ) -> Response:
     """
     Create and returns a preview of the given file,
@@ -101,7 +105,8 @@ async def post_preview(
 
 
 @router.post(
-    "/{area}/thumbnail/", responses={400: {"description": message.INPUT_ERROR}}
+    "/{area}/thumbnail/",
+    responses={status.HTTP_400_BAD_REQUEST: {"description": message.INPUT_ERROR}},
 )
 async def post_thumbnail(
     area: Annotated[str, Path(regex=AREA_REGEX)],
@@ -140,7 +145,8 @@ async def post_thumbnail(
     )
 
     content: io.BytesIO = pdf_service.create_thumbnail_from_raw(
-        file=file, output_format=output_format.value
+        file=file,
+        output_format=output_format.value,
     )
     return Response(
         content=(
@@ -155,7 +161,11 @@ async def post_thumbnail(
 
 @router.get(
     "/{id}/{version}/{area}/thumbnail/",
-    responses={502: {"description": message.STORAGE_UNAVAILABLE_STRING}},
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": message.STORAGE_UNAVAILABLE_STRING,
+        },
+    },
 )
 async def get_thumbnail(
     id: UUID,
@@ -207,7 +217,7 @@ async def get_thumbnail(
         output_format=output_format.value,
         service_type=service_type,
     )
-    if image_response.status_code == 200:
+    if image_response.status_code == status.HTTP_200_OK:
         image_raw: io.BytesIO = io.BytesIO(image_response.body)
         return Response(
             content=(
@@ -218,5 +228,5 @@ async def get_thumbnail(
             ).read(),
             media_type=f"image/{output_format}",
         )
-    else:
-        return image_response
+
+    return image_response

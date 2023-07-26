@@ -5,5 +5,5 @@
 from app.core.resources.config_loader import read_config
 
 MINIMUM_RESOLUTION: int = int(
-    read_config(section="image_constants", value="minimum_resolution")
+    read_config(section="image_constants", value="minimum_resolution"),
 )

@@ -4,7 +4,7 @@
 import io
 from unittest.mock import MagicMock, patch
 
-from PIL import ImageOps, Image
+from PIL import Image, ImageOps
 
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
@@ -14,7 +14,7 @@ from app.core.services.image_manipulation import image_manipulation
 
 def truncate(f, n):
     """Truncates/pads a float f to n decimal places without rounding"""
-    s = "{}".format(f)
+    s = f"{f}"
     if "e" in s or "E" in s:
         return "{0:.{1}f}".format(f, n)
     i, p, d = s.partition(".")
@@ -27,7 +27,7 @@ def test_save_image_to_buffer():
     ImageOps.exif_transpose = MagicMock(return_value=img_to_save)
     buffer = image_manipulation.save_image_to_buffer(img_to_save)
 
-    assert 1 == img_to_save.save.call_count
+    assert img_to_save.save.call_count == 1
     assert [] == buffer.readlines()
 
 
@@ -42,8 +42,8 @@ def test_find_scaled_dimension_higher_than_original_square_result():
 
     assert truncate(orig_x / orig_y, 2) == truncate(result[0] / result[1], 2)
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 1000 == result[0]
-    assert 2387 == result[1]
+    assert result[0] == 1000
+    assert result[1] == 2387
 
 
 def test_find_scaled_dimension_higher_than_original():
@@ -57,8 +57,8 @@ def test_find_scaled_dimension_higher_than_original():
 
     assert truncate(orig_x / orig_y, 2) == truncate(result[0] / result[1], 2)
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 700 == result[0]
-    assert 1671 == result[1]
+    assert result[0] == 700
+    assert result[1] == 1671
 
 
 def test_find_scaled_dimension_lower_than_original():
@@ -72,8 +72,8 @@ def test_find_scaled_dimension_lower_than_original():
 
     assert truncate(orig_x / orig_y, 2) == truncate(result[0] / result[1], 2)
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 300 == result[0]
-    assert 716 == result[1]
+    assert result[0] == 300
+    assert result[1] == 716
 
 
 def test_crop_image_image_same_size_as_requested(expect):
@@ -83,14 +83,21 @@ def test_crop_image_image_same_size_as_requested(expect):
     req_x, req_y = 300, 400
     img: Image.Image = Image.new("RGB", (img_width, img_height))
     expect(image_manipulation, times=1)._get_crop_coordinates(
-        req_x, req_y, img_height, img_width, VerticalCropPositionEnum.CENTER
+        req_x,
+        req_y,
+        img_height,
+        img_width,
+        VerticalCropPositionEnum.CENTER,
     ).thenReturn(crop_coordinates)
 
     expect(image_manipulation, times=1)._crop_image_given_box(
-        img, crop_coordinates
+        img,
+        crop_coordinates,
     ).thenReturn(img)
     expect(image_manipulation, times=1)._add_borders_to_crop(
-        img=img, requested_x=req_x, requested_y=req_y
+        img=img,
+        requested_x=req_x,
+        requested_y=req_y,
     ).thenReturn(img)
 
     image_manipulation._crop_image(
@@ -107,7 +114,7 @@ def test_crop_image_image_same_size_as_requested(expect):
     30,
 )
 @patch(
-    "app.core.services.image_manipulation" ".image_manipulation._add_borders_to_image"
+    "app.core.services.image_manipulation" ".image_manipulation._add_borders_to_image",
 )
 def test_add_border_to_crop_image_image_more_then_requested(mock_borders):
     img_width, img_height = 500, 600
@@ -115,7 +122,9 @@ def test_add_border_to_crop_image_image_more_then_requested(mock_borders):
     img_mock = MagicMock()
     img_mock.size = [img_width, img_height]
     image_manipulation._add_borders_to_crop(
-        img=img_mock, requested_x=req_x, requested_y=req_y
+        img=img_mock,
+        requested_x=req_x,
+        requested_y=req_y,
     )
     assert mock_borders.call_count == 0
 
@@ -126,7 +135,7 @@ def test_add_border_to_crop_image_image_more_then_requested(mock_borders):
     30,
 )
 @patch(
-    "app.core.services.image_manipulation" ".image_manipulation._add_borders_to_image"
+    "app.core.services.image_manipulation" ".image_manipulation._add_borders_to_image",
 )
 def test_add_border_to_crop_image_image_less_then_requested_more_than_min(mock_borders):
     img_width, img_height = 200, 400
@@ -134,7 +143,9 @@ def test_add_border_to_crop_image_image_less_then_requested_more_than_min(mock_b
     img_mock = MagicMock()
     img_mock.size = [img_width, img_height]
     image_manipulation._add_borders_to_crop(
-        img=img_mock, requested_x=req_x, requested_y=req_y
+        img=img_mock,
+        requested_x=req_x,
+        requested_y=req_y,
     )
     assert mock_borders.call_count == 1
 
@@ -149,8 +160,8 @@ def test_find_smaller_scaled_dimension_with_higher_reqxy():
         requested_y=500,
     )
     assert truncate(orig_y / orig_x, 1) == truncate(result[1] / result[0], 1)
-    assert 1000 == result[0]
-    assert 418 == result[1]
+    assert result[0] == 1000
+    assert result[1] == 418
 
 
 def test_find_smaller_scaled_dimension_req_x_double_y_half():
@@ -162,8 +173,8 @@ def test_find_smaller_scaled_dimension_req_x_double_y_half():
         requested_y=50,
     )
     assert truncate(orig_y / orig_x, 1) == truncate(result[1] / result[0], 1)
-    assert 100 == result[0]
-    assert 50 == result[1]
+    assert result[0] == 100
+    assert result[1] == 50
 
 
 def test_find_smaller_scaled_dimension_1():
@@ -175,8 +186,8 @@ def test_find_smaller_scaled_dimension_1():
         requested_y=50,
     )
     assert truncate(orig_y / orig_x, 1) == truncate(result[1] / result[0], 1)
-    assert 100 == result[0]
-    assert 50 == result[1]
+    assert result[0] == 100
+    assert result[1] == 50
 
 
 def test_find_smaller_scaled_dimension_2():
@@ -188,8 +199,8 @@ def test_find_smaller_scaled_dimension_2():
         requested_y=800,
     )
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 1200 == result[0]
-    assert 800 == result[1]
+    assert result[0] == 1200
+    assert result[1] == 800
 
 
 def test_find_smaller_scaled_dimension_3():
@@ -201,8 +212,8 @@ def test_find_smaller_scaled_dimension_3():
         requested_y=2000,
     )
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 1700 == result[0]
-    assert 1888 == result[1]
+    assert result[0] == 1700
+    assert result[1] == 1888
 
 
 def test_find_smaller_scaled_dimension_4():
@@ -214,8 +225,8 @@ def test_find_smaller_scaled_dimension_4():
         requested_y=399,
     )
     assert truncate(orig_y / orig_x, 2) == truncate(result[1] / result[0], 2)
-    assert 7980 == result[0]
-    assert 399 == result[1]
+    assert result[0] == 7980
+    assert result[1] == 399
 
 
 @patch(
@@ -277,8 +288,8 @@ def test_convert_requested_to_true_res_x_less_than_min():
         original_width=orig_x,
         original_height=orig_y,
     )
-    assert 400 == to_scale_x
-    assert 400 == to_scale_y
+    assert to_scale_x == 400
+    assert to_scale_y == 400
 
 
 @patch(
@@ -298,8 +309,8 @@ def test_convert_requested_to_true_res_y_less_than_min():
         original_width=orig_x,
         original_height=orig_y,
     )
-    assert 400 == to_scale_x
-    assert 400 == to_scale_y
+    assert to_scale_x == 400
+    assert to_scale_y == 400
 
 
 @patch(
@@ -319,8 +330,8 @@ def test_convert_requested_to_true_res_x_and_y_less_than_min():
         original_width=orig_x,
         original_height=orig_y,
     )
-    assert 400 == to_scale_x
-    assert 400 == to_scale_y
+    assert to_scale_x == 400
+    assert to_scale_y == 400
 
 
 @patch(
@@ -403,7 +414,7 @@ def test_convert_requested_to_true_res_origx_less_than_min_but_cannot_scale():
         original_width=orig_x,
         original_height=orig_y,
     )
-    assert 80 == to_scale_x
+    assert to_scale_x == 80
     assert req_y == to_scale_y
 
 
@@ -425,7 +436,7 @@ def test_convert_requested_to_true_res_origy_less_than_min_but_cannot_scale():
         original_height=orig_y,
     )
     assert req_x == to_scale_x
-    assert 80 == to_scale_y
+    assert to_scale_y == 80
 
 
 @patch(
@@ -445,8 +456,8 @@ def test_convert_requested_to_true_res_origxy_less_than_min_but_cannot_scale():
         original_width=orig_x,
         original_height=orig_y,
     )
-    assert 80 == to_scale_x
-    assert 80 == to_scale_y
+    assert to_scale_x == 80
+    assert to_scale_y == 80
 
 
 def test_get_crop_coordinates_top_fitting():

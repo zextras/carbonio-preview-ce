@@ -2,17 +2,14 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-from typing import Optional, Dict
-from typing_extensions import Final
-from httpx import Response as RequestResp
+from typing import Dict, Final, Optional, Type
 
 import pydantic
-
-from fastapi import HTTPException
+from fastapi import HTTPException, status
+from fastapi.responses import Response as FastApiResp
+from httpx import Response as RequestResp
 from pydantic import BaseModel, NonNegativeInt
 from returns.maybe import Maybe, Nothing
-from fastapi import status
-from fastapi.responses import Response as FastApiResp
 
 from app.core.resources.constants import message, service
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
@@ -81,19 +78,19 @@ def check_for_storage_response_error(
     status_code = response_data.value_or(
         FastApiResp(
             status_code=status.HTTP_502_BAD_GATEWAY,
-        )
+        ),
     ).status_code
-    if 200 <= status_code < 400:
+    if status.HTTP_200_OK <= status_code < status.HTTP_400_BAD_REQUEST:
         return Nothing
-    else:
-        return Maybe.from_value(
-            FastApiResp(
-                content=message.STORAGE_UNAVAILABLE_STRING
-                if status_code >= 500
-                else message.GENERIC_ERROR_WITH_STORAGE,
-                status_code=status_code,
-            )
-        )
+
+    return Maybe.from_value(
+        FastApiResp(
+            content=message.STORAGE_UNAVAILABLE_STRING
+            if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
+            else message.GENERIC_ERROR_WITH_STORAGE,
+            status_code=status_code,
+        ),
+    )
 
 
 class DocumentPagesMetadataModel(BaseModel):
@@ -104,18 +101,21 @@ class DocumentPagesMetadataModel(BaseModel):
     first_page: NonNegativeInt = 1
     last_page: NonNegativeInt = 0
 
+    @classmethod
     @pydantic.model_validator(mode="before")
     def first_page_must_be_less_than_last_page(
-        cls, field_values: Dict[str, int]
+        cls: Type["DocumentPagesMetadataModel"],
+        field_values: Dict[str, int],
     ) -> Dict[str, int]:
         first_page = field_values.get("first_page", 0)
         last_page = field_values.get("last_page", 0)
         if first_page >= 1 and (first_page <= last_page or last_page == 0):
             return field_values
-        else:
-            raise HTTPException(
-                status_code=422, detail=message.NUMBER_OF_PAGES_NOT_VALID
-            )
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=message.NUMBER_OF_PAGES_NOT_VALID,
+        )
 
 
 def check_if_document_thumbnail_is_enabled() -> bool:

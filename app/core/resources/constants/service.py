@@ -4,45 +4,40 @@
 
 from app.core.resources.config_loader import read_config
 
-
 # SERVICE CONFIG
 _service_section_name: str = "service"
 NAME: str = read_config(section=_service_section_name, value="name")
 TIMEOUT: int = int(
-    read_config(section=_service_section_name, value="timeout_in_seconds")
+    read_config(section=_service_section_name, value="timeout_in_seconds"),
 )
 IP: str = read_config(section=_service_section_name, value="ip")
 PORT: int = int(read_config(section=_service_section_name, value="port"))
 NUMBER_OF_WORKERS: int = int(
-    read_config(section=_service_section_name, value="workers")
+    read_config(section=_service_section_name, value="workers"),
 )
 
 ENABLE_DOCUMENT_THUMBNAIL: bool = (
-    True
-    if read_config(
+    read_config(
         section=_service_section_name,
         value="enable_document_thumbnail",
         default_value="false",
     ).lower()
     == "true"
-    else False
 )
 
 ENABLE_DOCUMENT_PREVIEW = (
-    True
-    if read_config(
+    read_config(
         section=_service_section_name,
         value="enable_document_preview",
         default_value="true",
     ).lower()
     == "true"
-    else False
 )
 
 ARE_DOCS_ENABLED: bool = ENABLE_DOCUMENT_PREVIEW or ENABLE_DOCUMENT_THUMBNAIL
 
 DOCS_TIMEOUT: int = int(
-    read_config(section=_service_section_name, value="docs-timeout", default_value=10)
+    read_config(section=_service_section_name, value="docs-timeout", default_value=10),
 )
 
 DESCRIPTION = """

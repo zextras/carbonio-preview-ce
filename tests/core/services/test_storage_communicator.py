@@ -45,7 +45,9 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
         with respx.mock:
             mock_resp = respx.get(self.req).mock(return_value=Response(200))
             response: Optional[Response] = await st_com.retrieve_data(
-                file_id=self.test_id, version=self.version, log=self.log_mock
+                file_id=self.test_id,
+                version=self.version,
+                log=self.log_mock,
             )
             self.assertEqual(1, mock_resp.call_count)
             self.assertIsNotNone(response)
@@ -59,12 +61,14 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
                 self.req,
             ).mock(side_effect=httpx.RequestError)
             response: Optional[Response] = await st_com.retrieve_data(
-                file_id=self.test_id, version=self.version, log=self.log_mock
+                file_id=self.test_id,
+                version=self.version,
+                log=self.log_mock,
             )
             self.assertEqual(1, mock_resp.call_count)
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
-        self.assertEqual(1, self.log_mock.info.call_count)
+        self.assertEqual(0, self.log_mock.info.call_count)
         self.assertEqual(Nothing, response)
 
     async def test_retrieve_data_http_error(self):
@@ -75,34 +79,40 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
             with respx.mock:
                 mock_resp = respx.get(self.req).mock(return_value=Response(i))
                 response: Optional[Response] = await st_com.retrieve_data(
-                    file_id=self.test_id, version=self.version, log=self.log_mock
+                    file_id=self.test_id,
+                    version=self.version,
+                    log=self.log_mock,
                 )
                 self.assertEqual(1, mock_resp.call_count)
                 self.assertIsNotNone(response)
             self.assertEqual(0, self.log_mock.critical.call_count)
             self.assertEqual(i + 1 - starting_point, self.log_mock.debug.call_count)
-            self.assertEqual(i + 1 - starting_point, self.log_mock.info.call_count)
+            self.assertEqual(0, self.log_mock.info.call_count)
 
     async def test_retrieve_data_timeout_error(self):
         with respx.mock:
             mock_resp = respx.get(self.req).mock(side_effect=httpx.ConnectTimeout)
             response: Optional[Response] = await st_com.retrieve_data(
-                file_id=self.test_id, version=self.version, log=self.log_mock
+                file_id=self.test_id,
+                version=self.version,
+                log=self.log_mock,
             )
             self.assertEqual(1, mock_resp.call_count)
         self.assertEqual(0, self.log_mock.critical.call_count)
         self.assertEqual(1, self.log_mock.error.call_count)
-        self.assertEqual(1, self.log_mock.info.call_count)
+        self.assertEqual(0, self.log_mock.info.call_count)
         self.assertEqual(Nothing, response)
 
     async def test_retrieve_data_generic_error(self):
         with respx.mock:
             mock_resp = respx.get(self.req).mock(side_effect=Exception)
             response: Optional[Response] = await st_com.retrieve_data(
-                file_id=self.test_id, version=self.version, log=self.log_mock
+                file_id=self.test_id,
+                version=self.version,
+                log=self.log_mock,
             )
             self.assertEqual(1, mock_resp.call_count)
         self.assertEqual(1, self.log_mock.critical.call_count)
         self.assertEqual(0, self.log_mock.error.call_count)
-        self.assertEqual(1, self.log_mock.info.call_count)
+        self.assertEqual(0, self.log_mock.info.call_count)
         self.assertEqual(Nothing, response)

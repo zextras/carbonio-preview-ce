@@ -4,9 +4,9 @@
 
 import io
 import logging
-from typing import List, Tuple, Generator, Any
+from typing import Any, Generator, List, Tuple
 
-from PIL import ImageDraw, Image, ImageSequence, ImageOps, GifImagePlugin
+from PIL import GifImagePlugin, Image, ImageDraw, ImageOps, ImageSequence
 
 GifImagePlugin.LOADING_STRATEGY = GifImagePlugin.LoadingStrategy.RGB_ALWAYS
 
@@ -29,7 +29,8 @@ def is_img_a_gif(img: Image.Image) -> bool:
 
 
 def parse_to_valid_gif(
-    content: io.BytesIO, log: logging.Logger = logger
+    content: io.BytesIO,
+    log: logging.Logger = logger,
 ) -> GifImagePlugin.GifImageFile:
     """
     Parse the bytes buffer in a valid GifImageFile instance.
@@ -47,16 +48,16 @@ def parse_to_valid_gif(
         gif = GifImagePlugin.GifImageFile(content)
         if gif.is_animated:
             return gif
-        else:
-            log.debug("File could be loaded as a GIF but it's not animated")
+        log.debug("File could be loaded as a GIF but it's not animated")
     except SyntaxError as e:
         log.debug(f"Content could not be parsed as a valid GIF file: {e}")
     except AttributeError as e:
         log.debug(
             f"Content was parsed with success (valid image), "
-            f"but raised an exception while checking if animated: {e}"
+            f"but raised an exception while checking if animated: {e}",
         )
-    raise ValueError("Content is not a valid GIF")
+    msg = "Content is not a valid GIF"
+    raise ValueError(msg)
 
 
 def _get_generator_from_gif(gif: Image.Image) -> Generator[Image.Image, Any, None]:
@@ -73,7 +74,9 @@ def _get_generator_from_gif(gif: Image.Image) -> Generator[Image.Image, Any, Non
 
 
 def save_gif_to_buffer(
-    gif: Image.Image, out_buffer: io.BytesIO, quality: int
+    gif: Image.Image,
+    out_buffer: io.BytesIO,
+    quality: int,
 ) -> io.BytesIO:
     """
     Save a gif to the given buffer and returns the given buffer as well
@@ -83,7 +86,10 @@ def save_gif_to_buffer(
     :returns: bytes buffer containing the rendered gif
     """
     return _save_gif_generator_to_buffer(
-        _get_generator_from_gif(gif), out_buffer, gif.info, quality
+        _get_generator_from_gif(gif),
+        out_buffer,
+        gif.info,
+        quality,
     )
 
 
@@ -114,7 +120,9 @@ def _save_gif_generator_to_buffer(
 
 
 def __save_img_list_as_gif_to_buffer_deprecated(
-    frames: List[Image.Image], out_buff: io.BytesIO, quality: int
+    frames: List[Image.Image],
+    out_buff: io.BytesIO,
+    quality: int,
 ) -> io.BytesIO:
     """
     USE save_gif_to_buffer OR _save_gif_generator_to_buffer
@@ -141,7 +149,8 @@ def __save_img_list_as_gif_to_buffer_deprecated(
 
 
 def _resize_gif_frame_by_frame(
-    gif: Image.Image, size: Tuple[int, int]
+    gif: Image.Image,
+    size: Tuple[int, int],
 ) -> Generator[Image.Image, Any, None]:
     """
     Each frame of the gif will be resized frame by frame
@@ -156,7 +165,8 @@ def _resize_gif_frame_by_frame(
 
 
 def _crop_gif_frame_by_frame(
-    gif: Image.Image, box: Tuple[int, int, int, int]
+    gif: Image.Image,
+    box: Tuple[int, int, int, int],
 ) -> Generator[Image.Image, Any, None]:
     """
     Each frame of the gif will be cropped frame by frame
@@ -191,7 +201,8 @@ def _paste_gif_frame_by_frame(
 
 
 def _mask_gif_frame_by_frame(
-    mask: Image.Image, gif: Image.Image
+    mask: Image.Image,
+    gif: Image.Image,
 ) -> Generator[Image.Image, Any, None]:
     """
     Each frame of the gif will be masked with the given mask
@@ -201,7 +212,9 @@ def _mask_gif_frame_by_frame(
     """
     for frame in ImageSequence.Iterator(gif):
         modified_frame: Image.Image = ImageOps.fit(
-            frame, mask.size, centering=(0.5, 0.5)
+            frame,
+            mask.size,
+            centering=(0.5, 0.5),
         )
         modified_frame.paste(0, mask=mask)
         yield modified_frame
@@ -221,7 +234,8 @@ def resize_gif(gif: Image.Image, size: Tuple[int, int]) -> Image.Image:
 
 def crop_gif(gif: Image.Image, box: Tuple[int, int, int, int]) -> Image.Image:
     """
-    Crops every frame of the GIF and then returns a PIL.GifImagePlugin.GifImageFile object
+    Crops every frame of the GIF and then returns a
+     PIL.GifImagePlugin.GifImageFile object
     :param gif: gif to crop
     :param box: desired box crop of the gif
     :returns: cropped gif as a GifImageFile object (inherits from Image)
@@ -236,7 +250,8 @@ def paste_gif(
     paste_coordinates_box: Tuple[int, int],
 ) -> Image.Image:
     """
-    Paste every frame of the GIF and then returns a PIL.GifImagePlugin.GifImageFile object
+    Paste every frame of the GIF and then returns
+     a PIL.GifImagePlugin.GifImageFile object
     :param static_background: the background that will be the base of every frame
     :param gif: gif to paste over the background
     :param paste_coordinates_box: desired paste coordinates
@@ -257,7 +272,7 @@ def add_circle_margins_to_gif(gif: Image.Image) -> Image.Image:
     size = gif.size
     mask = Image.new("L", size, 255)
     draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0) + size, fill=0)
+    draw.ellipse((0, 0, *size), fill=0)
 
     return Image.open(
         _save_gif_generator_to_buffer(
@@ -265,5 +280,5 @@ def add_circle_margins_to_gif(gif: Image.Image) -> Image.Image:
             io.BytesIO(),
             gif_info=gif.info,
             quality=60,
-        )
+        ),
     )

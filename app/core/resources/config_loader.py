@@ -3,20 +3,20 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import configparser
-import os
-from typing import List, Any, Optional
+from pathlib import Path
+from typing import Any, List, Optional
 
 config = configparser.ConfigParser()
 message_config = configparser.ConfigParser()
 
 
 def _create_default_path_list(file_name: str) -> List[str]:
-    starting_dir = os.path.dirname(__file__)
+    starting_dir = Path(__file__).parent
     return [
-        os.path.join("/", "etc", "carbonio", "preview", file_name),
-        os.path.join("app", "core", "resources", file_name),
-        os.path.join(starting_dir, file_name),
-        os.path.join(os.getcwd(), "package", file_name),
+        str(Path("/", "etc", "carbonio", "preview", file_name)),
+        str(Path("app", "core", "resources", file_name)),
+        str(Path(starting_dir, file_name)),
+        str(Path(Path.cwd(), "package", file_name)),
     ]
 
 
@@ -37,12 +37,15 @@ load_message_config()
 
 
 def read_config(
-    section: str, value: str, raw: bool = False, default_value: Any = None
+    section: str,
+    value: str,
+    raw: bool = False,
+    default_value: Any = None,
 ) -> str:
     if default_value:
         return config.get(section, value, raw=raw, fallback=default_value)
-    else:
-        return config.get(section, value, raw=raw)
+
+    return config.get(section, value, raw=raw)
 
 
 def read_message_config(section: str, value: str, raw: bool = False) -> str:

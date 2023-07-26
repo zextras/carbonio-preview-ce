@@ -5,12 +5,12 @@
 
 from pydantic import BaseModel
 
-from app.core.resources.schemas.enums.vertical_crop_position_enum import (
-    VerticalCropPositionEnum,
-)
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.image_quality_enum import ImageQualityEnum
 from app.core.resources.schemas.enums.image_type_enum import ImageTypeEnum
+from app.core.resources.schemas.enums.vertical_crop_position_enum import (
+    VerticalCropPositionEnum,
+)
 
 
 class ThumbnailImageMetadata(BaseModel):

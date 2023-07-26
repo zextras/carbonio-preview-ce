@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
+
 import pytest
 from pypdfium2 import PdfDocument
 from returns.maybe import Maybe
 
-from app.core.services.document_manipulation import document_manipulation  # noqa
+from app.core.services.document_manipulation import document_manipulation
 
 
 def test_parse_if_valid_pdf_not_valid():
@@ -26,12 +27,14 @@ def test_split_pdf_invalid_pdf(expect):
     empty_pdf = b"%PDF-1.7"
     buff_argument = io.BytesIO()
     expect(document_manipulation, times=1)._parse_if_valid_pdf(
-        buff_argument
+        buff_argument,
     ).thenReturn(
-        Maybe.from_value([buff_argument])
+        Maybe.from_value([buff_argument]),
     )  # so it can have a len
     expect(document_manipulation, times=1)._write_pdf_to_buffer(
-        [buff_argument], 0, 1
+        [buff_argument],
+        0,
+        1,
     ).thenReturn(empty_pdf)
 
     # When
@@ -49,7 +52,7 @@ def test_split_pdf_valid_pdf_no_pages_to_split(expect):
     new_doc.save(expected_result)
     expected_result.seek(0)
     expect(document_manipulation, times=1)._parse_if_valid_pdf(
-        buff_argument
+        buff_argument,
     ).thenReturn(Maybe.from_value(new_doc))
 
     # When

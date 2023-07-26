@@ -5,9 +5,7 @@
 -r requirements.txt
 
 black~=23.7.0
-flake8~=6.0.0
-Flake8-pyproject~=1.2.2
-bandit~=1.7.4
+ruff~=0.0.278
 pre-commit~=3.3.2
 
 respx~=0.20.1

@@ -7,18 +7,18 @@ import logging
 from typing import List, Tuple
 
 import PIL
-from PIL import Image, ImageDraw, ImageOps, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from app.core.resources.constants.image import constants as consts
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
 from app.core.services.image_manipulation.gif_utility_functions import (
-    save_gif_to_buffer,
-    resize_gif,
     crop_gif,
-    paste_gif,
     is_img_a_gif,
+    paste_gif,
+    resize_gif,
+    save_gif_to_buffer,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,12 +63,13 @@ def _resize_image_given_size(img: Image.Image, size: Tuple[int, int]) -> Image.I
     """
     if is_img_a_gif(img):
         return resize_gif(gif=img, size=size)
-    else:
-        return img.resize(size)
+
+    return img.resize(size)
 
 
 def _crop_image_given_box(
-    img: Image.Image, box: Tuple[int, int, int, int]
+    img: Image.Image,
+    box: Tuple[int, int, int, int],
 ) -> Image.Image:
     """
     This function must be used instead of the basic Pillow function
@@ -79,8 +80,8 @@ def _crop_image_given_box(
     """
     if is_img_a_gif(img):
         return crop_gif(gif=img, box=box)
-    else:
-        return img.crop(box)
+
+    return img.crop(box)
 
 
 def _paste_image_into_given_background_using_box(
@@ -102,9 +103,9 @@ def _paste_image_into_given_background_using_box(
             gif=img,
             paste_coordinates_box=paste_coordinates_box,
         )
-    else:
-        background_img.paste(img, paste_coordinates_box)
-        return background_img
+
+    background_img.paste(img, paste_coordinates_box)
+    return background_img
 
 
 def _find_greater_scaled_dimensions(
@@ -126,7 +127,6 @@ def _find_greater_scaled_dimensions(
     :return: Tuple[width, height]
     """
     # if orig_x > requested_x and orig_y > requested_y:
-    # return orig_x, orig_y
     # This will zoom too much in the image, we should still scale
     original_ratio = original_x / original_y
     new_ratio = requested_x / requested_y
@@ -139,12 +139,12 @@ def _find_greater_scaled_dimensions(
         f"Requested size is {requested_x} width/{requested_y} height,"
         f" with a ratio of {new_ratio}"
         f"Original image size is {original_x} width/{original_y} height,"
-        f" with a ratio of {original_ratio}"
+        f" with a ratio of {original_ratio}",
     )
     if new_ratio > original_ratio:
         return requested_x, int(requested_x * original_y / original_x)
-    else:
-        return int(requested_y * original_x / original_y), requested_y
+
+    return int(requested_y * original_x / original_y), requested_y
 
 
 def _find_smaller_scaled_dimensions(
@@ -174,12 +174,12 @@ def _find_smaller_scaled_dimensions(
         f"Requested size is {requested_x} width/{requested_y} height,"
         f" with a ratio of {new_ratio}"
         f"Original image size is {original_x} width/{original_y} height,"
-        f" with a ratio of {original_ratio}"
+        f" with a ratio of {original_ratio}",
     )
     if new_ratio > original_ratio:
         return int(requested_y * original_x / original_y), requested_y
-    else:
-        return requested_x, int(requested_x * original_y / original_x)
+
+    return requested_x, int(requested_x * original_y / original_x)
 
 
 def _crop_image(
@@ -199,13 +199,18 @@ def _crop_image(
     width, height = img.size
 
     [upper, right, bottom, left] = _get_crop_coordinates(
-        requested_x, requested_y, height, width, crop_position
+        requested_x,
+        requested_y,
+        height,
+        width,
+        crop_position,
     )
     img = _crop_image_given_box(img, (left, upper, left + right, upper + bottom))
-    img = _add_borders_to_crop(
-        img=img, requested_x=requested_x, requested_y=requested_y
+    return _add_borders_to_crop(
+        img=img,
+        requested_x=requested_x,
+        requested_y=requested_y,
     )
-    return img
 
 
 def _get_crop_coordinates(
@@ -247,7 +252,9 @@ def _get_crop_coordinates(
 
 
 def _add_borders_to_crop(
-    img: Image.Image, requested_x: int, requested_y: int
+    img: Image.Image,
+    requested_x: int,
+    requested_y: int,
 ) -> Image.Image:
     """
     Optionally add borders to a cropped image when needed
@@ -272,7 +279,9 @@ def _add_borders_to_crop(
 
 
 def _add_borders_to_image(
-    img: Image.Image, requested_x: int, requested_y: int
+    img: Image.Image,
+    requested_x: int,
+    requested_y: int,
 ) -> Image.Image:
     """
     Add borders to the image to fill the requested width and height
@@ -315,7 +324,8 @@ def _convert_requested_size_to_true_res_to_scale(
     :param log: log to use, if missing it will use default class logger
     :return: Tuple[converted_x, converted_y]
     """
-    # check if it was requested to size 0, meaning to use the original size of the image.
+    # check if it was requested to size 0,
+    # meaning to use the original size of the image.
     if requested_x == 0:
         requested_x = original_width
         log.debug("Using original width of fetched image.")
@@ -328,13 +338,13 @@ def _convert_requested_size_to_true_res_to_scale(
         requested_x = consts.MINIMUM_RESOLUTION
         log.debug(
             f"requested width is too small."
-            f"Resizing width to the minimum resolution of {consts.MINIMUM_RESOLUTION}"
+            f"Resizing width to the minimum resolution of {consts.MINIMUM_RESOLUTION}",
         )
     if requested_y < consts.MINIMUM_RESOLUTION:
         requested_y = consts.MINIMUM_RESOLUTION
         log.debug(
             f"requested height is too small."
-            f"Resizing height to the minimum resolution of {consts.MINIMUM_RESOLUTION}"
+            f"Resizing height to the minimum resolution of {consts.MINIMUM_RESOLUTION}",
         )
 
     # check if the original image is lower than the minimum and the requested
@@ -348,7 +358,7 @@ def _convert_requested_size_to_true_res_to_scale(
         log.debug(
             f"original image width is too small and cannot"
             f" be resized to requested width without stretching."
-            f"Setting the requested width to {consts.MINIMUM_RESOLUTION}"
+            f"Setting the requested width to {consts.MINIMUM_RESOLUTION}",
         )
     if (
         original_height < consts.MINIMUM_RESOLUTION
@@ -358,7 +368,7 @@ def _convert_requested_size_to_true_res_to_scale(
         log.debug(
             f"original image height is too small and "
             f"cannot be resized to requested width without stretching."
-            f"Setting the requested height to {consts.MINIMUM_RESOLUTION}"
+            f"Setting the requested height to {consts.MINIMUM_RESOLUTION}",
         )
     return requested_x, requested_y
 
@@ -444,7 +454,9 @@ def resize_with_crop_and_paddings(
 
 
 def resize_with_paddings(
-    img: Image.Image, requested_x: int, requested_y: int
+    img: Image.Image,
+    requested_x: int,
+    requested_y: int,
 ) -> Image.Image:
     """
     Resize the image and add borders it if necessary
@@ -466,7 +478,6 @@ def resize_with_paddings(
         consts.MINIMUM_RESOLUTION <= original_width <= to_scale_x / 2
         and consts.MINIMUM_RESOLUTION <= original_height <= to_scale_y / 2
     ):
-        # return original_x, original_y
         new_width, new_height = original_width, original_height
     else:
         new_width, new_height = _find_smaller_scaled_dimensions(
@@ -476,7 +487,7 @@ def resize_with_paddings(
             requested_y=to_scale_y,
         )
     img = _resize_image_given_size(img, (new_width, new_height))
-    img = _add_borders_to_image(
+    return _add_borders_to_image(
         img=img,
         requested_x=to_scale_x
         if to_scale_x >= consts.MINIMUM_RESOLUTION
@@ -485,7 +496,6 @@ def resize_with_paddings(
         if to_scale_y >= consts.MINIMUM_RESOLUTION
         else consts.MINIMUM_RESOLUTION,
     )
-    return img
 
 
 def add_circle_margins_to_image(img: Image.Image) -> Image.Image:
@@ -498,7 +508,7 @@ def add_circle_margins_to_image(img: Image.Image) -> Image.Image:
     size = img.size
     mask = Image.new("L", size, 255)
     draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0) + size, fill=0)
+    draw.ellipse((0, 0, *size), fill=0)
 
     output_image = ImageOps.fit(img, mask.size, centering=(0.5, 0.5))
     output_image.paste(0, mask=mask)
@@ -506,7 +516,9 @@ def add_circle_margins_to_image(img: Image.Image) -> Image.Image:
 
 
 def add_circle_margins_with_transparency(
-    img: Image.Image, blur_radius: int, offset: int = 0
+    img: Image.Image,
+    blur_radius: int,
+    offset: int = 0,
 ) -> Image.Image:
     """
     Adds circle margins with transparency
