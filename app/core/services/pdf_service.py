@@ -4,7 +4,7 @@
 import io
 from typing import TYPE_CHECKING
 
-from fastapi import UploadFile
+from fastapi import UploadFile, status
 from fastapi.responses import Response as FastApiResp
 from httpx import Response as RequestResp
 
@@ -50,7 +50,9 @@ async def retrieve_pdf_and_create_preview(
                 first_page_number=first_page_number,
                 last_page_number=last_page_number,
                 content=io.BytesIO(
-                    response_data.value_or(RequestResp(status_code=200)).content,
+                    response_data.value_or(
+                        RequestResp(status_code=status.HTTP_200_OK),
+                    ).content,
                 ),
             ).read(),
             media_type="application/pdf",
@@ -119,7 +121,9 @@ async def retrieve_pdf_and_create_thumbnail(
             content=(
                 document_manipulation.convert_pdf_to_image(
                     content=io.BytesIO(
-                        response_data.value_or(RequestResp(status_code=200)).content,
+                        response_data.value_or(
+                            RequestResp(status_code=status.HTTP_200_OK),
+                        ).content,
                     ),
                     output_extension=output_format,
                     page_number=0,

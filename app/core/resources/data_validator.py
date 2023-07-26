@@ -113,7 +113,7 @@ class DocumentPagesMetadataModel(BaseModel):
             return field_values
 
         raise HTTPException(
-            status_code=422,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=message.NUMBER_OF_PAGES_NOT_VALID,
         )
 
