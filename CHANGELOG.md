@@ -6,6 +6,18 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Changelog
 
+## v0.3.5 (2023-08-31)
+
+#### New Features
+
+* Validate config using pydantic ([#47](https://github.com/Zextras/carbonio-preview-ce/issues/47))
+#### Others
+
+* Validate with ruff ([#46](https://github.com/Zextras/carbonio-preview-ce/issues/46))
+* Update dependencies, update rest yaml([#45](https://github.com/Zextras/carbonio-preview-ce/issues/45))
+
+Full set of changes: [`v0.3.4...29e4eda`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.4...29e4eda)
+
 ## v0.3.4 (2023-07-06)
 
 #### New Features
@@ -16,6 +28,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 #### Fixes
 
 * Allow preview of new PDF versions ([#40](https://github.com/Zextras/carbonio-preview-ce/issues/40))
+#### Others
+
+* (release): 0.3.4 ([#44](https://github.com/Zextras/carbonio-preview-ce/issues/44))
 
 Full set of changes: [`v0.3.3...v0.3.4`](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.3...v0.3.4)
 
