@@ -2,17 +2,17 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.100.0
+FastAPI~=0.103.1
 
-pydantic>=2.0
-returns~=0.21.0
+pydantic>=2.0.0
+returns~=0.22.0
 
-uvicorn~=0.23.0
-gunicorn~=20.1.0
+uvicorn~=0.23.2
+gunicorn~=21.2.0
 
-httpx~=0.24.1
+httpx~=0.25.0
 
-Pillow~=10.0.0
+Pillow~=10.0.1
 pypdfium2~=4.26.0
 
 psutil==5.9.5
