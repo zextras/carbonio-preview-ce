@@ -1,43 +1,42 @@
-targets=(
-   "centos"
-   "ubuntu"
-)
 pkgname="carbonio-preview-ce"
 pkgver="0.3.5"
 pkgrel="1"
 pkgdesc="Carbonio Preview"
-pkgdesclong=(
-  "Carbonio Preview"
-)
 maintainer="Zextras <packages@zextras.com>"
-url="https://www.zextras.com/"
+copyright=(
+  "2022-2024, Zextras <https://www.zextras.com>"
+)
+license=("AGPL-3.0-only")
+url="https://github.com/zextras"
 section="admin"
 priority="optional"
-arch="amd64"
-license=("AGPL-3.0-only")
+arch=('x86_64')
 
-depends:apt=(
-   "pending-setups"
-   "python3>=3.8"
-   "service-discover"
+depends=(
+  "pending-setups"
+  "python3"
+  "service-discover"
 )
-
-depends:yum=(
+depends__rocky_8=(
   "pending-setups"
   "python38"
   "service-discover"
 )
-
-makedepends:yum=(
+makedepends__yum=(
+  "git"
+  "python3-pip"
+)
+makedepends__rocky_8=(
+  "git"
   "python38-pip"
 )
-
-makedepends:apt=(
+makedepends__apt=(
+  "git"
   "python3-pkg-resources"
   "python3-pip"
 )
 
-provides:yum=(
+provides__yum=(
   "libjpeg-6d18ab84.so.62.3.0(LIBJPEG_6.2)(64bit)"
   "liblzma-b1622f49.so.5.4.3(XZ_5.0)(64bit)"
   "libpng16-36a62686.so.16.40.0(PNG16_0)(64bit)"
@@ -47,7 +46,7 @@ provides:yum=(
   "/bin/python3.8"
 )
 
-sources=(
+source=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
   "carbonio-preview-start.sh"
@@ -60,27 +59,27 @@ sources=(
   "policies.json"
   "service-protocol.json"
 )
-hashsums=(
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
-  "skip"
+sha256sums=(
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
+  "SKIP"
 )
 
 backup=(
-  "/etc/zextras/service-discover/carbonio-preview.hcl"
-  "/etc/carbonio/preview/config.ini"
+  "etc/zextras/service-discover/carbonio-preview.hcl"
+  "etc/carbonio/preview/config.ini"
 )
 
-build:apt() {
-  cd "${srcdir}"/../staging
+build() {
+  cd "${srcdir}"/../../staging
 
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
@@ -92,14 +91,14 @@ build:apt() {
     --root="${pkgdir}"
 }
 
-build:yum() {
-  cd "${srcdir}"/../staging
+build__rocky_8() {
+  cd "${srcdir}"/../../staging
 
   # ugly workaround to disable rpm system-wide stripping
   # please don't execute outside of the build agent
-  echo "#!/bin/sh" > /usr/lib/rpm/brp-python-bytecompile
-  echo "#!/bin/sh" > /usr/lib/rpm/brp-strip-static-archive
-  echo "#!/bin/sh" > /usr/lib/rpm/brp-strip
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip-static-archive
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip
 
   pip3.8 install \
     --prefix="${pkgdir}/opt/zextras/common" \
@@ -188,4 +187,3 @@ postrm() {
     systemctl daemon-reload >/dev/null 2>&1 || :
   fi
 }
-
