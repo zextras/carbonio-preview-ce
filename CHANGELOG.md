@@ -4,7 +4,18 @@ SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+
 # Changelog
+
+All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+
+### [0.3.6](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.5...v0.3.6) (2024-01-16)
+
+
+### Features
+
+* move to yap agent and add rhel9 support ([#50](https://github.com/Zextras/carbonio-preview-ce/issues/50)) ([a54c111](https://github.com/Zextras/carbonio-preview-ce/commit/a54c1112029dd758ffc38094b59b35b4ccb7b165))
+
 
 ## v0.3.5 (2023-08-31)
 
