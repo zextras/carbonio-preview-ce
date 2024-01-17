@@ -4,10 +4,16 @@ SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-
 # Changelog
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+
+### [0.3.7](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.6...v0.3.7) (2024-01-17)
+
+
+### Bug Fixes
+
+* update RHEL provided dependencies in PKGBUILD ([#53](https://github.com/Zextras/carbonio-preview-ce/issues/53)) ([ed9908d](https://github.com/Zextras/carbonio-preview-ce/commit/ed9908d2c691933ede8c97e6143b0bfc9c0cd395))
 
 ### [0.3.6](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.5...v0.3.6) (2024-01-16)
 
