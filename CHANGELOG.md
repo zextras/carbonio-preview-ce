@@ -8,6 +8,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.3.8](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.7...v0.3.8) (2024-01-17)
+
 ### [0.3.7](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.6...v0.3.7) (2024-01-17)
 
 
