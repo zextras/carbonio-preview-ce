@@ -37,12 +37,12 @@ makedepends__apt=(
 )
 
 provides__yum=(
-  "libjpeg-6d18ab84.so.62.3.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-b1622f49.so.5.4.3(XZ_5.0)(64bit)"
+  "libjpeg-189962df.so.62.4.0(LIBJPEG_6.2)(64bit)"
+  "liblzma-3fe96dd3.so.5.4.4(XZ_5.0)(64bit)"
   "libpng16-36a62686.so.16.40.0(PNG16_0)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
-  "libtiff-b953f5f2.so.6.0.1(LIBTIFF_4.0)(64bit)"
+  "libtiff-13a50005.so.6.0.1(LIBTIFF_4.0)(64bit)"
   "/bin/python3.8"
 )
 
