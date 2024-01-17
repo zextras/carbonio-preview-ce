@@ -4,7 +4,16 @@
 # 
 # SPDX-License-Identifier: AGPL-3.0-only
 
-export PYTHONPATH="/opt/zextras/common/lib/python3.8/site-packages/:/opt/zextras/common/lib64/python3.8/site-packages/${PYTHONPATH}"
+# retrieve python3 version (major.minor)
+py_ver=$(find /opt/zextras/common/lib \
+  -maxdepth 1 \
+  -iname "python*" |
+  grep -o '[0-9]\.[0-9]')
+
+# set proper modules path
+PYTHONPATH="/opt/zextras/common/lib/python${py_ver}/site-packages:"
+PYTHONPATH+="/opt/zextras/common/lib64/python${py_ver}/site-packages:"
+export PYTHONPATH
 
 /opt/zextras/common/bin/gunicorn app.controller:app \
-  --config /opt/zextras/common/lib/python3.8/site-packages/app/gunicorn.conf.py
+  --config "/opt/zextras/common/lib/python${py_ver}/site-packages/app/gunicorn.conf.py"

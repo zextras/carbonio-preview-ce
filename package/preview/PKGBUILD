@@ -15,11 +15,13 @@ arch=('x86_64')
 depends=(
   "pending-setups"
   "python3"
+  "python3-setuptools"
   "service-discover"
 )
 depends__rocky_8=(
   "pending-setups"
   "python38"
+  "python38-setuptools"
   "service-discover"
 )
 makedepends__yum=(
