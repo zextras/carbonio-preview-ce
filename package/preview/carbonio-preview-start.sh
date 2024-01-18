@@ -8,7 +8,9 @@
 py_ver=$(find /opt/zextras/common/lib \
   -maxdepth 1 \
   -iname "python*" |
-  grep -o '[0-9]\.[0-9]')
+  grep -o '[0-9]\.[0-9]' |
+  sort |
+  tail -1)
 
 # set proper modules path
 PYTHONPATH="/opt/zextras/common/lib/python${py_ver}/site-packages:"
