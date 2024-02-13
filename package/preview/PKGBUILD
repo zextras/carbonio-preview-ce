@@ -12,27 +12,35 @@ section="admin"
 priority="optional"
 arch=('x86_64')
 
-depends=(
+depends__apt=(
   "pending-setups"
   "python3"
+  "python3-setuptools"
   "service-discover"
 )
 depends__rocky_8=(
   "pending-setups"
   "python38"
+  "python38-setuptools"
   "service-discover"
 )
-makedepends__yum=(
+depends__rocky_9=(
+  "pending-setups"
+  "python3"
+  "python3-setuptools"
+  "service-discover"
+)
+makedepends__apt=(
   "git"
+  "python3-pkg-resources"
   "python3-pip"
 )
 makedepends__rocky_8=(
   "git"
   "python38-pip"
 )
-makedepends__apt=(
+makedepends__rocky_9=(
   "git"
-  "python3-pkg-resources"
   "python3-pip"
 )
 
@@ -58,7 +66,7 @@ provides__rocky_9=(
 source=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
-  "carbonio-preview-start.sh"
+  "carbonio-preview-start.sh.in"
   "carbonio-preview.hcl"
   "carbonio-preview.sh"
   "carbonio-preview"
@@ -70,7 +78,7 @@ source=(
 )
 sha256sums=('5c378a420cf3eb217fef72ce589d6dbee0ca6c0a054983a12287f92418e96ad5'
   '731e767bd1165f083420e23fa64f9e19ee518d823b685ecc4b78dada1b271792'
-  'acedba87adb79819707264aa3efb6a83dff9929f7af4cb45c8aeface3f5d14b7'
+  '1716b914bf131f4a8f031b2491c1a0bc286fe8e4843be7317cd82c2ad90b43a2'
   '0d7b599c28ab35ba4d053fd36688b4bbea03390866ae28c4d0ad66d0c1fa1009'
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
@@ -85,7 +93,7 @@ backup=(
   "etc/carbonio/preview/config.ini"
 )
 
-build() {
+build__ubuntu_focal() {
   cd "${srcdir}"/../../staging
 
   pip3 install \
@@ -96,6 +104,38 @@ build() {
     --no-compile \
     --prefix=/opt/zextras/common \
     --root="${pkgdir}"
+
+  # Copy the start script template to fakeroot
+  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+
+  # Replace python version and prefix according to distro
+  # without modify the start script in srcdir.
+  sed -i "s/PYTHON_VER/3.8/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/PREFIX/common/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+}
+
+build__ubuntu_jammy() {
+  cd "${srcdir}"/../../staging
+
+  pip3 install \
+    --prefix="${pkgdir}/opt/zextras/common" \
+    -r requirements.txt
+
+  python3 setup.py install \
+    --no-compile \
+    --prefix=/opt/zextras/common \
+    --root="${pkgdir}"
+
+  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+
+  sed -i "s/PYTHON_VER/3.10/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/PREFIX/common\/local/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 }
 
 build__rocky_8() {
@@ -115,12 +155,44 @@ build__rocky_8() {
     --no-compile \
     --prefix=/opt/zextras/common \
     --root="${pkgdir}"
+
+  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+
+  sed -i "s/PYTHON_VER/3.8/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/PREFIX/common/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+}
+
+build__rocky_9() {
+  cd "${srcdir}"/../../staging
+
+  # ugly workaround to disable rpm system-wide stripping
+  # please don't execute outside of the build agent
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip-static-archive
+  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip
+
+  pip3 install \
+    --prefix="${pkgdir}/opt/zextras/common" \
+    -r requirements.txt
+
+  python3 setup.py install \
+    --no-compile \
+    --prefix=/opt/zextras/common \
+    --root="${pkgdir}"
+
+  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+
+  sed -i "s/PYTHON_VER/3.9/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/PREFIX/common/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 }
 
 package() {
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
   install -Dm755 "${srcdir}/carbonio-preview" \
     "${pkgdir}/usr/bin/carbonio-preview"
 
