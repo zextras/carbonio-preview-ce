@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
+SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
 
 SPDX-License-Identifier: AGPL-3.0-only
 -->
@@ -7,6 +7,14 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Changelog
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+
+### [0.3.9](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.8...v0.3.9) (2024-02-15)
+
+
+### Bug Fixes
+
+* *.hcl: apply corrections to validate with hclfmt ([#58](https://github.com/Zextras/carbonio-preview-ce/issues/58)) ([2ed7c6f](https://github.com/Zextras/carbonio-preview-ce/commit/2ed7c6f74855b3f9de514869361fffe64bc81b5e))
+* incorrect handling of different python interps ([#57](https://github.com/Zextras/carbonio-preview-ce/issues/57)) ([32b65fb](https://github.com/Zextras/carbonio-preview-ce/commit/32b65fb0c26c610eb40057f013a412421457b8e2))
 
 ### [0.3.8](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.7...v0.3.8) (2024-01-17)
 
