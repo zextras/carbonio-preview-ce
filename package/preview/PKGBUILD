@@ -1,6 +1,6 @@
 pkgname="carbonio-preview-ce"
-pkgver="0.3.9"
-pkgrel="1"
+pkgver="0.3.10"
+pkgrel="SNAPSHOT"
 pkgdesc="Carbonio Preview"
 maintainer="Zextras <packages@zextras.com>"
 copyright=(
@@ -45,17 +45,17 @@ makedepends__rocky_9=(
 )
 
 provides__rocky_8=(
-  "libjpeg-08882baf.so.62.4.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-3fe96dd3.so.5.4.4(XZ_5.0)(64bit)"
+  "libjpeg-cec335f2.so.62.4.0(LIBJPEG_6.2)(64bit)"
+  "liblzma-d1e41b3a.so.5.4.5(XZ_5.0)(64bit)"
   "libpng16-36a62686.so.16.40.0(PNG16_0)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
-  "libtiff-91af027d.so.6.0.2(LIBTIFF_4.0)(64bit)"
+  "libtiff-f683b479.so.6.0.2(LIBTIFF_4.0)(64bit)"
   "/bin/python3.8"
 )
 provides__rocky_9=(
-  "libjpeg-32b76cef.so.62.4.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-1e44b93d.so.5.4.4(XZ_5.0)(64bit)"
+  "libjpeg-e44fd0cd.so.62.4.0(LIBJPEG_6.2)(64bit)"
+  "liblzma-13fa198c.so.5.4.5(XZ_5.0)(64bit)"
   "libpng16-78d422d5.so.16.40.0(PNG16_0)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
   "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
