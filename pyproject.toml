@@ -5,7 +5,7 @@
 # Global options for static analysis:
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.8"
 plugins = [
     "returns.contrib.mypy.returns_plugin",
     "pydantic.mypy",
