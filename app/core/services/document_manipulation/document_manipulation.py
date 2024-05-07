@@ -89,11 +89,13 @@ async def convert_to_pdf(
     content: io.BytesIO,
     first_page_number: int,
     last_page_number: int,
+    locale: str,
     log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts any Carbonio-docs-editor supported format to pdf
     \f
+    :param locale:
     :param content: file to convert
     :param first_page_number: first page to convert
     :param last_page_number: last page to convert
@@ -104,6 +106,7 @@ async def convert_to_pdf(
         content=await convert_file_to(
             content=content,
             output_extension="pdf",
+            locale=locale,
             log=log,
         ),
         first_page_number=first_page_number,
@@ -114,6 +117,7 @@ async def convert_to_pdf(
 async def convert_file_to(
     content: io.BytesIO,
     output_extension: str,
+    locale: str,
     log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
@@ -122,6 +126,7 @@ async def convert_file_to(
      SHOULD ALWAYS be used instead of _convert_with_libre
      as it isolates the connection with libre
     \f
+    :param locale:
     :param content: file to convert
     :param output_extension: output file,
      should be a format supported by Carbonio-docs-editor
@@ -130,6 +135,7 @@ async def convert_file_to(
     return await _convert_with_libre(
         content=content,
         output_extension=output_extension,
+        locale=locale,
         log=log,
     )
 
@@ -176,11 +182,13 @@ async def convert_pdf_to(
     output_extension: str,
     first_page_number: int,
     last_page_number: int,
+    locale: str,
     log: logging.Logger = logger,
 ) -> io.BytesIO:
     """
     Converts pdf to any Carbonio-docs-editor supported format
     \f
+    :param locale:
     :param content: pdf to convert
     :param output_extension: desired file output type
     :param first_page_number: first page to convert
@@ -195,6 +203,7 @@ async def convert_pdf_to(
     return await convert_file_to(
         content=out_content,
         output_extension=output_extension,
+        locale=locale,
         log=log,
     )
 
@@ -202,11 +211,15 @@ async def convert_pdf_to(
 async def _convert_with_libre(
     content: io.BytesIO,
     output_extension: str,
+    locale: str,
     log: logging.Logger,
 ) -> io.BytesIO:
     output_extension = _sanitize_output_extension(output_extension)
 
-    url = f"{DOCUMENT_CONVERSION_FULL_CONVERT_ADDRESS}/{output_extension}"
+    url = f"{DOCUMENT_CONVERSION_FULL_CONVERT_ADDRESS}/{output_extension}?lang={locale}"
+
+    print("-------------------------------------------------")
+    print(url)
 
     files = {"files": ("docs-editor-file", content)}
     out_data = io.BytesIO()
