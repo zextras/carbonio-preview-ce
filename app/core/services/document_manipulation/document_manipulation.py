@@ -218,7 +218,7 @@ async def _convert_with_libre(
 
     url = f"{DOCUMENT_CONVERSION_FULL_CONVERT_ADDRESS}/{output_extension}&lang={locale}"
 
-    print("**********************Requesting:*********************** ", url)
+    log.info(f"******************REQUESTED URL*******************: {url}")
 
     files = {"files": ("docs-editor-file", content)}
     out_data = io.BytesIO()
