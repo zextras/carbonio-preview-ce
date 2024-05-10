@@ -48,7 +48,7 @@ async def get_preview(
         id: UUID,
         version: NonNegativeInt,
         service_type: ServiceTypeEnum,
-        locale: str,
+        locale: str = "en-US",
         pages: DocumentPagesMetadataModel = Depends(),
 ) -> Response:
     """
