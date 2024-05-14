@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, UploadFile, status
@@ -62,7 +63,7 @@ async def get_preview(
     - **service_type**: Service that owns the resource
     (service that first uploaded the data to storage)
     \f
-    :param locale:
+    :param locale: locale (language tag) to convert document, especially to format dates
     :param id: UUID of the file
     :param pages: first and last page to convert
     :param version: version of the file
@@ -96,7 +97,7 @@ async def post_preview(
     - **first_page**: integer value of first page to preview (n>=1)
     - **last_page**: integer value of last page to preview  (0 = last of the pdf)
     \f
-    :param locale:
+    :param locale: locale (language tag) to convert document, especially to format dates
     :param file: file uploaded with FormData
     :param pages: integer value of first page and last page to preview
     :return: 400 if there were invalid parameters, otherwise
@@ -141,7 +142,7 @@ async def post_thumbnail(
     - **shape**: Rounded and Rectangular are currently supported.
     - **file**: file uploaded with FormData.
     \f
-    :param locale:
+    :param locale: locale (language tag) to convert document, especially to format dates
     :param shape: Rounded and Rectangular are currently supported
     :param quality: quality of the output image
     :param output_format: format of the output image
@@ -211,7 +212,7 @@ async def get_thumbnail(
     - **service_type**: Service that owns the resource
      (service that first uploaded the data to storage)
     \f
-    :param locale:
+    :param locale: locale (language tag) to convert document, especially to format dates
     :param id: UUID of the file
     :param version: version of the file
     :param service_type: service that owns the resource
