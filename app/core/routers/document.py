@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 import io
-import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, UploadFile, status
