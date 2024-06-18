@@ -15,7 +15,7 @@ from app.core.routers import document, health, image, pdf
 
 app = FastAPI(
     title=SERVICE_NAME,
-    version="0.3.11-SNAPSHOT",
+    version="0.4.0-1",
     description=SERVICE_DESCRIPTION,
 )
 
