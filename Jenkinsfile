@@ -31,6 +31,22 @@ pipeline {
         }
         stage('Build deb/rpm') {
             stages {
+                // Replace the pkgrel value with the git commit hash to ensure that
+                // each merged PR has unique artifacts and to prevent conflicts between them.
+                // Note that the pkgrel value will remain as it was in the codebase to avoid
+                // conflicts between multiple open PRs
+                stage('Add timestamp and commit hash') {
+                    when {
+                        branch 'develop'
+                    }
+                    steps {
+                        sh'''
+                            export TIMESTAMP=$(date +%s)
+                            export GIT_COMMIT_SHORT=$(git rev-parse HEAD | head -c 8)
+                            sed -i "s/pkgrel=\\".*\\"/pkgrel=\\"$TIMESTAMP+$GIT_COMMIT_SHORT\\"/" ./package/PKGBUILD
+                        '''
+                    }
+                }
                 stage('yap') {
                     parallel {
                         stage('Ubuntu 20.04') {
