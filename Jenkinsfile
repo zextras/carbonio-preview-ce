@@ -24,9 +24,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                sh 'mkdir staging'
-                sh 'cp -r app package requirements.txt README.md setup.py staging'
-                stash includes: 'staging/**', name: 'staging'
             }
         }
         stage('Build deb/rpm') {
@@ -43,8 +40,15 @@ pipeline {
                         sh'''
                             export TIMESTAMP=$(date +%s)
                             export GIT_COMMIT_SHORT=$(git rev-parse HEAD | head -c 8)
-                            sed -i "s/pkgrel=\\".*\\"/pkgrel=\\"$TIMESTAMP+$GIT_COMMIT_SHORT\\"/" ./package/PKGBUILD
+                            sed -i "s/pkgrel=\\".*\\"/pkgrel=\\"$TIMESTAMP+$GIT_COMMIT_SHORT\\"/" ./package/preview/PKGBUILD
                         '''
+                    }
+                }
+                stage('Stash') {
+                    steps {
+                        sh 'mkdir staging'
+                        sh 'cp -r app package requirements.txt README.md setup.py staging'
+                        stash includes: 'staging/**', name: 'staging'
                     }
                 }
                 stage('yap') {
