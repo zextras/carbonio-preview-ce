@@ -288,7 +288,7 @@ def _add_borders_to_image(
     :return: Image filled to requested size with borders if necessary
     """
     width, height = img.size
-    background_img = Image.new("RGB", (requested_x, requested_y))
+    background_img = Image.new("RGBA", (requested_x, requested_y), (0, 0, 0, 0))
     return _paste_image_into_given_background_using_box(
         background_img=background_img,
         img=img,
