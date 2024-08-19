@@ -44,25 +44,6 @@ makedepends__rocky_9=(
   "python3-pip"
 )
 
-provides__rocky_8=(
-  "libjpeg-cec335f2.so.62.4.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-d1e41b3a.so.5.4.5(XZ_5.0)(64bit)"
-  "libpng16-36a62686.so.16.40.0(PNG16_0)(64bit)"
-  "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
-  "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
-  "libtiff-f683b479.so.6.0.2(LIBTIFF_4.0)(64bit)"
-  "/bin/python3.8"
-)
-provides__rocky_9=(
-  "libjpeg-e44fd0cd.so.62.4.0(LIBJPEG_6.2)(64bit)"
-  "liblzma-13fa198c.so.5.4.5(XZ_5.0)(64bit)"
-  "libpng16-78d422d5.so.16.40.0(PNG16_0)(64bit)"
-  "libz-dd453c56.so.1.2.11(ZLIB_1.2.3.4)(64bit)"
-  "libz-dd453c56.so.1.2.11(ZLIB_1.2.9)(64bit)"
-  "libtiff-91af027d.so.6.0.2(LIBTIFF_4.0)(64bit)"
-  "/bin/python3"
-)
-
 source=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
