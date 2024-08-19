@@ -138,6 +138,27 @@ build__ubuntu_jammy() {
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 }
 
+build__ubuntu_noble() {
+  cd "${srcdir}"/../../staging
+
+  pip3 install \
+    --prefix="${pkgdir}/opt/zextras/common" \
+    -r requirements.txt
+
+  python3 setup.py install \
+    --no-compile \
+    --prefix=/opt/zextras/common \
+    --root="${pkgdir}"
+
+  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+
+  sed -i "s/PYTHON_VER/3.12/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/PREFIX/common\/local/g" \
+    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+}
+
 build__rocky_8() {
   cd "${srcdir}"/../../staging
 

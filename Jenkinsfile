@@ -89,6 +89,24 @@ pipeline {
                                 }
                             }
                         }
+                        stage('Ubuntu 24.04') {
+                            agent {
+                                node {
+                                    label 'yap-agent-ubuntu-24.04-v2'
+                                }
+                            }
+                            steps {
+                                unstash 'staging'
+                                sh 'cp -r staging /tmp'
+                                sh 'sudo yap build ubuntu-noble /tmp/staging/package'
+                                stash includes: 'artifacts/*noble*.deb', name: 'artifacts-ubuntu-noble'
+                            }
+                            post {
+                                always {
+                                    archiveArtifacts artifacts: 'artifacts/*noble*.deb', fingerprint: true
+                                }
+                            }
+                        }
                         stage('RHEL8') {
                             agent {
                                 node {
@@ -137,6 +155,7 @@ pipeline {
             steps {
                 unstash 'artifacts-ubuntu-focal'
                 unstash 'artifacts-ubuntu-jammy'
+                unstash 'artifacts-ubuntu-noble'
                 unstash 'artifacts-rocky-8'
                 unstash 'artifacts-rocky-9'
 
@@ -157,6 +176,11 @@ pipeline {
                                 "pattern": "artifacts/*jammy*.deb",
                                 "target": "ubuntu-devel/pool/",
                                 "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64"
+                            },
+                            {
+                                "pattern": "artifacts/*noble*.deb",
+                                "target": "ubuntu-devel/pool/",
+                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64"
                             },
                             {
                                 "pattern": "artifacts/x86_64/(carbonio-preview-ce)-(*).el8.x86_64.rpm",
@@ -185,6 +209,7 @@ pipeline {
             steps {
                 unstash 'artifacts-ubuntu-focal'
                 unstash 'artifacts-ubuntu-jammy'
+                unstash 'artifacts-ubuntu-noble'
                 unstash 'artifacts-rocky-8'
                 unstash 'artifacts-rocky-9'
 
@@ -205,6 +230,11 @@ pipeline {
                                 "pattern": "artifacts/*jammy*.deb",
                                 "target": "ubuntu-playground/pool/",
                                 "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64"
+                            },
+                            {
+                                "pattern": "artifacts/*noble*.deb",
+                                "target": "ubuntu-playground/pool/",
+                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64"
                             },
                             {
                                 "pattern": "artifacts/x86_64/(carbonio-preview-ce)-(*).el8.x86_64.rpm",
@@ -232,6 +262,7 @@ pipeline {
             steps {
                 unstash 'artifacts-ubuntu-focal'
                 unstash 'artifacts-ubuntu-jammy'
+                unstash 'artifacts-ubuntu-noble'
                 unstash 'artifacts-rocky-8'
                 unstash 'artifacts-rocky-9'
 
@@ -255,6 +286,11 @@ pipeline {
                                 "pattern": "artifacts/*jammy*.deb",
                                 "target": "ubuntu-rc/pool/",
                                 "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64"
+                            },
+                            {
+                                "pattern": "artifacts/*noble*.deb",
+                                "target": "ubuntu-rc/pool/",
+                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64"
                             }
                         ]
                     }'''
