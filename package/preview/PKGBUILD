@@ -18,6 +18,7 @@ depends__apt=(
   "python3-setuptools"
   "service-discover"
   "libmagickwand-dev"
+  "potrace"
 )
 depends__rocky_8=(
   "pending-setups"
@@ -25,6 +26,7 @@ depends__rocky_8=(
   "python38-setuptools"
   "service-discover"
   "ImageMagick-devel"
+  "potrace"
 )
 depends__rocky_9=(
   "pending-setups"
@@ -32,6 +34,7 @@ depends__rocky_9=(
   "python3-setuptools"
   "service-discover"
   "ImageMagick-devel"
+  "potrace"
 )
 makedepends__apt=(
   "git"

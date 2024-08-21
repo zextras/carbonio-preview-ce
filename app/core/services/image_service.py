@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from fastapi.responses import Response as FastApiResp
 from httpx import Response as RequestResp
 from returns.maybe import Maybe
+from wand.exceptions import CoderError
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import check_for_storage_response_error
@@ -31,6 +32,8 @@ from app.core.services.image_manipulation.png_manipulation import (
     png_thumbnail,
 )
 from app.core.services.image_manipulation.svg_manipulation import svg_preview, svg_to_png
+
+logger = logging.getLogger(__name__)
 
 
 async def retrieve_image_and_create_thumbnail(
@@ -227,8 +230,8 @@ def _select_preview_module(
     # we need to convert it to png and handle it as if it was always a png.
     try:
         content = svg_to_png(content)
-    except Exception as e:
-        logging.log("Original image is not a SVG, no need to convert")
+    except CoderError:
+        logger.info("Original image is not a SVG, no need to convert")
 
     _format = img_metadata.format
 

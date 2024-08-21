@@ -4,6 +4,8 @@
 
 import io
 from typing import TYPE_CHECKING
+
+from wand.exceptions import CoderError
 from wand.image import Image
 
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
@@ -52,7 +54,7 @@ def svg_preview(
         )
     else:
         img = resize_with_paddings(img=img, requested_x=_x, requested_y=_y)
-    output: io.BytesIO = save_image_to_buffer(img=img, _format="SVG", _optimize=False)
+    output: io.BytesIO = save_image_to_buffer(img=img, _format="PNG", _optimize=False)
     return png_to_svg(output)
 
 
@@ -88,18 +90,24 @@ def svg_thumbnail(
 
 
 def svg_to_png(svg_bytes_io):
-    with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
-        png_bytes_io = io.BytesIO()
-        img.format = 'png'
-        img.save(file=png_bytes_io)
-    png_bytes_io.seek(0)
-    return png_bytes_io
+    try:
+        with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
+            png_bytes_io = io.BytesIO()
+            img.format = 'png'
+            img.save(file=png_bytes_io)
+        png_bytes_io.seek(0)
+        return png_bytes_io
+    except CoderError:
+        raise
 
 
 def png_to_svg(png_bytes_io):
-    with Image(blob=png_bytes_io.getvalue(), format="png") as img:
-        svg_bytes_io = io.BytesIO()
-        img.format = 'svg'
-        img.save(file=svg_bytes_io)
-    svg_bytes_io.seek(0)
-    return svg_bytes_io
+    try:
+        with Image(blob=png_bytes_io.getvalue(), format="png") as img:
+            svg_bytes_io = io.BytesIO()
+            img.format = 'svg'
+            img.save(file=svg_bytes_io)
+        svg_bytes_io.seek(0)
+        return svg_bytes_io
+    except CoderError:
+        raise
