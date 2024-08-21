@@ -12,20 +12,11 @@ from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderS
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
     VerticalCropPositionEnum,
 )
-from app.core.services.image_manipulation.image_manipulation import (
-    add_circle_margins_with_transparency,
-    parse_to_valid_image,
-    resize_with_crop_and_paddings,
-    resize_with_paddings,
-    save_image_to_buffer,
-)
 
 if TYPE_CHECKING:
     from PIL import Image
 
 
-# Essentially the same as png preview because we need a png to return a svg, we just convert to svg the output buffer
-# before returning it.
 def svg_preview(
         _x: int,
         _y: int,
@@ -44,20 +35,36 @@ def svg_preview(
     :return: compressed image raw bytes
     """
 
-    img: Image.Image = parse_to_valid_image(content)
-    if _crop:
-        img = resize_with_crop_and_paddings(
-            img=img,
-            requested_x=_x,
-            requested_y=_y,
-            crop_position=crop_position,
-        )
-    else:
-        img = resize_with_paddings(img=img, requested_x=_x, requested_y=_y)
-    output: io.BytesIO = save_image_to_buffer(img=img, _format="PNG", _optimize=False)
-    return png_to_svg(output)
+    with Image(blob=content.getvalue(), format='svg') as img:
+        try:
+            if _x != 0 and _y != 0:
+                img.resize(width=_x, height=_y)
+            if _crop:
+                if crop_position == VerticalCropPositionEnum.CENTER:
+                    left = (img.width - _x) // 2
+                    top = (img.height - _y) // 2
+                elif crop_position == VerticalCropPositionEnum.TOP:
+                    left = (img.width - _x) // 2
+                    top = 0
+                else:
+                    left = 0
+                    top = 0
+
+                img.crop(left=left, top=top, width=_x, height=_y)
+
+            svg_bytes_io = io.BytesIO()
+            img.save(file=svg_bytes_io)
+            print(img)
+            svg_bytes_io.seek(0)
+
+            return svg_bytes_io
+        except Exception as e:
+            print(e)
+            return content
 
 
+
+'''
 def svg_thumbnail(
         _x: int,
         _y: int,
@@ -87,27 +94,21 @@ def svg_thumbnail(
 
     output: io.BytesIO = save_image_to_buffer(img=img, _format="SVG", _optimize=False)
     return output
+'''
 
 
-def svg_to_png(svg_bytes_io):
+def svg_to_png(svg_bytes_io: io.BytesIO) -> io.BytesIO:
+    with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
+        png_bytes_io = io.BytesIO()
+        img.format = 'png'
+        img.save(file=png_bytes_io)
+    png_bytes_io.seek(0)
+    return png_bytes_io
+
+
+def is_svg(svg_bytes_io: io.BytesIO) -> bool:
     try:
-        with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
-            png_bytes_io = io.BytesIO()
-            img.format = 'png'
-            img.save(file=png_bytes_io)
-        png_bytes_io.seek(0)
-        return png_bytes_io
+        with Image(blob=svg_bytes_io.getvalue(), format="svg"):
+            return True
     except CoderError:
-        raise
-
-
-def png_to_svg(png_bytes_io):
-    try:
-        with Image(blob=png_bytes_io.getvalue(), format="png") as img:
-            svg_bytes_io = io.BytesIO()
-            img.format = 'svg'
-            img.save(file=svg_bytes_io)
-        svg_bytes_io.seek(0)
-        return svg_bytes_io
-    except CoderError:
-        raise
+        return False

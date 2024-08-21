@@ -31,7 +31,7 @@ from app.core.services.image_manipulation.png_manipulation import (
     png_preview,
     png_thumbnail,
 )
-from app.core.services.image_manipulation.svg_manipulation import svg_preview, svg_to_png
+from app.core.services.image_manipulation.svg_manipulation import svg_preview, svg_to_png, is_svg
 
 logger = logging.getLogger(__name__)
 
@@ -219,20 +219,15 @@ def _select_preview_module(
         content: io.BytesIO,
 ) -> io.BytesIO:
     """
-    Based on the given format chooses the correct module to call
+    Based on the given format chooses the correct module to call.
+    If a svg file is passed, it first will be converted to png when requesting another format as output;
+    if instead a svg output is requested no conversion will be made.
+    It is not supported to require svg as output for a non svg file.
     :param img_metadata: Instance of PreviewImageMetadata class
     :param content: Raw bytes of the image
     :return: Raw bytes of the converted image
     :raises: ValueError if the format is not supported
     """
-
-    # Try to convert svg to png, this will fail if retrieved image is not a svg. If the original image is a svg,
-    # we need to convert it to png and handle it as if it was always a png.
-    try:
-        content = svg_to_png(content)
-    except CoderError:
-        logger.info("Original image is not a SVG, no need to convert")
-
     _format = img_metadata.format
 
     if _format == ImageTypeEnum.JPEG:
@@ -240,7 +235,7 @@ def _select_preview_module(
             _x=img_metadata.width,
             _y=img_metadata.height,
             _quality=img_metadata.quality,
-            content=content,
+            content=convert_svg_if_needed(content),
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
         )
@@ -248,7 +243,7 @@ def _select_preview_module(
         return png_preview(
             _x=img_metadata.width,
             _y=img_metadata.height,
-            content=content,
+            content=convert_svg_if_needed(content),
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
         )
@@ -256,18 +251,30 @@ def _select_preview_module(
         return gif_preview(
             _x=img_metadata.width,
             _y=img_metadata.height,
-            content=content,
+            content=convert_svg_if_needed(content),
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
             _quality=img_metadata.quality,
         )
     if _format == ImageTypeEnum.SVG:
-        return svg_preview(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            content=content,
-            _crop=img_metadata.crop,
-            crop_position=img_metadata.crop_position,
-        )
+        if is_svg(content):
+            return svg_preview(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                content=content,  # pass raw content here since converting back to svg is not easy
+                _crop=img_metadata.crop,
+                crop_position=img_metadata.crop_position,
+            )
+        else:
+            # Converting from anything but SVG to SVG is not supported due to how SVGs work
+            logger.info("requested svg with non svg original image")
+            raise ValueError(message.CONVERSION_NOT_SUPPORTED_ERROR)
 
     raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
+
+
+def convert_svg_if_needed(content: io.BytesIO) -> io.BytesIO:
+    if is_svg(content):
+        return svg_to_png(content)
+    else:
+        return content
