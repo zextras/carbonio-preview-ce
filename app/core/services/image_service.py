@@ -29,6 +29,7 @@ from app.core.services.image_manipulation.png_manipulation import (
     png_preview,
     png_thumbnail,
 )
+from app.core.services.image_manipulation.svg_manipulation import svg_preview
 
 
 async def retrieve_image_and_create_thumbnail(
@@ -246,6 +247,14 @@ def _select_preview_module(
             _crop=img_metadata.crop,
             crop_position=img_metadata.crop_position,
             _quality=img_metadata.quality,
+        )
+    if _format == ImageTypeEnum.SVG:
+        return svg_preview(
+            _x=img_metadata.width,
+            _y=img_metadata.height,
+            content=content,
+            _crop=img_metadata.crop,
+            crop_position=img_metadata.crop_position,
         )
 
     raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
