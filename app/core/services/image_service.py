@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
+import logging
 from typing import Any, Callable
 
 from fastapi import HTTPException, status
@@ -29,14 +30,14 @@ from app.core.services.image_manipulation.png_manipulation import (
     png_preview,
     png_thumbnail,
 )
-from app.core.services.image_manipulation.svg_manipulation import svg_preview
+from app.core.services.image_manipulation.svg_manipulation import svg_preview, svg_to_png
 
 
 async def retrieve_image_and_create_thumbnail(
-    image_id: str,
-    version: int,
-    img_metadata: ThumbnailImageMetadata,
-    service_type: ServiceTypeEnum,
+        image_id: str,
+        version: int,
+        img_metadata: ThumbnailImageMetadata,
+        service_type: ServiceTypeEnum,
 ) -> FastApiResp:
     """
     Contact storage and retrieves the image with the file id requested
@@ -67,10 +68,10 @@ async def retrieve_image_and_create_thumbnail(
 
 
 async def retrieve_image_and_create_preview(
-    image_id: str,
-    version: int,
-    img_metadata: PreviewImageMetadata,
-    service_type: ServiceTypeEnum,
+        image_id: str,
+        version: int,
+        img_metadata: PreviewImageMetadata,
+        service_type: ServiceTypeEnum,
 ) -> FastApiResp:
     """
     Contact storage and retrieves the image with the file id requested
@@ -101,8 +102,8 @@ async def retrieve_image_and_create_preview(
 
 
 def process_raw_thumbnail(
-    raw_content: io.BytesIO,
-    img_metadata: ThumbnailImageMetadata,
+        raw_content: io.BytesIO,
+        img_metadata: ThumbnailImageMetadata,
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -119,8 +120,8 @@ def process_raw_thumbnail(
 
 
 def process_raw_preview(
-    raw_content: io.BytesIO,
-    img_metadata: PreviewImageMetadata,
+        raw_content: io.BytesIO,
+        img_metadata: PreviewImageMetadata,
 ) -> io.BytesIO:
     """
     process a given raw image file as a thumbnail
@@ -137,9 +138,9 @@ def process_raw_preview(
 
 
 def _process_response_data(
-    response_data: Maybe[RequestResp],
-    img_metadata: Any,
-    func: Callable,
+        response_data: Maybe[RequestResp],
+        img_metadata: Any,
+        func: Callable,
 ) -> FastApiResp:
     """
     Validates response data and then process calling func passed.
@@ -169,8 +170,8 @@ def _process_response_data(
 
 
 def _select_thumbnail_module(
-    img_metadata: ThumbnailImageMetadata,
-    content: io.BytesIO,
+        img_metadata: ThumbnailImageMetadata,
+        content: io.BytesIO,
 ) -> io.BytesIO:
     """
     Based on the given format chooses the correct module to call
@@ -211,8 +212,8 @@ def _select_thumbnail_module(
 
 
 def _select_preview_module(
-    img_metadata: PreviewImageMetadata,
-    content: io.BytesIO,
+        img_metadata: PreviewImageMetadata,
+        content: io.BytesIO,
 ) -> io.BytesIO:
     """
     Based on the given format chooses the correct module to call
@@ -221,7 +222,16 @@ def _select_preview_module(
     :return: Raw bytes of the converted image
     :raises: ValueError if the format is not supported
     """
+
+    # Try to convert svg to png, this will fail if retrieved image is not a svg. If the original image is a svg,
+    # we need to convert it to png and handle it as if it was always a png.
+    try:
+        content = svg_to_png(content)
+    except Exception as e:
+        logging.log("Original image is not a SVG, no need to convert")
+
     _format = img_metadata.format
+
     if _format == ImageTypeEnum.JPEG:
         return jpeg_preview(
             _x=img_metadata.width,

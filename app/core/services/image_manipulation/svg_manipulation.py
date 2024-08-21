@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-from cairosvg import svg2png
 from typing import TYPE_CHECKING
+from wand.image import Image
 
 from app.core.resources.schemas.enums.image_border_form_enum import ImageBorderShapeEnum
 from app.core.resources.schemas.enums.vertical_crop_position_enum import (
@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from PIL import Image
 
 
+# Essentially the same as png preview because we need a png to return a svg, we just convert to svg the output buffer
+# before returning it.
 def svg_preview(
-    _x: int,
-    _y: int,
-    _crop: bool,
-    content: io.BytesIO,
-    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
+        _x: int,
+        _y: int,
+        _crop: bool,
+        content: io.BytesIO,
+        crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
 ) -> io.BytesIO:
     """
     Create SVG preview
@@ -39,7 +41,7 @@ def svg_preview(
     :param crop_position: where should the image zoom when cropped
     :return: compressed image raw bytes
     """
-    #TODO add svg logic
+
     img: Image.Image = parse_to_valid_image(content)
     if _crop:
         img = resize_with_crop_and_paddings(
@@ -51,15 +53,15 @@ def svg_preview(
     else:
         img = resize_with_paddings(img=img, requested_x=_x, requested_y=_y)
     output: io.BytesIO = save_image_to_buffer(img=img, _format="SVG", _optimize=False)
-    return output
+    return png_to_svg(output)
 
 
 def svg_thumbnail(
-    _x: int,
-    _y: int,
-    border: ImageBorderShapeEnum,
-    content: io.BytesIO,
-    crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
+        _x: int,
+        _y: int,
+        border: ImageBorderShapeEnum,
+        content: io.BytesIO,
+        crop_position: VerticalCropPositionEnum = VerticalCropPositionEnum.CENTER,
 ) -> io.BytesIO:
     """
     Create SVG thumbnail
@@ -83,3 +85,21 @@ def svg_thumbnail(
 
     output: io.BytesIO = save_image_to_buffer(img=img, _format="SVG", _optimize=False)
     return output
+
+
+def svg_to_png(svg_bytes_io):
+    with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
+        png_bytes_io = io.BytesIO()
+        img.format = 'png'
+        img.save(file=png_bytes_io)
+    png_bytes_io.seek(0)
+    return png_bytes_io
+
+
+def png_to_svg(png_bytes_io):
+    with Image(blob=png_bytes_io.getvalue(), format="png") as img:
+        svg_bytes_io = io.BytesIO()
+        img.format = 'svg'
+        img.save(file=svg_bytes_io)
+    svg_bytes_io.seek(0)
+    return svg_bytes_io
