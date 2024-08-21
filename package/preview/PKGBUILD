@@ -34,14 +34,17 @@ makedepends__apt=(
   "git"
   "python3-pkg-resources"
   "python3-pip"
+  "libmagickwand-dev"
 )
 makedepends__rocky_8=(
   "git"
   "python38-pip"
+  "ImageMagick-devel"
 )
 makedepends__rocky_9=(
   "git"
   "python3-pip"
+  "ImageMagick-devel"
 )
 
 provides__rocky_8=(
