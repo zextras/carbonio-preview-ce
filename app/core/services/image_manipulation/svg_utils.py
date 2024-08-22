@@ -3,20 +3,23 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import io
-import cairosvg
+
+from wand.exceptions import CoderError
+from wand.image import Image
 
 
 def svg_to_png(svg_bytes_io: io.BytesIO) -> io.BytesIO:
-    png_bytes_io = io.BytesIO()
-    cairosvg.svg2png(file_obj=svg_bytes_io, write_to=png_bytes_io)
+    with Image(blob=svg_bytes_io.getvalue(), format="svg") as img:
+        png_bytes_io = io.BytesIO()
+        img.format = 'png'
+        img.save(file=png_bytes_io)
     png_bytes_io.seek(0)
     return png_bytes_io
 
 
 def is_svg(svg_bytes_io: io.BytesIO) -> bool:
     try:
-        svg_bytes_io.seek(0)
-        cairosvg.svg2png(file_obj=svg_bytes_io)
-        return True
-    except:
+        with Image(blob=svg_bytes_io.getvalue(), format="svg"):
+            return True
+    except CoderError:
         return False
