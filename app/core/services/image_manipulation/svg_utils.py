@@ -8,7 +8,7 @@ import cairosvg
 
 def svg_to_png(svg_bytes_io: io.BytesIO) -> io.BytesIO:
     png_bytes_io = io.BytesIO()
-    cairosvg.svg2png(file_obj=svg_bytes_io, write_to=png_bytes_io)
+    cairosvg.svg2png(bytestring=svg_bytes_io.getvalue(), write_to=png_bytes_io)
     png_bytes_io.seek(0)
     return png_bytes_io
 
@@ -16,7 +16,7 @@ def svg_to_png(svg_bytes_io: io.BytesIO) -> io.BytesIO:
 def is_svg(svg_bytes_io: io.BytesIO) -> bool:
     try:
         svg_bytes_io.seek(0)
-        cairosvg.svg2png(file_obj=svg_bytes_io)
+        cairosvg.svg2png(bytestring=svg_bytes_io.getvalue())
         return True
     except:
         return False
