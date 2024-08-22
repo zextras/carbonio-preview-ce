@@ -10,7 +10,6 @@ from fastapi import HTTPException, status
 from fastapi.responses import Response as FastApiResp
 from httpx import Response as RequestResp
 from returns.maybe import Maybe
-from wand.exceptions import CoderError
 
 from app.core.resources.constants import message
 from app.core.resources.data_validator import check_for_storage_response_error
@@ -31,7 +30,7 @@ from app.core.services.image_manipulation.png_manipulation import (
     png_preview,
     png_thumbnail,
 )
-from app.core.services.image_manipulation.svg_utils import svg_preview, svg_to_png, is_svg
+from app.core.services.image_manipulation.svg_utils import svg_to_png, is_svg
 
 logger = logging.getLogger(__name__)
 
