@@ -79,7 +79,3 @@ DOCUMENT_PREVIEW_NOT_ENABLED_ERROR: str = read_message_config(
     value="document_preview_not_enabled_error",
 )
 
-CONVERSION_NOT_SUPPORTED_ERROR: str = read_message_config(
-    section=_validation_section_name,
-    value="conversion_not_supported_error",
-)

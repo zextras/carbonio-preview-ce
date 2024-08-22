@@ -15,5 +15,3 @@ class ImageTypeEnum(str, Enum):
     PNG = "png"
 
     GIF = "gif"
-
-    SVG = "svg"
