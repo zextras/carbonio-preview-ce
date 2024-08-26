@@ -25,7 +25,7 @@ Preview-ce backend service for Zextras Carbonio
 
 You can preview the following type of files:
 
-- **images(png/jpeg/gif)**
+- **images(png/jpeg/gif/svg)**
 - **pdf**
 - **docx, doc, odp, odt, ppt, xls, xlsx**
 

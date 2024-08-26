@@ -18,3 +18,5 @@ pypdfium2~=4.27.0
 psutil==5.9.8
 
 python-multipart==0.0.9
+
+CairoSVG==2.7.1
