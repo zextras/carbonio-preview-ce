@@ -177,6 +177,7 @@ def _select_thumbnail_module(
 ) -> io.BytesIO:
     """
     Based on the given format chooses the correct module to call
+    If a svg file is passed, it first will be converted to png.
     :param img_metadata: Instance of PreviewImageMetadata class
     :param content: Raw bytes of the image
     :return: Raw bytes of the converted image
