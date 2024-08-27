@@ -8,6 +8,20 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [0.5.0](https://github.com/Zextras/carbonio-preview-ce/compare/v0.4.0...v0.5.0) (2024-08-27)
+
+
+### Features
+
+* add ubuntu 24.04 (ubuntu-noble) support ([0c0d154](https://github.com/Zextras/carbonio-preview-ce/commit/0c0d154ad4dd282c7457d4c3ff2ca4bff2026328))
+* let users preview SVGs ([#68](https://github.com/Zextras/carbonio-preview-ce/issues/68)) ([289ad5b](https://github.com/Zextras/carbonio-preview-ce/commit/289ad5bcd000300b05480de47d2b1842b6eaa195))
+
+
+### Bug Fixes
+
+* keep background trasparent when adding borders ([#66](https://github.com/Zextras/carbonio-preview-ce/issues/66)) ([ed1bfd7](https://github.com/Zextras/carbonio-preview-ce/commit/ed1bfd7903cb8f00c48c720217ea1a5fd4d2b811))
+* remove SNAPSHOT label from setup.py version ([78aadab](https://github.com/Zextras/carbonio-preview-ce/commit/78aadabb57039a0945603d9aeba4a30bc7e7daa2))
+
 ## [0.4.0](https://github.com/Zextras/carbonio-preview-ce/compare/v0.3.9...v0.4.0) (2024-06-18)
 
 
