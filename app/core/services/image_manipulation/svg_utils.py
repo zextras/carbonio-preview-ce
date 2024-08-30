@@ -9,7 +9,6 @@ import cairosvg
 def svg_to_png(svg_bytes_io: io.BytesIO) -> io.BytesIO:
     png_bytes_io = io.BytesIO()
     cairosvg.svg2png(bytestring=svg_bytes_io.getvalue(), write_to=png_bytes_io)
-    svg_bytes_io.close()
     png_bytes_io.seek(0)
     return png_bytes_io
 

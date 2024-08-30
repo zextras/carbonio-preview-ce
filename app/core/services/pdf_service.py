@@ -44,19 +44,28 @@ async def retrieve_pdf_and_create_preview(
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data,
     )
+
+    try:
+        response_data_content = response_data.value_or(
+            RequestResp(status_code=status.HTTP_200_OK),
+        ).content
+
+        content = io.BytesIO(response_data_content)
+        processed_content = document_manipulation.split_pdf(
+            first_page_number=first_page_number,
+            last_page_number=last_page_number,
+            content=content,
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return response_error.value_or(
         FastApiResp(
-            content=document_manipulation.split_pdf(
-                first_page_number=first_page_number,
-                last_page_number=last_page_number,
-                content=io.BytesIO(
-                    response_data.value_or(
-                        RequestResp(status_code=status.HTTP_200_OK),
-                    ).content,
-                ),
-            ).read(),
+            content=response_content,
             media_type="application/pdf",
-        ),
+        )
     )
 
 
@@ -116,19 +125,27 @@ async def retrieve_pdf_and_create_thumbnail(
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data,
     )
+
+    try:
+        response_data_content = response_data.value_or(
+            RequestResp(status_code=status.HTTP_200_OK),
+        ).content
+
+        content = io.BytesIO(response_data_content)
+        processed_content = document_manipulation.convert_pdf_to_image(
+            content=content,
+            output_extension=output_format,
+            page_number=0,
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return response_error.value_or(
         FastApiResp(
-            content=(
-                document_manipulation.convert_pdf_to_image(
-                    content=io.BytesIO(
-                        response_data.value_or(
-                            RequestResp(status_code=status.HTTP_200_OK),
-                        ).content,
-                    ),
-                    output_extension=output_format,
-                    page_number=0,
-                )
-            ).read(),
+            content=response_content,
             media_type=f"image/{output_format}",
-        ),
+        )
     )
+
