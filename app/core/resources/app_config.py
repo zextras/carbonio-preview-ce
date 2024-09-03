@@ -1,18 +1,6 @@
-# SPDX-FileCopyrightText: 2023 Zextras <https://www.zextras.com
-#
-# SPDX-License-Identifier: AGPL-3.0-only
-
 import ipaddress
 from pathlib import Path
-from typing import Final, Type
-
-from pydantic import (
-    Field,
-    NonNegativeInt,
-    PositiveInt,
-    field_validator,
-)
-from pydantic.main import BaseModel
+from typing import Final
 
 from app.core.resources.config_loader import config_dict
 
@@ -20,90 +8,101 @@ PORT_MAX_NUMBER: Final[int] = 65535
 PORT_MIN_NUMBER: Final[int] = 0
 
 
-class AppConfig(BaseModel):
-    # Service
-    service_name: str
-    service_ip: str
-    service_port: NonNegativeInt = Field(ge=PORT_MIN_NUMBER, le=PORT_MAX_NUMBER)
-    service_timeout_in_seconds: PositiveInt
-
-    number_of_workers: PositiveInt = Field(alias="service_workers")
-
-    service_image_name: str
-    service_health_name: str
-    service_pdf_name: str
-    service_document_name: str
-
-    enable_document_preview: bool = Field(
-        default=True,
-        alias="service_enable_document_preview",
-    )
-    enable_document_thumbnail: bool = Field(
-        default=False,
-        alias="service_enable_document_thumbnail",
-    )
-
-    docs_timeout: PositiveInt = Field(default=5, alias="service_docs-timeout")
-
-    # log
-    log_path: str
-    log_format: str
-    log_level: str
-
-    # image
-    image_constants_minimum_resolution: NonNegativeInt
-
-    # storage
-    storage_name: str
-    storage_download_api: str
-    storage_health_check: str
-
-    storage_protocol: str
-    storage_ip: str
-    storage_port: NonNegativeInt = Field(ge=PORT_MIN_NUMBER, le=PORT_MAX_NUMBER)
-
-    # document conv
-    document_conversion_protocol: str
-    document_conversion_ip: str
-    document_conversion_port: NonNegativeInt = Field(
-        ge=PORT_MIN_NUMBER,
-        le=PORT_MAX_NUMBER,
-    )
-
-    document_conversion_service_endpoint: str
-    document_conversion_convert_api: str
-
-    @field_validator("service_ip", "storage_ip", "document_conversion_ip")
-    def ip_must_be_valid(cls: Type["AppConfig"], value: str) -> str:
-        # raises a ValueError if ip is not a valid ipV4 or V6
+def validate_ip(value: str) -> str:
+    try:
         ipaddress.ip_address(value)
-        return value
+    except ValueError:
+        raise ValueError(f"Invalid IP address: {value}")
+    return value
 
-    @field_validator("log_level")
-    def log_level_must_be_valid(cls: Type["AppConfig"], value: str) -> str:
-        if value.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
-            msg = f"Log level is not valid. Given value {value}"
-            raise ValueError(msg)
 
-        return value
+def validate_log_level(value: str) -> str:
+    if value.upper() not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        raise ValueError(f"Log level is not valid. Given value {value}")
+    return value
 
-    @field_validator("log_path")
-    def log_path_must_exist(cls: Type["AppConfig"], value: str) -> str:
-        if not Path(value).resolve().exists():
-            msg = "Log path is not valid or does not exist."
-            raise ValueError(msg)
-        return value
+
+def validate_log_path(value: str) -> str:
+    if not Path(value).resolve().exists():
+        raise ValueError("Log path is not valid or does not exist.")
+    return value
+
+
+def validate_positive_int(value) -> int:
+    value = int(value)
+    if value <= 0:
+        raise ValueError(f"Value must be a positive integer. Given value {value}")
+    return value
+
+
+def validate_non_negative_int(value) -> int:
+    value = int(value)
+    if value < 0:
+        raise ValueError(f"Value must be a non-negative integer. Given value {value}")
+    return value
+
+
+def validate_port(value) -> int:
+    value = int(value)
+    if not (PORT_MIN_NUMBER <= value <= PORT_MAX_NUMBER):
+        raise ValueError(
+            f"Port number must be between {PORT_MIN_NUMBER} and {PORT_MAX_NUMBER}. Given value {value}")
+    return value
+
+
+class AppConfig:
+    def __init__(self, config: dict):
+        # Service
+        self.service_name: str = config["service_name"]
+        self.service_ip: str = validate_ip(config["service_ip"])
+        self.service_port: int = validate_port(config["service_port"])
+        self.service_timeout_in_seconds: int = validate_positive_int(config["service_timeout_in_seconds"])
+
+        self.number_of_workers: int = validate_positive_int(config["service_workers"])
+
+        self.service_image_name: str = config["service_image_name"]
+        self.service_health_name: str = config["service_health_name"]
+        self.service_pdf_name: str = config["service_pdf_name"]
+        self.service_document_name: str = config["service_document_name"]
+
+        self.enable_document_preview: bool = config.get("service_enable_document_preview", True)
+        self.enable_document_thumbnail: bool = config.get("service_enable_document_thumbnail", False)
+
+        self.docs_timeout: int = validate_positive_int(config.get("service_docs-timeout", 5))
+
+        # Log
+        self.log_path: str = validate_log_path(config["log_path"])
+        self.log_format: str = config["log_format"]
+        self.log_level: str = validate_log_level(config["log_level"])
+
+        # Image
+        self.image_constants_minimum_resolution: int = validate_non_negative_int(config["image_constants_minimum_resolution"])
+
+        # Storage
+        self.storage_name: str = config["storage_name"]
+        self.storage_download_api: str = config["storage_download_api"]
+        self.storage_health_check: str = config["storage_health_check"]
+
+        self.storage_protocol: str = config["storage_protocol"]
+        self.storage_ip: str = validate_ip(config["storage_ip"])
+        self.storage_port: int = validate_port(config["storage_port"])
+
+        # Document conversion
+        self.document_conversion_protocol: str = config["document_conversion_protocol"]
+        self.document_conversion_ip: str = validate_ip(config["document_conversion_ip"])
+        self.document_conversion_port: int = validate_port(config["document_conversion_port"])
+
+        self.document_conversion_service_endpoint: str = config["document_conversion_service_endpoint"]
+        self.document_conversion_convert_api: str = config["document_conversion_convert_api"]
 
 
 # LOAD CONFIG
-# pydantic does not accept nested dict, we must flatten it!
-# we do it with sectionname_fieldname: field_value
 flat_config_dict = {
     section + "_" + field: config_dict[section][field]
     for section in config_dict
     for field in config_dict[section]
 }
-app_config = AppConfig.model_validate(flat_config_dict)
+app_config = AppConfig(flat_config_dict)
 
 # fields
 SERVICE_NAME: Final[str] = app_config.service_name
@@ -137,13 +136,13 @@ You will be able to:
 * **Generate smart thumbnails**.
 
 The main difference between thumbnail and preview
- functionality is that preview tends to be more faithful
+functionality is that preview tends to be more faithful
 while thumbnail tends to elaborate on it, cropping
- it by default and rounding the image if asked.
+it by default and rounding the image if asked.
 Preview should always output the file in its original format,
- while thumbnail will convert it to an image.
+while thumbnail will convert it to an image.
 There is no difference in quality between the two,
- the difference in quality can be achieved only
+the difference in quality can be achieved only
 by asking for a jpeg format and changing the quality parameter.
 """
 
