@@ -5,7 +5,7 @@
 FastAPI~=0.112.3
 
 pydantic>=2.8.2
-returns~=0.23.0
+returns~=0.22.0
 
 uvicorn~=0.30.6
 gunicorn~=23.0.0
