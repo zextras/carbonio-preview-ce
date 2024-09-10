@@ -8,6 +8,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.5.1](https://github.com/zextras/carbonio-preview-ce/compare/v0.5.0...v0.5.1) (2024-09-10)
+
+
+### Bug Fixes
+
+* fixed memory leak with each new request ([#70](https://github.com/zextras/carbonio-preview-ce/issues/70)) ([264c745](https://github.com/zextras/carbonio-preview-ce/commit/264c745edcd9eb8d7fe0d4670c9e420b7ebd222b))
+
 ## [0.5.0](https://github.com/Zextras/carbonio-preview-ce/compare/v0.4.0...v0.5.0) (2024-08-27)
 
 
