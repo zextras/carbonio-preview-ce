@@ -47,22 +47,29 @@ async def retrieve_doc_and_create_preview(
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data,
     )
+
+    try:
+        response_data_content = response_data.value_or(
+            RequestResp(status_code=status.HTTP_200_OK),
+        ).content
+
+        content = io.BytesIO(response_data_content)
+        processed_content = await document_manipulation.convert_to_pdf(
+            first_page_number=first_page_number,
+            last_page_number=last_page_number,
+            content=content,
+            locale=locale,
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return response_error.map(FastApiResp).value_or(
         FastApiResp(
-            content=(
-                await document_manipulation.convert_to_pdf(
-                    first_page_number=first_page_number,
-                    last_page_number=last_page_number,
-                    content=io.BytesIO(
-                        response_data.value_or(
-                            RequestResp(status_code=status.HTTP_200_OK),
-                        ).content,
-                    ),
-                    locale=locale,
-                )
-            ).read(),
+            content=response_content,
             media_type="application/pdf",
-        ),
+        )
     )
 
 
@@ -131,19 +138,27 @@ async def retrieve_doc_and_create_thumbnail(
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data,
     )
+
+    try:
+        response_data_content = response_data.value_or(
+            RequestResp(status_code=status.HTTP_200_OK),
+        ).content
+
+        content = io.BytesIO(response_data_content)
+        processed_content = await document_manipulation.convert_file_to(
+            content=content,
+            output_extension=output_format,
+            locale=locale
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return response_error.map(FastApiResp).value_or(
         FastApiResp(
-            content=(
-                await document_manipulation.convert_file_to(
-                    content=io.BytesIO(
-                        response_data.value_or(
-                            RequestResp(status_code=status.HTTP_200_OK),
-                        ).content,
-                    ),
-                    output_extension=output_format,
-                    locale=locale
-                )
-            ).read(),
+            content=response_content,
             media_type=f"image/{output_format}",
-        ),
+        )
     )
+

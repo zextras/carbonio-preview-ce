@@ -93,14 +93,18 @@ async def post_preview(
     the requested pdf divided accordingly.
     """
 
+    try:
+        processed_content = pdf_service.create_preview_from_raw(
+            first_page_number=pages.first_page,
+            last_page_number=pages.last_page,
+            file=file,
+        )
+        response_content = processed_content.read()
+    finally:
+        processed_content.close()
+
     return Response(
-        content=(
-            pdf_service.create_preview_from_raw(
-                first_page_number=pages.first_page,
-                last_page_number=pages.last_page,
-                file=file,
-            )
-        ).read(),
+        content=response_content,
         media_type="application/pdf",
     )
 
@@ -145,17 +149,22 @@ async def post_thumbnail(
         area=area,
     )
 
-    content: io.BytesIO = pdf_service.create_thumbnail_from_raw(
-        file=file,
-        output_format=output_format.value,
-    )
+    try:
+        content = pdf_service.create_thumbnail_from_raw(
+            file=file,
+            output_format=output_format.value,
+        )
+        processed_content = image_service.process_raw_thumbnail(
+            raw_content=content,
+            img_metadata=ThumbnailImageMetadata(**metadata_dict),
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return Response(
-        content=(
-            image_service.process_raw_thumbnail(
-                raw_content=content,
-                img_metadata=ThumbnailImageMetadata(**metadata_dict),
-            )
-        ).read(),
+        content=response_content,
         media_type=f"image/{output_format}",
     )
 
@@ -219,14 +228,19 @@ async def get_thumbnail(
         service_type=service_type,
     )
     if image_response.status_code == status.HTTP_200_OK:
-        image_raw: io.BytesIO = io.BytesIO(image_response.body)
+        try:
+            image_raw: io.BytesIO = io.BytesIO(image_response.body)
+            processed_content = image_service.process_raw_thumbnail(
+                raw_content=image_raw,
+                img_metadata=ThumbnailImageMetadata(**metadata_dict),
+            )
+            response_content = processed_content.read()
+        finally:
+            image_raw.close()
+            processed_content.close()
+
         return Response(
-            content=(
-                image_service.process_raw_thumbnail(
-                    raw_content=image_raw,
-                    img_metadata=ThumbnailImageMetadata(**metadata_dict),
-                )
-            ).read(),
+            content=response_content,
             media_type=f"image/{output_format}",
         )
 

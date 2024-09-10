@@ -156,18 +156,26 @@ def _process_response_data(
     response_error: Maybe[FastApiResp] = check_for_storage_response_error(
         response_data=response_data,
     )
+    try:
+        response_data_content = response_data.value_or(
+            RequestResp(status_code=status.HTTP_200_OK),
+        ).content
+
+        content = io.BytesIO(response_data_content)
+        processed_content = func(
+            img_metadata=img_metadata,
+            content=content,
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return response_error.value_or(
         FastApiResp(
-            content=func(
-                img_metadata=img_metadata,
-                content=io.BytesIO(
-                    response_data.value_or(
-                        RequestResp(status_code=status.HTTP_200_OK),
-                    ).content,
-                ),
-            ).read(),
+            content=response_content,
             media_type=f"image/{img_metadata.format.value}",
-        ),
+        )
     )
 
 
@@ -184,33 +192,33 @@ def _select_thumbnail_module(
     :raises: ValueError if the format is not supported
     """
     _format = img_metadata.format
-    content = convert_svg_if_needed(content)
-    if _format == ImageTypeEnum.JPEG:
-        return jpeg_thumbnail(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            _quality=img_metadata.quality,
-            border=img_metadata.shape,
-            content=content,
-            crop_position=img_metadata.crop_position,
-        )
-    if _format == ImageTypeEnum.PNG:
-        return png_thumbnail(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            border=img_metadata.shape,
-            content=content,
-            crop_position=img_metadata.crop_position,
-        )
-    if _format == ImageTypeEnum.GIF:
-        return gif_thumbnail(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            _quality=img_metadata.quality,
-            border=img_metadata.shape,
-            content=content,
-            crop_position=img_metadata.crop_position,
-        )
+    with convert_svg_if_needed(content) as converted_content:
+        if _format == ImageTypeEnum.JPEG:
+            return jpeg_thumbnail(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                _quality=img_metadata.quality,
+                border=img_metadata.shape,
+                content=converted_content,
+                crop_position=img_metadata.crop_position,
+            )
+        if _format == ImageTypeEnum.PNG:
+            return png_thumbnail(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                border=img_metadata.shape,
+                content=converted_content,
+                crop_position=img_metadata.crop_position,
+            )
+        if _format == ImageTypeEnum.GIF:
+            return gif_thumbnail(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                _quality=img_metadata.quality,
+                border=img_metadata.shape,
+                content=converted_content,
+                crop_position=img_metadata.crop_position,
+            )
 
     raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
 
@@ -228,34 +236,33 @@ def _select_preview_module(
     :raises: ValueError if the format is not supported
     """
     _format = img_metadata.format
-    content = convert_svg_if_needed(content)
-
-    if _format == ImageTypeEnum.JPEG:
-        return jpeg_preview(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            _quality=img_metadata.quality,
-            content=content,
-            _crop=img_metadata.crop,
-            crop_position=img_metadata.crop_position,
-        )
-    if _format == ImageTypeEnum.PNG:
-        return png_preview(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            content=content,
-            _crop=img_metadata.crop,
-            crop_position=img_metadata.crop_position,
-        )
-    if _format == ImageTypeEnum.GIF:
-        return gif_preview(
-            _x=img_metadata.width,
-            _y=img_metadata.height,
-            content=content,
-            _crop=img_metadata.crop,
-            crop_position=img_metadata.crop_position,
-            _quality=img_metadata.quality,
-        )
+    with convert_svg_if_needed(content) as converted_content:
+        if _format == ImageTypeEnum.JPEG:
+            return jpeg_preview(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                _quality=img_metadata.quality,
+                content=converted_content,
+                _crop=img_metadata.crop,
+                crop_position=img_metadata.crop_position,
+            )
+        if _format == ImageTypeEnum.PNG:
+            return png_preview(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                content=converted_content,
+                _crop=img_metadata.crop,
+                crop_position=img_metadata.crop_position,
+            )
+        if _format == ImageTypeEnum.GIF:
+            return gif_preview(
+                _x=img_metadata.width,
+                _y=img_metadata.height,
+                content=converted_content,
+                _crop=img_metadata.crop,
+                crop_position=img_metadata.crop_position,
+                _quality=img_metadata.quality,
+            )
 
     raise ValueError(message.FORMAT_NOT_SUPPORTED_ERROR)
 

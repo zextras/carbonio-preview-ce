@@ -130,13 +130,20 @@ async def post_thumbnail(
         crop_position=VerticalCropPositionEnum.CENTER,
         area=area,
     )
+
+    try:
+        raw_content = io.BytesIO(file.file.read())
+        processed_content = image_service.process_raw_thumbnail(
+            raw_content=raw_content,
+            img_metadata=ThumbnailImageMetadata(**metadata_dict),
+        )
+        response_content = processed_content.read()
+    finally:
+        raw_content.close()
+        processed_content.close()
+
     return Response(
-        content=(
-            image_service.process_raw_thumbnail(
-                raw_content=io.BytesIO(file.file.read()),
-                img_metadata=ThumbnailImageMetadata(**metadata_dict),
-            )
-        ).read(),
+        content=response_content,
         media_type=f"image/{output_format.value}",
     )
 
@@ -180,13 +187,19 @@ async def post_preview(
         area=area,
     )
 
+    try:
+        raw_content = io.BytesIO(file.file.read())
+        processed_content = image_service.process_raw_preview(
+            raw_content=raw_content,
+            img_metadata=PreviewImageMetadata(**metadata_dict),
+        )
+        response_content = processed_content.read()
+    finally:
+        raw_content.close()
+        processed_content.close()
+
     return Response(
-        content=(
-            image_service.process_raw_preview(
-                raw_content=io.BytesIO(file.file.read()),
-                img_metadata=PreviewImageMetadata(**metadata_dict),
-            )
-        ).read(),
+        content=response_content,
         media_type=f"image/{output_format.value}",
     )
 

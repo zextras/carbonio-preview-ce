@@ -102,16 +102,20 @@ async def post_preview(
     :return: 400 if there were invalid parameters, otherwise
     the requested file converted accordingly to pdf.
     """
+    try:
+        processed_content: io.BytesIO = await document_service.create_preview_from_raw(
+            first_page_number=pages.first_page,
+            last_page_number=pages.last_page,
+            file=file,
+            locale=locale,
+        )
+        response_content = processed_content.read()
+    finally:
+        processed_content.close()
+
     return get_document_preview_enabled_response_error().value_or(
         Response(
-            content=(
-                await document_service.create_preview_from_raw(
-                    first_page_number=pages.first_page,
-                    last_page_number=pages.last_page,
-                    file=file,
-                    locale=locale,
-                )
-            ).read(),
+            content=response_content,
             media_type="application/pdf",
         ),
     )
@@ -162,18 +166,23 @@ async def post_thumbnail(
         area=area,
     )
 
-    content: io.BytesIO = await document_service.create_thumbnail_from_raw(
-        file=file,
-        output_format=output_format.value,
-        locale=locale,
-    )
+    try:
+        content: io.BytesIO = await document_service.create_thumbnail_from_raw(
+            file=file,
+            output_format=output_format.value,
+            locale=locale,
+        )
+        processed_content = image_service.process_raw_thumbnail(
+            raw_content=content,
+            img_metadata=ThumbnailImageMetadata(**metadata_dict),
+        )
+        response_content = processed_content.read()
+    finally:
+        content.close()
+        processed_content.close()
+
     return Response(
-        content=(
-            image_service.process_raw_thumbnail(
-                raw_content=content,
-                img_metadata=ThumbnailImageMetadata(**metadata_dict),
-            )
-        ).read(),
+        content=response_content,
         media_type=f"image/{output_format}",
     )
 
@@ -242,14 +251,19 @@ async def get_thumbnail(
         locale=locale,
     )
     if image_response.status_code == status.HTTP_200_OK:
-        image_raw: io.BytesIO = io.BytesIO(image_response.body)
+        try:
+            image_raw: io.BytesIO = io.BytesIO(image_response.body)
+            processed_content = image_service.process_raw_thumbnail(
+                raw_content=image_raw,
+                img_metadata=ThumbnailImageMetadata(**metadata_dict),
+            )
+            response_content = processed_content.read()
+        finally:
+            image_raw.close()
+            processed_content.close()
+
         return Response(
-            content=(
-                image_service.process_raw_thumbnail(
-                    raw_content=image_raw,
-                    img_metadata=ThumbnailImageMetadata(**metadata_dict),
-                )
-            ).read(),
+            content=response_content,
             media_type=f"image/{output_format}",
         )
 
