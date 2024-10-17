@@ -12,6 +12,8 @@ from app.core.resources.schemas.enums.service_type_enum import ServiceTypeEnum
 
 logger = logging.getLogger(__name__)
 
+HTTP_404_STATUS_CODE: int = 404
+
 
 async def retrieve_data(
     file_id: str,
@@ -41,7 +43,11 @@ async def retrieve_data(
             return Maybe.from_value(resp)
     except httpx.HTTPStatusError as http_error:
         log.debug(f"Http Error: {http_error} for request {req}")
-        return Nothing
+        return (
+            Maybe.from_value(resp)
+            if resp.status_code == HTTP_404_STATUS_CODE
+            else Nothing
+        )
     # from this onward are not related to the raise_for_status,
     # these are all critical errors.
     except httpx.ConnectTimeout as timeout_error:
