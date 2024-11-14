@@ -37,11 +37,13 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
         return_value=io.BytesIO(),
     )
     async def test_create_preview_success(self, mock_selection: MagicMock):
+        # Given
         self.fake_response.status_code = status.HTTP_200_OK
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data",
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
+            # When
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
@@ -50,6 +52,8 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
                     service_type=ServiceTypeEnum.FILES,
                 )
             )
+
+            # Then
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
             self.assertEqual(
@@ -63,11 +67,13 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
         return_value=io.BytesIO(),
     )
     async def test_create_preview_failure_retrieving(self, mock_selection: MagicMock):
+        # Given
         self.fake_response.status_code = status.HTTP_404_NOT_FOUND
         with mock.patch(
             "app.core.services." "image_service." "storage_communication.retrieve_data",
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Maybe.from_value(self.fake_response)
+            # When
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
@@ -76,6 +82,8 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
                     service_type=ServiceTypeEnum.FILES,
                 )
             )
+
+            # Then
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
             self.assertEqual(
@@ -96,10 +104,12 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
         self,
         mock_selection: MagicMock,
     ):
+        # Given
         with mock.patch(
             "app.core.services" ".image_service." "storage_communication.retrieve_data",
         ) as retrieve_data_mock:
             retrieve_data_mock.return_value = Nothing
+            # When
             stream_response: Response = (
                 await image_service.retrieve_image_and_create_preview(
                     image_id="test",
@@ -108,6 +118,8 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
                     service_type=ServiceTypeEnum.FILES,
                 )
             )
+
+            # Then
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
             self.assertEqual(status.HTTP_502_BAD_GATEWAY, stream_response.status_code)
@@ -118,34 +130,73 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_select_manipulation_jpeg(self):
+        # Given
         self.img_metadata.format = ImageTypeEnum.JPEG
         self.img_metadata.quality = None
         with mock.patch("app.core.services.image_service" ".jpeg_preview") as jpeg_mock:
             jpeg_mock.return_value = None
+            # When
             result = image_service._select_preview_module(
                 img_metadata=self.img_metadata,
                 content=io.BytesIO(),
             )
+
+            # Then
             self.assertEqual(1, jpeg_mock.call_count)
             self.assertEqual(jpeg_mock(), result)
 
     def test_select_manipulation_png(self):
+        # Given
         self.img_metadata.format = ImageTypeEnum.PNG
         self.img_metadata.quality = None
         with mock.patch("app.core.services.image_service" ".png_preview") as png_mock:
             png_mock.return_value = None
+            # When
             result = image_service._select_preview_module(
                 img_metadata=self.img_metadata,
                 content=io.BytesIO(),
             )
+
+            # Then
             self.assertEqual(1, png_mock.call_count)
             self.assertEqual(png_mock(), result)
 
+    def test_select_manipulation_gif(self):
+        # Given
+        self.img_metadata.format = ImageTypeEnum.GIF
+        self.img_metadata.quality = None
+        with mock.patch("app.core.services.image_service" ".gif_preview") as gif_mock:
+            gif_mock.return_value = None
+            # When
+            result = image_service._select_preview_module(
+                img_metadata=self.img_metadata,
+                content=io.BytesIO(),
+            )
+
+            # Then
+            self.assertEqual(1, gif_mock.call_count)
+            self.assertEqual(gif_mock(), result)
+
     def test_select_not_valid(self):
+        # Given
         self.img_metadata.format = None
+
+        # When & Then
         self.assertRaises(
             ValueError,
             image_service._select_preview_module,
             self.img_metadata,
-            b"",
+            io.BytesIO(),
+        )
+
+    def test_select_with_unsupported_format(self):
+        # Given
+        self.img_metadata.format = "HEIC"
+
+        # When & Then
+        self.assertRaises(
+            ValueError,
+            image_service._select_preview_module,
+            self.img_metadata,
+            io.BytesIO(),
         )
