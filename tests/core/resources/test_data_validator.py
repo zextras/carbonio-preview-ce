@@ -41,11 +41,28 @@ class TestDataValidator(unittest.TestCase):
         result = check_for_storage_response_error(response_data=Nothing)
         self.assertEqual(
             result.value_or(Response(status_code=200)).body.decode("utf-8"),
-            message.STORAGE_UNAVAILABLE_STRING,
+            message.GENERIC_ERROR_WITH_STORAGE,
         )
         self.assertEqual(
             result.value_or(Response(status_code=200)).status_code,
-            status.HTTP_502_BAD_GATEWAY,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    def test_check_for_response_error_with_404_status_code(self):
+        # Given
+        not_found_response = Maybe.from_value(Response(status_code=404))
+
+        # When
+        result = check_for_storage_response_error(not_found_response)
+
+        # Then
+        self.assertEqual(
+            result.value_or(Response(status_code=200)).body.decode("utf-8"),
+            message.ITEM_NOT_FOUND,
+        )
+        self.assertEqual(
+            result.value_or(Response(status_code=200)).status_code,
+            status.HTTP_404_NOT_FOUND,
         )
 
     def test_check_for_response_error_with_error(self):
@@ -55,10 +72,13 @@ class TestDataValidator(unittest.TestCase):
             result = check_for_storage_response_error(
                 response_data=Maybe.from_value(test_response),
             )
-            self.assertEqual(
-                result.value_or(Response(status_code=200)).body.decode("utf-8"),
-                message.STORAGE_UNAVAILABLE_STRING
-                if i >= 500
-                else message.GENERIC_ERROR_WITH_STORAGE,
-            )
-            self.assertEqual(result.value_or(Response(status_code=200)).status_code, i)
+
+            # The 404 case is tested separately
+            if i != 404:
+                self.assertEqual(
+                    result.value_or(Response(status_code=200)).body.decode("utf-8"),
+                    message.GENERIC_ERROR_WITH_STORAGE,
+                )
+                self.assertEqual(
+                    result.value_or(Response(status_code=200)).status_code, i
+                )

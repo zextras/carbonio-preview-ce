@@ -121,7 +121,7 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
         http_404_error = 404
         with respx.mock:
             mock_resp = respx.get(self.req).mock(return_value=Response(http_404_error))
-            response: Optional[Response] = await st_com.retrieve_data(
+            optResponse: Optional[Response] = await st_com.retrieve_data(
                 file_id=self.test_id,
                 version=self.version,
                 log=self.log_mock,
@@ -129,5 +129,7 @@ class TestStorageCommunicator(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(1, mock_resp.call_count)
             self.assertEqual(1, self.log_mock.debug.call_count)
-            self.assertIsNotNone(response)
+            self.assertIsNotNone(optResponse)
+
+            response: Response = optResponse.value_or(Nothing)
             self.assertEqual(404, response.status_code)

@@ -92,7 +92,7 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(None, stream_response.media_type)
             self.assertEqual(
-                message.GENERIC_ERROR_WITH_STORAGE,
+                message.ITEM_NOT_FOUND,
                 stream_response.body.decode(),
             )
 
@@ -122,10 +122,13 @@ class TestImageService(unittest.IsolatedAsyncioTestCase):
             # Then
             self.assertEqual(1, mock_selection.call_count)
             self.assertEqual(1, retrieve_data_mock.call_count)
-            self.assertEqual(status.HTTP_502_BAD_GATEWAY, stream_response.status_code)
+            self.assertEqual(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                stream_response.status_code,
+            )
             self.assertEqual(None, stream_response.media_type)
             self.assertEqual(
-                message.STORAGE_UNAVAILABLE_STRING,
+                message.GENERIC_ERROR_WITH_STORAGE,
                 stream_response.body.decode(),
             )
 
