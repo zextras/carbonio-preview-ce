@@ -45,7 +45,7 @@ repos:
         language: python
         additional_dependencies: [
             python-multipart, FastAPI, pydantic, httpx, uvicorn, gunicorn, Pillow,
-            respx, psutil, pypdfium2, pytest, pytest-mockito, returns
+            respx, psutil, pypdfium2, pytest, pytest-mockito, returns, cairosvg
         ]
         'types': [python]
         pass_filenames: false

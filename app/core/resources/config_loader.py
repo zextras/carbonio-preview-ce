@@ -16,7 +16,9 @@ def _create_default_path_list(file_name: str) -> List[str]:
         str(Path("/", "etc", "carbonio", "preview", file_name)),
         str(Path("app", "core", "resources", file_name)),
         str(Path(starting_dir, file_name)),
-        str(Path(Path.cwd(), "package", file_name)),
+        str(Path(Path.cwd(), "package", "preview", file_name)),
+        # This path is for testing purpose
+        str(Path(Path.cwd().parent, "package", "preview", file_name)),
     ]
 
 

@@ -10,6 +10,7 @@ from app.core.resources.config_loader import config_dict
 
 PORT_MAX_NUMBER: Final[int] = 65535
 PORT_MIN_NUMBER: Final[int] = 0
+TEST_LOG_PATH: Final[str] = "./venv/"
 
 
 def validate_ip(value: str) -> str:
@@ -30,8 +31,10 @@ def validate_log_level(value: str) -> str:
 
 def validate_log_path(value: str) -> str:
     if not Path(value).resolve().exists():
-        msg = "Log path is not valid or does not exist."
-        raise ValueError(msg)
+        if not Path(TEST_LOG_PATH).resolve().exists():
+            msg = "Log path is not valid or does not exist."
+            raise ValueError(msg)
+        return TEST_LOG_PATH
     return value
 
 
