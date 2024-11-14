@@ -81,16 +81,17 @@ def check_for_storage_response_error(
     """
     status_code = response_data.value_or(
         FastApiResp(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         ),
     ).status_code
+
     if status.HTTP_200_OK <= status_code < status.HTTP_400_BAD_REQUEST:
         return Nothing
 
     return Maybe.from_value(
         FastApiResp(
-            content=message.STORAGE_UNAVAILABLE_STRING
-            if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR
+            content=message.ITEM_NOT_FOUND
+            if status_code == status.HTTP_404_NOT_FOUND
             else message.GENERIC_ERROR_WITH_STORAGE,
             status_code=status_code,
         ),
