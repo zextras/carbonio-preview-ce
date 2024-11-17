@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
+SPDX-FileCopyrightText: 2023 Zextras <https://www.zextras.com>
 
 SPDX-License-Identifier: AGPL-3.0-only
 -->
@@ -7,6 +7,18 @@ SPDX-License-Identifier: AGPL-3.0-only
 # Changelog
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
+
+## [0.6.0](https://github.com/Zextras/carbonio-preview-ce/compare/v0.5.1...v0.6.0) (2024-11-17)
+
+
+### Features
+
+* replace health checks from ready to live ([#75](https://github.com/Zextras/carbonio-preview-ce/issues/75)) ([40d1900](https://github.com/Zextras/carbonio-preview-ce/commit/40d1900d08a67f3bc8d85d28880ca70d38aef696))
+
+
+### Bug Fixes
+
+* return a 404 or 422 status code when storages APIs fails  ([#74](https://github.com/Zextras/carbonio-preview-ce/issues/74)) ([a7f4d34](https://github.com/Zextras/carbonio-preview-ce/commit/a7f4d34c4b00e70f35d29497dd766f5b0f0ce630))
 
 ### [0.5.1](https://github.com/zextras/carbonio-preview-ce/compare/v0.5.0...v0.5.1) (2024-09-10)
 
