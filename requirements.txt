@@ -2,21 +2,21 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.112.3
+FastAPI~=0.115.6
 
-pydantic>=2.8.2
-returns~=0.22.0
+pydantic>=2.10.5
+returns~=0.24.0
 
-uvicorn~=0.30.6
+uvicorn~=0.34.0
 gunicorn~=23.0.0
 
-httpx~=0.27.2
+httpx~=0.28.1
 
-Pillow~=10.4.0
-pypdfium2~=4.30.0
+Pillow~=11.1.0
+pypdfium2~=4.30.1
 
-psutil==6.0.0
+psutil==6.1.1
 
-python-multipart==0.0.9
+python-multipart==0.0.20
 
 CairoSVG==2.7.1
