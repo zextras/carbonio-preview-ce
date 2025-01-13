@@ -6,8 +6,9 @@ FastAPI~=0.115.6
 
 pydantic>=2.10.5
 
-# 0.24.0 cannot be used since the drop support for python3.9
-returns~=0.23.0
+# 0.23.0 cannot be used since they drop support for ubuntu20.04
+# 0.24.0 cannot be used since they drop support for python3.9
+returns~=0.22.0
 
 uvicorn~=0.34.0
 gunicorn~=23.0.0
