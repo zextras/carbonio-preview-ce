@@ -4,13 +4,13 @@
 
 -r requirements.txt
 
-black~=24.2.0
-ruff~=0.2.2
-pre-commit~=3.6.1
+black~=24.10.0
+ruff~=0.9.1
+pre-commit~=4.0.1
 
-respx~=0.20.2
+respx~=0.22.0
 
-pytest~=8.0.2
+pytest~=8.3.4
 pytest-mockito~=0.0.4
 
-types-Pillow~=10.2.0.20240213
+types-Pillow~=10.2.0.20240822
