@@ -48,7 +48,7 @@ async def get_preview(
         id: UUID,
         version: NonNegativeInt,
         service_type: ServiceTypeEnum,
-        locale: str = "en-US",
+        lang_tag: str = "en-US",
         pages: DocumentPagesMetadataModel = Depends(),
 ) -> Response:
     """
@@ -62,7 +62,7 @@ async def get_preview(
     - **service_type**: Service that owns the resource
     (service that first uploaded the data to storage)
     \f
-    :param locale: locale (language tag) to convert document, especially to format dates
+    :param lang_tag: lang_tag (language tag) to convert document, especially to format dates
     :param id: UUID of the file
     :param pages: first and last page to convert
     :param version: version of the file
@@ -77,7 +77,7 @@ async def get_preview(
             first_page_number=pages.first_page,
             last_page_number=pages.last_page,
             service_type=service_type,
-            locale=locale
+            lang_tag=lang_tag
         ),
     )
 
@@ -86,7 +86,7 @@ async def get_preview(
 async def post_preview(
         file: UploadFile,
         pages: DocumentPagesMetadataModel = Depends(),
-        locale: str = "en-US",
+        lang_tag: str = "en-US",
 ) -> Response:
     """
     Create and returns a pdf preview of the given file,
@@ -96,7 +96,7 @@ async def post_preview(
     - **first_page**: integer value of first page to preview (n>=1)
     - **last_page**: integer value of last page to preview  (0 = last of the pdf)
     \f
-    :param locale: locale (language tag) to convert document, especially to format dates
+    :param lang_tag: lang_tag (language tag) to convert document, especially to format dates
     :param file: file uploaded with FormData
     :param pages: integer value of first page and last page to preview
     :return: 400 if there were invalid parameters, otherwise
@@ -107,7 +107,7 @@ async def post_preview(
             first_page_number=pages.first_page,
             last_page_number=pages.last_page,
             file=file,
-            locale=locale,
+            lang_tag=lang_tag,
         )
         response_content = processed_content.read()
     finally:
@@ -131,7 +131,7 @@ async def post_thumbnail(
         shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
         quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
         output_format: ImageTypeEnum = ImageTypeEnum.JPEG,
-        locale: str = "en-US",
+        lang_tag: str = "en-US",
 ) -> Response:
     """
     Create and returns the thumbnail of the given file,
@@ -145,7 +145,7 @@ async def post_thumbnail(
     - **shape**: Rounded and Rectangular are currently supported.
     - **file**: file uploaded with FormData.
     \f
-    :param locale: locale (language tag) to convert document, especially to format dates
+    :param lang_tag: lang_tag (language tag) to convert document, especially to format dates
     :param shape: Rounded and Rectangular are currently supported
     :param quality: quality of the output image
     :param output_format: format of the output image
@@ -170,7 +170,7 @@ async def post_thumbnail(
         content: io.BytesIO = await document_service.create_thumbnail_from_raw(
             file=file,
             output_format=output_format.value,
-            locale=locale,
+            lang_tag=lang_tag,
         )
         processed_content = image_service.process_raw_thumbnail(
             raw_content=content,
@@ -203,7 +203,7 @@ async def get_thumbnail(
         shape: ImageBorderShapeEnum = ImageBorderShapeEnum.RECTANGULAR,
         quality: ImageQualityEnum = ImageQualityEnum.MEDIUM,
         output_format: ImageTypeEnum = ImageTypeEnum.JPEG,
-        locale: str = "en-US",
+        lang_tag: str = "en-US",
 ) -> Response:
     """
     Create and returns a thumbnail of the file fetched by id and version
@@ -220,7 +220,7 @@ async def get_thumbnail(
     - **service_type**: Service that owns the resource
      (service that first uploaded the data to storage)
     \f
-    :param locale: locale (language tag) to convert document, especially to format dates
+    :param lang_tag: lang_tag (language tag) to convert document, especially to format dates
     :param id: UUID of the file
     :param version: version of the file
     :param service_type: service that owns the resource
@@ -248,7 +248,7 @@ async def get_thumbnail(
         version=version,
         output_format=output_format.value,
         service_type=service_type,
-        locale=locale,
+        lang_tag=lang_tag,
     )
     if image_response.status_code == status.HTTP_200_OK:
         try:

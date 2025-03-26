@@ -23,14 +23,14 @@ async def retrieve_doc_and_create_preview(
     first_page_number: int,
     last_page_number: int,
     service_type: ServiceTypeEnum,
-    locale: str
+    lang_tag: str
 ) -> FastApiResp:
     """
     Contact storage and retrieves the image with the nodeid requested
     and trims it to the number of pages requested.
     If the nodeid is not found returns Generic error specifying the error code
     \f
-    :param locale:
+    :param lang_tag:
     :param file_id: UUID of the file
     :param version: version of the file
     :param first_page_number: first page to return
@@ -58,7 +58,7 @@ async def retrieve_doc_and_create_preview(
             first_page_number=first_page_number,
             last_page_number=last_page_number,
             content=content,
-            locale=locale,
+            lang_tag=lang_tag,
         )
         response_content = processed_content.read()
     finally:
@@ -77,12 +77,12 @@ async def create_preview_from_raw(
     file: UploadFile,
     first_page_number: int,
     last_page_number: int,
-    locale: str,
+    lang_tag: str,
 ) -> io.BytesIO:
     """
     Create pdf preview of a given file
     \f
-    :param locale:
+    :param lang_tag:
     :param file: uploaded file to convert
     :param first_page_number: the first page of the pdf to return
     :param last_page_number: the last page of the pdf to return
@@ -91,22 +91,22 @@ async def create_preview_from_raw(
         first_page_number=first_page_number,
         last_page_number=last_page_number,
         content=io.BytesIO(file.file.read()),
-        locale=locale,
+        lang_tag=lang_tag,
     )
 
 
-async def create_thumbnail_from_raw(file: UploadFile, output_format: str, locale: str) -> io.BytesIO:
+async def create_thumbnail_from_raw(file: UploadFile, output_format: str, lang_tag: str) -> io.BytesIO:
     """
     Create image thumbnail of a given file
     \f
-    :param locale:
+    :param lang_tag:
     :param file: uploaded file to convert
     :param output_format: the image type that the thumbnail will have
     """
     return await document_manipulation.convert_file_to(
         content=io.BytesIO(file.file.read()),
         output_extension=output_format,
-        locale=locale
+        lang_tag=lang_tag
     )
 
 
@@ -115,14 +115,14 @@ async def retrieve_doc_and_create_thumbnail(
     version: int,
     output_format: str,
     service_type: ServiceTypeEnum,
-    locale: str,
+    lang_tag: str,
 ) -> FastApiResp:
     """
     Contact storage and retrieves the document
      with the nodeid requested and converts it to image.
     If the nodeid is not found returns Generic error specifying the error code
     \f
-    :param locale:
+    :param lang_tag:
     :param file_id: UUID of the file
     :param version: version of the file
     :param output_format: format
@@ -148,7 +148,7 @@ async def retrieve_doc_and_create_thumbnail(
         processed_content = await document_manipulation.convert_file_to(
             content=content,
             output_extension=output_format,
-            locale=locale
+            lang_tag=lang_tag
         )
         response_content = processed_content.read()
     finally:
