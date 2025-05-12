@@ -4,7 +4,7 @@
 
 FastAPI~=0.115.12
 
-pydantic>=2.11.4
+pydantic>=2.10.6
 
 # 0.23.0 cannot be used since they drop support for ubuntu20.04
 # 0.24.0 cannot be used since they drop support for python3.9
