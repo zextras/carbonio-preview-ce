@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.115.6
+FastAPI~=0.115.12
 
-pydantic>=2.10.5
+pydantic>=2.10.6
 
 # 0.23.0 cannot be used since they drop support for ubuntu20.04
 # 0.24.0 cannot be used since they drop support for python3.9
@@ -20,7 +20,7 @@ httpx~=0.28.1
 Pillow~=10.4.0
 pypdfium2~=4.30.1
 
-psutil==6.1.1
+psutil==7.0.0
 
 python-multipart==0.0.20
 
