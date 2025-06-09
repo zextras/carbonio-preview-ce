@@ -1,6 +1,6 @@
 pkgname="carbonio-preview-ce"
-pkgver="0.6.2"
-pkgrel="1"
+pkgver="0.6.3"
+pkgrel="SNAPSHOT"
 pkgdesc="Carbonio Preview"
 maintainer="Zextras <packages@zextras.com>"
 copyright=(
@@ -137,7 +137,7 @@ build__ubuntu_noble() {
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 
-  sed -i "s/PYTHON_VER/3.12/g" \
+  sed -i "s/PYTHON_VER/3.10/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common\/local/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
