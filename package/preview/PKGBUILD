@@ -137,10 +137,11 @@ build__ubuntu_noble() {
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 
-  sed -i "s/PYTHON_VER/3.10/g" \
+  sed -i "s/PYTHON_VER/3.12/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common\/local/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/UBUNTU24/true/g" "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 }
 
 build__rocky_8() {
