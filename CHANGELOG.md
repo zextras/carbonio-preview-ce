@@ -8,6 +8,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.6.3](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.2...v0.6.3) (2025-06-10)
+
+
+### Bug Fixes
+
+* correct config file path on ubuntu 24 ([#83](https://github.com/zextras/carbonio-preview-ce/issues/83)) ([5fe0d5b](https://github.com/zextras/carbonio-preview-ce/commit/5fe0d5b42ade9bfd55b451b500f8da758b5afa4d))
+
 ### [0.6.2](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.1...v0.6.2) (2025-05-15)
 
 
