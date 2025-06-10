@@ -1,6 +1,6 @@
 pkgname="carbonio-preview-ce"
-pkgver="0.6.2"
-pkgrel="1"
+pkgver="0.6.3"
+pkgrel="SNAPSHOT"
 pkgdesc="Carbonio Preview"
 maintainer="Zextras <packages@zextras.com>"
 copyright=(
@@ -62,7 +62,7 @@ source=(
 )
 sha256sums=('5c378a420cf3eb217fef72ce589d6dbee0ca6c0a054983a12287f92418e96ad5'
   '731e767bd1165f083420e23fa64f9e19ee518d823b685ecc4b78dada1b271792'
-  '1716b914bf131f4a8f031b2491c1a0bc286fe8e4843be7317cd82c2ad90b43a2'
+  'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
@@ -141,6 +141,7 @@ build__ubuntu_noble() {
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common\/local/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  sed -i "s/UBUNTU24/true/g" "${pkgdir}/usr/bin/carbonio-preview-start.sh"
 }
 
 build__rocky_8() {
