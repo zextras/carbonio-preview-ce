@@ -83,11 +83,6 @@ def read_config(
     raw: bool = False,
     default_value: Any = None,
 ) -> str:
-    # Return CLI overrides if present
-    override_key = f"{section}.{value}"
-    if override_key in cli_overrides:
-        return cli_overrides[override_key]
-
     if default_value:
         return config.get(section, value, raw=raw, fallback=default_value)
 
