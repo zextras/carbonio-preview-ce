@@ -5,7 +5,7 @@
 import argparse
 import configparser
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 config = configparser.ConfigParser(interpolation=None)
 message_config = configparser.ConfigParser()
