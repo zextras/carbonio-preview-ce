@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 config = configparser.ConfigParser(interpolation=None)
 message_config = configparser.ConfigParser()
 
-cli_overrides: Dict[str, str] = {}
+env_overrides: Dict[str, str] = {}
 
 
 def _create_default_path_list(file_name: str) -> List[str]:
