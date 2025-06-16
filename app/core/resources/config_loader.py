@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-import argparse
 import configparser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,34 +24,21 @@ def _create_default_path_list(file_name: str) -> List[str]:
     ]
 
 
-def parse_cli_overrides():
-    """Parse command line arguments for IP and port overrides"""
-    parser = argparse.ArgumentParser(description='Carbonio Preview Service', add_help=False)
-
-    parser.add_argument('--preview-host', dest='preview_ip', help='Override preview service IP')
-    parser.add_argument('--preview-port', dest='preview_port', type=int, help='Override preview service port')
-
-    parser.add_argument('--storages-host', dest='storage_ip', help='Override storages service IP')
-    parser.add_argument('--storages-port', dest='storage_port', type=int, help='Override storages service port')
-
-    parser.add_argument('--docs-editor-host', dest='document_conversion_ip', help='Override docs-editor service IP')
-    parser.add_argument('--docs-editor-port', dest='document_conversion_port', type=int, help='Override docs-editor service port')
-
-    args, unknown = parser.parse_known_args()
-
-    global cli_overrides
-    if args.preview_ip:
-        cli_overrides['service.ip'] = args.preview_ip
-    if args.preview_port:
-        cli_overrides['service.port'] = str(args.preview_port)
-    if args.storage_ip:
-        cli_overrides['storage.ip'] = args.storage_ip
-    if args.storage_port:
-        cli_overrides['storage.port'] = str(args.storage_port)
-    if args.document_conversion_ip:
-        cli_overrides['document_conversion.ip'] = args.document_conversion_ip
-    if args.document_conversion_port:
-        cli_overrides['document_conversion.port'] = str(args.document_conversion_port)
+def parse_env_overrides():
+    """Parse environment variables for configuration overrides"""
+    global env_overrides
+    env_mapping = {
+        'PREVIEW_HOST': 'service.ip',
+        'PREVIEW_PORT': 'service.port',
+        'STORAGES_HOST': 'storage.ip',
+        'STORAGES_PORT': 'storage.port',
+        'DOCS_EDITOR_HOST': 'document_conversion.ip',
+        'DOCS_EDITOR_PORT': 'document_conversion.port',
+    }
+    for env_var, config_key in env_mapping.items():
+        value = os.getenv(env_var)
+        if value is not None:
+            env_overrides[config_key] = value
 
 
 def load_message_config(path_list: Optional[List[str]] = None) -> List[str]:
@@ -69,7 +55,7 @@ def load_config(path_list: Optional[List[str]] = None) -> List[str]:
 
 parse_cli_overrides()
 load_config()
-for override_key, value in cli_overrides.items():
+for override_key, value in env_overrides.items():
     section, key = override_key.split('.', 1)
     if config.has_section(section):
         config.set(section, key, value)
