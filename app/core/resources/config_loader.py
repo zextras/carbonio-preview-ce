@@ -53,7 +53,7 @@ def load_config(path_list: Optional[List[str]] = None) -> List[str]:
     return config.read(path_list)
 
 
-parse_cli_overrides()
+parse_env_overrides()
 load_config()
 for override_key, value in env_overrides.items():
     section, key = override_key.split('.', 1)
