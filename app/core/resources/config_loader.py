@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 import configparser
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
