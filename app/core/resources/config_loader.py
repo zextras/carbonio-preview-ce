@@ -69,6 +69,10 @@ def load_config(path_list: Optional[List[str]] = None) -> List[str]:
 
 parse_cli_overrides()
 load_config()
+for override_key, value in cli_overrides.items():
+    section, key = override_key.split('.', 1)
+    if config.has_section(section):
+        config.set(section, key, value)
 config_dict = {section: dict(config.items(section)) for section in config.sections()}
 load_message_config()
 
