@@ -54,7 +54,6 @@ source=(
   "carbonio-preview.hcl"
   "carbonio-preview.sh"
   "carbonio-preview"
-  "config.ini"
   "messages.ini"
   "intentions.json"
   "policies.json"
@@ -66,7 +65,6 @@ sha256sums=('5c378a420cf3eb217fef72ce589d6dbee0ca6c0a054983a12287f92418e96ad5'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
-  '941ad4db9950e5d8b24abcf8ba99ab03a59d87507102f8b428b84c7edd389110'
   'e193105f8e0710525b696ac9236f9c24e42f2b9fe1e8950331bc2026d9e698f2'
   '17aa6d19c18fcb58b11cd04ddc12e9aea89381453555f8095d8b875a27f5d639'
   '7c3dd74a3bab5260cea7b4876a8e472bc3258cc5bf35ebf3d02dae02d7c02ece'
@@ -222,9 +220,6 @@ package() {
 
   install -Dm644 "${srcdir}/service-protocol.json" \
     "${pkgdir}/etc/carbonio/preview/service-discover/service-protocol.json"
-
-  install -Dm644 "${srcdir}/config.ini" \
-    "${pkgdir}/etc/carbonio/preview/config.ini"
 
   install -Dm644 "${srcdir}/messages.ini" \
     "${pkgdir}/etc/carbonio/preview/messages.ini"
