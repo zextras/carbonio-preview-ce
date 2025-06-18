@@ -62,9 +62,39 @@ def validate_port(value) -> int:
     return value
 
 
+def create_flat_config_dict(config_dict):
+    flat_config = {}
+
+    # Mapping for backward compatibility
+    section_mappings = {
+        'carbonio.preview': 'service',
+        'carbonio.storages': 'storage',
+        'carbonio.docs-editor': 'document_conversion',
+        'log': 'log',
+        'image_constants': 'image_constants'
+    }
+
+    field_mappings = {
+        'default_host': 'ip',
+        'default_port': 'port',
+        'default_protocol': 'protocol'
+    }
+
+    for section, section_config in config_dict.items():
+        flat_prefix = section_mappings.get(section, section)
+
+        for field, value in section_config.items():
+            mapped_field = field_mappings.get(field, field)
+
+            flat_key = f"{flat_prefix}_{mapped_field}"
+            flat_config[flat_key] = value
+
+    return flat_config
+
+
 class AppConfig:
     def __init__(self, config: dict) -> None:
-        # Service
+        # Preview
         self.service_name: str = config["service_name"]
         self.service_ip: str = validate_ip(config["service_ip"])
         self.service_port: int = validate_port(config["service_port"])
@@ -92,7 +122,7 @@ class AppConfig:
             config.get("service_docs-timeout", 5),
         )
 
-        # Log
+        # Logs
         self.log_path: str = validate_log_path(config["log_path"])
         self.log_format: str = config["log_format"]
         self.log_level: str = validate_log_level(config["log_level"])
@@ -102,7 +132,7 @@ class AppConfig:
             config["image_constants_minimum_resolution"],
         )
 
-        # Storage
+        # Storages
         self.storage_name: str = config["storage_name"]
         self.storage_download_api: str = config["storage_download_api"]
         self.storage_health_check: str = config["storage_health_check"]
@@ -111,7 +141,7 @@ class AppConfig:
         self.storage_ip: str = validate_ip(config["storage_ip"])
         self.storage_port: int = validate_port(config["storage_port"])
 
-        # Document conversion
+        # Docs
         self.document_conversion_protocol: str = config["document_conversion_protocol"]
         self.document_conversion_ip: str = validate_ip(config["document_conversion_ip"])
         self.document_conversion_port: int = validate_port(
@@ -126,15 +156,9 @@ class AppConfig:
         ]
 
 
-# LOAD CONFIG
-flat_config_dict = {
-    section + "_" + field: config_dict[section][field]
-    for section in config_dict
-    for field in config_dict[section]
-}
+flat_config_dict = create_flat_config_dict(config_dict)
 app_config = AppConfig(flat_config_dict)
 
-# fields
 SERVICE_NAME: Final[str] = app_config.service_name
 SERVICE_TIMEOUT: Final[int] = app_config.service_timeout_in_seconds
 SERVICE_IP: Final[str] = app_config.service_ip
