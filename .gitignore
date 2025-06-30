@@ -6,7 +6,6 @@
 *.rpm
 .coverage
 .idea
-Dockerfile
 LICENSES
 __pycache__
 app/core/resources/config.ini
