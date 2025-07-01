@@ -5,6 +5,7 @@
 import ipaddress
 from pathlib import Path
 from typing import Final
+import re
 
 from app.core.resources.config_loader import config_dict
 
@@ -17,9 +18,15 @@ def validate_ip(value: str) -> str:
     try:
         ipaddress.ip_address(value)
     except ValueError:
-        msg = f"Invalid IP address: {value}"
-        raise ValueError(msg)
-    return value
+        hostname_pattern = re.compile(
+            r'^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63})*$'
+        )
+        
+        if hostname_pattern.match(value):
+            return value
+        else:
+            msg = f"Invalid IP address or hostname: {value}"
+            raise ValueError(msg)
 
 
 def validate_log_level(value: str) -> str:
