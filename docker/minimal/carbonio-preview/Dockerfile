@@ -1,7 +1,5 @@
 FROM python:3.10-slim
 
-WORKDIR /app
-
 RUN mkdir -p /etc/carbonio/preview
 
 RUN apt-get update && apt-get install -y \
@@ -15,6 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY app ./app
 COPY requirements.txt /tmp/requirements.txt
+COPY package/preview/messages.ini /etc/carbonio/preview/messages.ini
 
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -72,4 +71,4 @@ default_host = ${DOCS_EDITOR_HOST}\n\
 default_port = ${DOCS_EDITOR_PORT}\n\
 service_endpoint = services/docs/editor\n\
 convert_api = cool/convert-to" > /etc/carbonio/preview/config.ini && \
-python -m gunicorn app.core.controller:app --config app/gunicorn.conf.py'
+python -m gunicorn app.controller:app --config app/gunicorn.conf.py'
