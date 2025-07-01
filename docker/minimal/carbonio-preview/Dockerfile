@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y \
     shared-mime-info \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ../../app .
-COPY ../../../requirements.txt /tmp/requirements.txt
+COPY app ./app
+COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -26,6 +26,6 @@ ENV STORAGES_PORT=10000
 ENV DOCS_EDITOR_HOST=127.0.0.1
 ENV DOCS_EDITOR_PORT=10000
 
-ENV PYTHONPATH="/opt/zextras/common/lib/python3.10/dist-packages:/opt/zextras/common/lib/python3.10/site-packages:/opt/zextras/common/lib64/python3.10/dist-packages:/opt/zextras/common/lib64/python3.10/site-packages:/opt/zextras/common/local/lib/python3.10/dist-packages:/opt/zextras/common/local/lib/python3.10/site-packages:/opt/zextras/common/local/lib64/python3.10/dist-packages:/opt/zextras/common/local/lib64/python3.10/site-packages:"
-#TODO create config ini
-CMD ["python", "-m", "gunicorn", "app.controller:app", "--config", "gunicorn.conf.py"]
+ENV PYTHONPATH="/app:/opt/zextras/common/lib/python3.10/dist-packages:/opt/zextras/common/lib/python3.10/site-packages:/opt/zextras/common/lib64/python3.10/dist-packages:/opt/zextras/common/lib64/python3.10/site-packages:/opt/zextras/common/local/lib/python3.10/dist-packages:/opt/zextras/common/local/lib/python3.10/site-packages:/opt/zextras/common/local/lib64/python3.10/dist-packages:/opt/zextras/common/local/lib64/python3.10/site-packages:"
+
+CMD ["python", "-m", "gunicorn", "app.core.controller:app", "--config", "app/gunicorn.conf.py"]
