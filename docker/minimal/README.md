@@ -9,4 +9,9 @@ Steps:
     4. Login using `test@demo.zextras.io`/`password`
 
 Possible configs for preview:
-  - TODO
+  - PREVIEW_HOST
+  - PREVIEW_PORT
+  - STORAGES_HOST
+  - STORAGES_PORT
+  - DOCS_EDITOR_HOST
+  - DOCS_EDITOR_PORT
