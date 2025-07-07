@@ -5,8 +5,8 @@ This minimal setup includes all necessary dependencies without mocks (with Consu
 Steps:
     1. `cd docker/minimal`
     2. `docker compose up --build`
-    3. Browse Carbonio on `http://localhost:9000/`, backend accessible on `http://localhost:20008`
-    4. Login using `test@demo.zextras.io`/`password`
+    3. Browse Carbonio on `http://docker.carbonio.localhost`, backends are exposed on various ports (see docker-compose.yaml)
+    4. Login using `user@carbonio.localhost`/`assext`
 
 Possible configs for preview:
   - PREVIEW_HOST
