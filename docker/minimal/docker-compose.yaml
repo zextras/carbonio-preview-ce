@@ -4,7 +4,7 @@ services:
     hostname: docker.carbonio.localhost
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "7071:7071"
       - "8080:8080"
@@ -27,7 +27,7 @@ services:
   provisioner:
     image: alpinelinux/docker-cli:latest
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     depends_on:
       - mailbox
     volumes:
@@ -40,7 +40,7 @@ services:
     image: registry.dev.zextras.com/dev/carbonio-openldap:latest
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "1389:1389"
     healthcheck:
@@ -53,14 +53,14 @@ services:
   mariadb:
     image: registry.dev.zextras.com/dev/carbonio-mariadb:latest
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "3306:3306"
 
   postfix:
     image: registry.dev.zextras.com/dev/carbonio-mta:latest
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20025:25"
     healthcheck:
@@ -78,7 +78,7 @@ services:
     container_name: carbonio-user-management
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20001:10000"
     environment:
@@ -93,7 +93,7 @@ services:
     image: mockserver/mockserver:5.15.0
     container_name: consul-mock
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "8500:8000"
     environment:
@@ -107,7 +107,7 @@ services:
     container_name: carbonio-postgres
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20000:5432"
     environment:
@@ -115,7 +115,7 @@ services:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=admin
     volumes:
-      - postgres_data_files_ce:/var/lib/postgresql/data
+      - postgres_data_preview_ce:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   storages:
@@ -125,16 +125,16 @@ services:
       dockerfile: docker/minimal/carbonio-storages/Dockerfile
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     volumes:
-      - storages_data_files_ce:/storage
+      - storages_data_preview_ce:/storage
 
   docs-connector-ce:
     image: registry.dev.zextras.com/dev/carbonio-docs-connector-ce:latest
     container_name: carbonio-docs-connector-ce
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20009:10000"
     environment:
@@ -162,7 +162,7 @@ services:
       dockerfile: docker/minimal/carbonio-docs-editor/Dockerfile
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20010:10000"
     environment:
@@ -184,7 +184,7 @@ services:
     container_name: carbonio-preview-ce
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20008:10000"
     environment:
@@ -202,7 +202,7 @@ services:
   message-broker:
     image: registry.dev.zextras.com/dev/carbonio-message-broker:latest
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "10001:10001"
 
@@ -211,7 +211,7 @@ services:
     container_name: carbonio-files-ce
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "20007:10000"
     environment:
@@ -244,7 +244,7 @@ services:
       dockerfile: composed-ui/Dockerfile
     restart: on-failure
     networks:
-      - carbonio-files-ce-network
+      - carbonio-preview-ce-network
     ports:
       - "80:80"
       - "6071:6071"
@@ -252,8 +252,8 @@ services:
       - files-ce
 
 networks:
-  carbonio-files-ce-network:
+  carbonio-preview-ce-network:
 
 volumes:
-  postgres_data_files_ce:
-  storages_data_files_ce:
+  postgres_data_preview_ce:
+  storages_data_preview_ce:
