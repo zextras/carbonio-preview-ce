@@ -17,14 +17,6 @@ COPY package/preview/messages.ini /etc/carbonio/preview/messages.ini
 
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Default values
-ENV PREVIEW_HOST=0.0.0.0
-ENV PREVIEW_PORT=10000
-ENV STORAGES_HOST=storages
-ENV STORAGES_PORT=10000
-ENV DOCS_EDITOR_HOST=docs-connector
-ENV DOCS_EDITOR_PORT=10000
-
 # Create log directory
 RUN mkdir -p /var/log/carbonio/preview/
 
