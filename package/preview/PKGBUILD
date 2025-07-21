@@ -1,5 +1,5 @@
 pkgname="carbonio-preview-ce"
-pkgver="0.6.4"
+pkgver="0.6.5"
 pkgrel="SNAPSHOT"
 pkgdesc="Carbonio Preview"
 maintainer="Zextras <packages@zextras.com>"
@@ -59,8 +59,9 @@ source=(
   "policies.json"
   "service-protocol.json"
 )
-sha256sums=('5c378a420cf3eb217fef72ce589d6dbee0ca6c0a054983a12287f92418e96ad5'
-  '731e767bd1165f083420e23fa64f9e19ee518d823b685ecc4b78dada1b271792'
+sha256sums=(
+  'a03162e30a793e180a4344f41c957c15e835c1ac55e6b5867b38aedd8f3156f7'
+  '93300f09c16912e9ba97967798c21f95ec143a0cb5deb9b91c8e09ed396a176a'
   'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
@@ -68,7 +69,8 @@ sha256sums=('5c378a420cf3eb217fef72ce589d6dbee0ca6c0a054983a12287f92418e96ad5'
   'e193105f8e0710525b696ac9236f9c24e42f2b9fe1e8950331bc2026d9e698f2'
   '17aa6d19c18fcb58b11cd04ddc12e9aea89381453555f8095d8b875a27f5d639'
   '7c3dd74a3bab5260cea7b4876a8e472bc3258cc5bf35ebf3d02dae02d7c02ece'
-  '1d2e022f32d45f5d5b1118fb524f4bafacc92689b76e7f24eea37b9fed6286fe')
+  '1d2e022f32d45f5d5b1118fb524f4bafacc92689b76e7f24eea37b9fed6286fe'
+)
 
 backup=(
   "etc/zextras/service-discover/carbonio-preview.hcl"
