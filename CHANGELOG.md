@@ -8,6 +8,18 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.6.4](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.3...v0.6.4) (2025-08-21)
+
+
+### Features
+
+* build packages via Docker and fix build ([#95](https://github.com/zextras/carbonio-preview-ce/issues/95)) ([704c576](https://github.com/zextras/carbonio-preview-ce/commit/704c57631471ee0d53726ef677433f2d9485fa5f))
+
+
+### Bug Fixes
+
+* adapted jenkinsfile to publish on docker registry ([#89](https://github.com/zextras/carbonio-preview-ce/issues/89)) ([e82d30c](https://github.com/zextras/carbonio-preview-ce/commit/e82d30c3b76efa516f10674640426061f44e2238))
+
 ### [0.6.3](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.2...v0.6.3) (2025-06-10)
 
 
