@@ -58,6 +58,7 @@ source=(
   "intentions.json"
   "policies.json"
   "service-protocol.json"
+  "carbonio-preview-src.tar.gz"
 )
 sha256sums=(
   'cf5902414af144e4fde6c03f17308142596c65a8ec4f910e4cacfd93d863b0d9'
@@ -70,6 +71,7 @@ sha256sums=(
   '17aa6d19c18fcb58b11cd04ddc12e9aea89381453555f8095d8b875a27f5d639'
   '7c3dd74a3bab5260cea7b4876a8e472bc3258cc5bf35ebf3d02dae02d7c02ece'
   '1d2e022f32d45f5d5b1118fb524f4bafacc92689b76e7f24eea37b9fed6286fe'
+  'SKIP'
 )
 
 backup=(
@@ -78,8 +80,6 @@ backup=(
 )
 
 build__ubuntu_focal() {
-  cd "${srcdir}"/../../staging
-
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
@@ -102,8 +102,6 @@ build__ubuntu_focal() {
 }
 
 build__ubuntu_jammy() {
-  cd "${srcdir}"/../../staging
-
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
@@ -123,8 +121,6 @@ build__ubuntu_jammy() {
 }
 
 build__ubuntu_noble() {
-  cd "${srcdir}"/../../staging
-
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
@@ -145,8 +141,6 @@ build__ubuntu_noble() {
 }
 
 build__rocky_8() {
-  cd "${srcdir}"/../../staging
-
   # ugly workaround to disable rpm system-wide stripping
   # please don't execute outside of the build agent
   echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile
@@ -172,8 +166,6 @@ build__rocky_8() {
 }
 
 build__rocky_9() {
-  cd "${srcdir}"/../../staging
-
   # ugly workaround to disable rpm system-wide stripping
   # please don't execute outside of the build agent
   echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile

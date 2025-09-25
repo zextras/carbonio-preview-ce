@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-def buildContainer(String title, String description, String dockerfile, String tag) {
-    sh 'docker build ' +
-            '--label org.opencontainers.image.title="' + title + '" ' +
-            '--label org.opencontainers.image.description="' + description + '" ' +
-            '--label org.opencontainers.image.vendor="Zextras" ' +
-            '-f ' + dockerfile + ' -t ' + tag + ' .'
-    sh 'docker push ' + tag
-}
+library(
+    identifier: 'jenkins-packages-build-library@1.0.4',
+    retriever: modernSCM([
+        $class: 'GitSCMSource',
+        remote: 'git@github.com:zextras/jenkins-packages-build-library.git',
+        credentialsId: 'jenkins-integration-with-github-account'
+    ])
+)
 
 pipeline {
     agent {
@@ -17,433 +17,91 @@ pipeline {
             label 'zextras-v1'
         }
     }
+
     environment {
         LC_ALL = 'C.UTF-8'
-        jenkins_build = 'true'
     }
-    parameters {
-        booleanParam defaultValue: false, description: 'Whether to upload the packages in playground repositories', name: 'PLAYGROUND'
-    }
+
     options {
         buildDiscarder(logRotator(numToKeepStr: '25'))
+        skipDefaultCheckout()
         timeout(time: 2, unit: 'HOURS')
-        skipDefaultCheckout() // Do the checkout only manually because it is a heavy operation and it can lead to permission problems, conflicts etc
     }
+
+    parameters {
+        booleanParam defaultValue: false,
+            description: 'Whether to upload the packages in playground repositories',
+            name: 'PLAYGROUND'
+    }
+
+    tools {
+        jfrog 'jfrog-cli'
+    }
+
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
                 script {
-                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                }
-            }
-        }
-        stage('Build deb/rpm') {
-            stages {
-                // Replace the pkgrel value with the git commit hash to ensure that
-                // each merged PR has unique artifacts and to prevent conflicts between them.
-                // Note that the pkgrel value will remain as it was in the codebase to avoid
-                // conflicts between multiple open PRs
-                stage('Add timestamp and commit hash') {
-                    when {
-                        branch 'develop'
-                    }
-                    steps {
-                        script {
-                            def timestamp = sh(script: 'date +%s', returnStdout: true).trim()
-                            def gitCommitShort = env.GIT_COMMIT.take(8)
-                            sh """
-                                sed -i "s/pkgrel=\\".*\\"/pkgrel=\\"${timestamp}+${gitCommitShort}\\"/" ./package/preview/PKGBUILD
-                            """
-                        }
-                    }
-                }
-                stage('Stash') {
-                    steps {
-                        sh 'mkdir staging'
-                        sh 'cp -r app package requirements.txt README.md setup.py staging'
-                        stash includes: 'staging/**', name: 'staging'
-                    }
-                }
-                stage('yap') {
-                    parallel {
-                        stage('Ubuntu 20.04') {
-                            agent {
-                                node {
-                                    label 'yap-ubuntu-20-v1'
-                                }
-                            }
-                            steps {
-                                container('yap') {
-                                    unstash 'staging'
-                                    sh 'cp -r staging /tmp'
-                                    sh 'sudo yap build ubuntu-focal /tmp/staging/package'
-                                    stash includes: 'artifacts/*focal*.deb', name: 'artifacts-ubuntu-focal'
-                                }
-                            }
-                            post {
-                                always {
-                                    archiveArtifacts artifacts: 'artifacts/*focal*.deb', fingerprint: true
-                                }
-                            }
-                        }
-                        stage('Ubuntu 22.04') {
-                            agent {
-                                node {
-                                    label 'yap-ubuntu-22-v1'
-                                }
-                            }
-                            steps {
-                                container('yap') {
-                                    unstash 'staging'
-                                    sh 'cp -r staging /tmp'
-                                    sh 'sudo yap build ubuntu-jammy /tmp/staging/package'
-                                    stash includes: 'artifacts/*jammy*.deb', name: 'artifacts-ubuntu-jammy'
-                                }
-                            }
-                            post {
-                                always {
-                                    archiveArtifacts artifacts: 'artifacts/*jammy*.deb', fingerprint: true
-                                }
-                            }
-                        }
-                        stage('Ubuntu 24.04') {
-                            agent {
-                                node {
-                                    label 'yap-ubuntu-24-v1'
-                                }
-                            }
-                            steps {
-                                container('yap') {
-                                    unstash 'staging'
-                                    sh 'cp -r staging /tmp'
-                                    sh 'sudo yap build ubuntu-noble /tmp/staging/package'
-                                    stash includes: 'artifacts/*noble*.deb', name: 'artifacts-ubuntu-noble'
-                                }
-                            }
-                            post {
-                                always {
-                                    archiveArtifacts artifacts: 'artifacts/*noble*.deb', fingerprint: true
-                                }
-                            }
-                        }
-                        stage('RHEL8') {
-                            agent {
-                                node {
-                                    label 'yap-rocky-8-v1'
-                                }
-                            }
-                            steps {
-                                container('yap') {
-                                    unstash 'staging'
-                                    sh 'cp -r staging /tmp'
-                                    sh 'sudo yap build rocky-8 /tmp/staging/package'
-                                    stash includes: 'artifacts/*el8*.rpm', name: 'artifacts-rocky-8'
-                                }
-                            }
-                            post {
-                                always {
-                                    archiveArtifacts artifacts: 'artifacts/*el8*.rpm', fingerprint: true
-                                }
-                            }
-                        }
-                        stage('RHEL9') {
-                            agent {
-                                node {
-                                    label 'yap-rocky-9-v1'
-                                }
-                            }
-                            steps {
-                                container('yap') {
-                                    unstash 'staging'
-                                    sh 'cp -r staging /tmp'
-                                    sh 'sudo yap build rocky-9 /tmp/staging/package'
-                                    stash includes: 'artifacts/*el9*.rpm', name: 'artifacts-rocky-9'
-                                }
-                            }
-                            post {
-                                always {
-                                    archiveArtifacts artifacts: 'artifacts/*el9*.rpm', fingerprint: true
-                                }
-                            }
-                        }
-                    }
+                    gitMetadata()
                 }
             }
         }
 
-        stage('Upload To Develop') {
+        stage('Build and Publish Docker Image') {
             when {
-                branch 'develop'
-            }
-            steps {
-                unstash 'artifacts-ubuntu-focal'
-                unstash 'artifacts-ubuntu-jammy'
-                unstash 'artifacts-ubuntu-noble'
-                unstash 'artifacts-rocky-8'
-                unstash 'artifacts-rocky-9'
-
-                script {
-                    def server = Artifactory.server 'zextras-artifactory'
-                    def buildInfo
-                    def uploadSpec
-
-                    buildInfo = Artifactory.newBuildInfo()
-                    uploadSpec = """{
-                        "files": [
-                            {
-                                "pattern": "artifacts/*focal*.deb",
-                                "target": "ubuntu-devel/pool/",
-                                "props": "deb.distribution=focal;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*jammy*.deb",
-                                "target": "ubuntu-devel/pool/",
-                                "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*noble*.deb",
-                                "target": "ubuntu-devel/pool/",
-                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el8.x86_64.rpm",
-                                "target": "centos8-devel/zextras/{1}/{1}-{2}.el8.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el9.x86_64.rpm",
-                                "target": "rhel9-devel/zextras/{1}/{1}-{2}.el9.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            }
-                        ]
-                    }"""
-                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
-                }
-            }
-        }
-
-        stage('Upload To Playground') {
-            when {
-                anyOf {
-                    branch 'playground/*'
-                    expression { params.PLAYGROUND == true }
-                }
-            }
-            steps {
-                unstash 'artifacts-ubuntu-focal'
-                unstash 'artifacts-ubuntu-jammy'
-                unstash 'artifacts-ubuntu-noble'
-                unstash 'artifacts-rocky-8'
-                unstash 'artifacts-rocky-9'
-
-                script {
-                    def server = Artifactory.server 'zextras-artifactory'
-                    def buildInfo
-                    def uploadSpec
-
-                    buildInfo = Artifactory.newBuildInfo()
-                    uploadSpec = """{
-                        "files": [
-                            {
-                                "pattern": "artifacts/*focal*.deb",
-                                "target": "ubuntu-playground/pool/",
-                                "props": "deb.distribution=focal;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*jammy*.deb",
-                                "target": "ubuntu-playground/pool/",
-                                "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*noble*.deb",
-                                "target": "ubuntu-playground/pool/",
-                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el8.x86_64.rpm",
-                                "target": "centos8-playground/zextras/{1}/{1}-{2}.el8.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el9.x86_64.rpm",
-                                "target": "rhel9-playground/zextras/{1}/{1}-{2}.el9.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            }
-                        ]
-                    }"""
-                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
-                }
-            }
-        }
-        stage('Upload & Promotion Config') {
-            when {
-                anyOf {
-                    branch 'release/*'
-                    buildingTag()
-                }
-            }
-            steps {
-                unstash 'artifacts-ubuntu-focal'
-                unstash 'artifacts-ubuntu-jammy'
-                unstash 'artifacts-ubuntu-noble'
-                unstash 'artifacts-rocky-8'
-                unstash 'artifacts-rocky-9'
-
-                script {
-                    def server = Artifactory.server 'zextras-artifactory'
-                    def buildInfo
-                    def uploadSpec
-                    def config
-
-                    //ubuntu
-                    buildInfo = Artifactory.newBuildInfo()
-                    buildInfo.name += '-ubuntu'
-                    uploadSpec = """{
-                        "files": [
-                            {
-                                "pattern": "artifacts/*focal*.deb",
-                                "target": "ubuntu-rc/pool/",
-                                "props": "deb.distribution=focal;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*jammy*.deb",
-                                "target": "ubuntu-rc/pool/",
-                                "props": "deb.distribution=jammy;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            },
-                            {
-                                "pattern": "artifacts/*noble*.deb",
-                                "target": "ubuntu-rc/pool/",
-                                "props": "deb.distribution=noble;deb.component=main;deb.architecture=amd64;vcs.revision=${env.GIT_COMMIT}"
-                            }
-                        ]
-                    }"""
-                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
-                    config = [
-                            'buildName'          : buildInfo.name,
-                            'buildNumber'        : buildInfo.number,
-                            'sourceRepo'         : 'ubuntu-rc',
-                            'targetRepo'         : 'ubuntu-release',
-                            'comment'            : 'Do not change anything! Just press the button',
-                            'status'             : 'Released',
-                            'includeDependencies': false,
-                            'copy'               : true,
-                            'failFast'           : true
-                    ]
-                    Artifactory.addInteractivePromotion server: server, promotionConfig: config, displayName: 'Ubuntu Promotion to Release'
-                    server.publishBuildInfo buildInfo
-
-                    //rhel8
-                    buildInfo = Artifactory.newBuildInfo()
-                    buildInfo.name += '-centos8'
-                    uploadSpec = """{
-                        "files": [
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el8.x86_64.rpm",
-                                "target": "centos8-rc/zextras/{1}/{1}-{2}.el8.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            }
-                        ]
-                    }"""
-                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
-                    config = [
-                            'buildName'          : buildInfo.name,
-                            'buildNumber'        : buildInfo.number,
-                            'sourceRepo'         : 'centos8-rc',
-                            'targetRepo'         : 'centos8-release',
-                            'comment'            : 'Do not change anything! Just press the button',
-                            'status'             : 'Released',
-                            'includeDependencies': false,
-                            'copy'               : true,
-                            'failFast'           : true
-                    ]
-                    Artifactory.addInteractivePromotion server: server, promotionConfig: config, displayName: 'RHEL8 Promotion to Release'
-                    server.publishBuildInfo buildInfo
-
-                    //rhel9
-                    buildInfo = Artifactory.newBuildInfo()
-                    buildInfo.name += '-rhel9'
-                    uploadSpec = """{
-                        "files": [
-                            {
-                                "pattern": "artifacts/(carbonio-preview-ce)-(*).el9.x86_64.rpm",
-                                "target": "rhel9-rc/zextras/{1}/{1}-{2}.el9.x86_64.rpm",
-                                "props": "rpm.metadata.arch=x86_64;rpm.metadata.vendor=zextras;vcs.revision=${env.GIT_COMMIT}"
-                            }
-                        ]
-                    }"""
-                    server.upload spec: uploadSpec, buildInfo: buildInfo, failNoOp: false
-                    config = [
-                            'buildName'          : buildInfo.name,
-                            'buildNumber'        : buildInfo.number,
-                            'sourceRepo'         : 'rhel9-rc',
-                            'targetRepo'         : 'rhel9-release',
-                            'comment'            : 'Do not change anything! Just press the button',
-                            'status'             : 'Released',
-                            'includeDependencies': false,
-                            'copy'               : true,
-                            'failFast'           : true
-                    ]
-                    Artifactory.addInteractivePromotion server: server, promotionConfig: config, displayName: 'RHEL9 Promotion to Release'
-                    server.publishBuildInfo buildInfo
-                }
-            }
-        }
-        stage('Build and Publish Docker Image - Dev') {
-            when {
-                not {
-                    buildingTag()
-                }
                 not {
                     expression { env.BRANCH_NAME.startsWith("PR-") }
                 }
             }
+
             steps {
                 container('dind') {
                     withDockerRegistry(credentialsId: 'private-registry', url: 'https://registry.dev.zextras.com') {
                         script {
-                            def branchTag = env.BRANCH_NAME.replaceAll('/', '-').toLowerCase()
-                            def imageTag = "registry.dev.zextras.com/dev/carbonio-preview-ce:${branchTag}"
+                            String branchTag = env.BRANCH_NAME.replaceAll('/', '-').toLowerCase()
+                            Set<String> imageTags = [ branchTag ]
 
-                            buildContainer(
-                                'Carbonio Preview CE',
-                                'Carbonio Preview Community Edition',
-                                'docker/minimal/carbonio-preview/Dockerfile',
-                                imageTag
-                            )
-
-                            // alias "latest" for last build of develop
                             if (env.BRANCH_NAME == 'develop') {
-                                def latestTag = "registry.dev.zextras.com/dev/carbonio-preview-ce:latest"
-
-                                sh "docker tag ${imageTag} ${latestTag}"
-                                sh "docker push ${latestTag}"
+                                imageTags.add('latest')
+                            } else if (buildingTag() && env.TAG_NAME?.trim()) {
+                                imageTags.add(env.TAG_NAME?.startsWith('v') ? env.TAG_NAME.substring(1) : env.TAG_NAME)
                             }
+
+                            dockerHelper.buildImage([
+                                imageName: 'registry.dev.zextras.com/dev/carbonio-preview-ce',
+                                imageTags: imageTags,
+                                dockerfile: 'docker/minimal/carbonio-preview/Dockerfile',
+                                ocLabels: [
+                                    title: 'Carbonio Preview CE',
+                                    description: 'Carbonio Preview Community Edition',
+                                    version: branchTag
+                                ]
+                            ])
                         }
                     }
                 }
             }
         }
-        stage('Build and Publish Docker Image - Stable') {
-            when {
-                buildingTag()
-            }
-            steps {
-                container('dind') {
-                    withDockerRegistry(credentialsId: 'private-registry', url: 'https://registry.dev.zextras.com') {
-                        script {
-                            def releaseTag = env.TAG_NAME.startsWith('v') ? env.TAG_NAME.substring(1) : env.TAG_NAME
-                            def imageTag = "registry.dev.zextras.com/dev/carbonio-preview-ce:${releaseTag}"
 
-                            buildContainer(
-                                'Carbonio Preview CE',
-                                'Carbonio Preview Community Edition',
-                                'docker/minimal/carbonio-preview/Dockerfile',
-                                imageTag
-                            )
-                        }
-                    }
-                }
+        stage('Build deb/rpm') {
+            steps {
+                echo 'Building deb/rpm packages'
+                buildStage([
+                    buildDirs: ['package'],
+                    preStashScript: '''
+                        tar czf package/preview/carbonio-preview-src.tar.gz \
+                            app package requirements.txt README.md setup.py
+                    ''',
+                ])
+            }
+        }
+
+        stage('Upload artifacts') {
+            steps {
+                uploadStage(
+                    packages: yapHelper.getPackageNames('package/yap.json')
+                )
             }
         }
     }
