@@ -43,13 +43,13 @@ Asking for a GIF output can only be done when the input file is a GIF, otherwise
 
 ## APIs Documentation 📚
 
-Once the service is up and running, APIs will be found 
+Once the service is up and running, APIs will be found
 [here](https://127.78.0.6:10000/docs)
 
 ## Dependencies 🔗
 
 These are the dependencies that the service has.
-These dependencies are required to run the service correctly but are not installed by the package. 
+These dependencies are required to run the service correctly but are not installed by the package.
 They must be installed if Mandatory otherwise user discretion is advised
 
 | Name                 | Mandatory/Optional |
@@ -107,7 +107,7 @@ To start the application from command line, go to the project folder and type:
 gunicorn controller:app --config gunicorn.conf.py
 ```
 
-There are others alternatives, you can also start the program from the main class (if you want to debug it). 
+There are others alternatives, you can also start the program from the main class (if you want to debug it).
 
 
 ## CI and Tests 🤖

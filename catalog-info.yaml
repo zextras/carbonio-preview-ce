@@ -12,7 +12,7 @@ metadata:
     - python
     - backend
   links:
-    - url: https://github.com/Zextras/carbonio-preview-ce/blob/develop/README.md
+    - url: https://github.com/Zextras/carbonio-preview-ce/blob/devel/README.md
       title: README
 spec:
   type: service
@@ -38,4 +38,4 @@ spec:
   lifecycle: production
   owner: shuffled-waffles
   definition:
-    $text: https://github.com/Zextras/carbonio-preview-ce/blob/develop/rest-api.yaml
+    $text: https://github.com/Zextras/carbonio-preview-ce/blob/devel/rest-api.yaml
