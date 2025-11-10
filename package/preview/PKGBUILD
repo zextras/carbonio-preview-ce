@@ -48,11 +48,11 @@ makedepends__rocky_9=(
 )
 
 source=(
+  "531-carbonio-preview.sh"
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
   "carbonio-preview-start.sh.in"
   "carbonio-preview.hcl"
-  "carbonio-preview.sh"
   "carbonio-preview"
   "messages.ini"
   "intentions.json"
@@ -61,11 +61,11 @@ source=(
   "carbonio-preview-src.tar.gz"
 )
 sha256sums=(
+  'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'cf5902414af144e4fde6c03f17308142596c65a8ec4f910e4cacfd93d863b0d9'
   '0d557b352f56ef2e4ef32cdcf69e60ea4f3de602e0e78ce0b4e8711e113e2880'
   'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
-  'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
   'e193105f8e0710525b696ac9236f9c24e42f2b9fe1e8950331bc2026d9e698f2'
   '17aa6d19c18fcb58b11cd04ddc12e9aea89381453555f8095d8b875a27f5d639'
@@ -203,8 +203,8 @@ package() {
   install -Dm644 "${srcdir}/carbonio-preview.hcl" \
     "${pkgdir}/etc/zextras/service-discover/carbonio-preview.hcl"
 
-  install -Dm755 "${srcdir}/carbonio-preview.sh" \
-    "${pkgdir}/etc/zextras/pending-setups.d/carbonio-preview.sh"
+  install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
+    "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
 
   install -Dm644 "${srcdir}/intentions.json" \
     "${pkgdir}/etc/carbonio/preview/service-discover/intentions.json"
