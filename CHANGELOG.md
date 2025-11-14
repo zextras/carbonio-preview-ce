@@ -1,3 +1,13 @@
+## [1.0.0](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.4...v1.0.0) (2025-11-14)
+
+### ⚠ BREAKING CHANGES
+
+* update release config and trigger first major bump (#100)
+
+### Bug Fixes
+
+* update release config and trigger first major bump ([#100](https://github.com/zextras/carbonio-preview-ce/issues/100)) ([cf421ed](https://github.com/zextras/carbonio-preview-ce/commit/cf421ed82f7707f8df9561ab59d317b7d13facce))
+
 ## [0.6.4](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.3...v0.6.4) (2025-08-21)
 
 ### Features
