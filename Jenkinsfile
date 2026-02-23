@@ -38,6 +38,14 @@ pipeline {
         timeout(time: 2, unit: 'HOURS')
     }
 
+    parameters {
+        booleanParam(
+            name: 'PREPARE_RELEASE',
+            defaultValue: false,
+            description: 'Check this to prepare a new release (creates pre-release branch and PR)'
+        )
+    }
+
     stages {
         stage('Setup') {
             steps {
