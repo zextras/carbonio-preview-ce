@@ -24,4 +24,4 @@ psutil==7.0.0
 
 python-multipart==0.0.20
 
-CairoSVG==2.7.1
+CairoSVG==2.8.2
