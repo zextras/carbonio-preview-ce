@@ -7,7 +7,9 @@ PartOf=service-discover.target
 
 [Service]
 User=carbonio-preview
-ExecStart=/usr/bin/consul connect envoy \
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/bin/service-discover-wrapper.sh \
     -token-file /etc/carbonio/preview/service-discover/token \
     -admin-bind localhost:0 \
     -sidecar-for carbonio-preview
