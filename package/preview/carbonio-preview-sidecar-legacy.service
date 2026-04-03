@@ -1,5 +1,9 @@
+# SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 [Unit]
-Description=Carbonio Preview sidecar proxy
+Description=Carbonio Preview Sidecar
 Documentation=https://docs.zextras.com/
 Requires=network-online.target
 After=network-online.target

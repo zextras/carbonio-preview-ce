@@ -12,7 +12,7 @@ library(
 )
 
 library(
-    identifier: 'jenkins-lib-common@1.1.2',
+    identifier: 'jenkins-lib-common@1.5.0',
     retriever: modernSCM([
         $class: 'GitSCMSource',
         credentialsId: 'jenkins-integration-with-github-account',
@@ -60,18 +60,15 @@ pipeline {
 
         stage('Build deb/rpm') {
             steps {
-                script {
-                    buildPackages([
-                        pkgbuildPath: 'package/preview/PKGBUILD',
-                        buildStageConfig: [
-                            buildDirs: ['package'],
-                            preStashScript: '''
-                                tar czf package/preview/carbonio-preview-src.tar.gz \
-                                    app package requirements.txt README.md setup.py
-                            '''
-                        ]
-                    ])
-                }
+                buildStage([
+                    buildDirs: ['package'],
+                    addCarbonioRepos: true,
+                    carbonioRepoCredentialId: 'artifactory-jenkins-gradle-properties-splitted',
+                    preStashScript: '''
+                        tar czf package/preview/carbonio-preview-src.tar.gz \
+                            app package requirements.txt README.md setup.py
+                    '''
+                ])
             }
         }
 

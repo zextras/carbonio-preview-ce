@@ -64,8 +64,8 @@ source=(
 sha256sums=(
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'cf5902414af144e4fde6c03f17308142596c65a8ec4f910e4cacfd93d863b0d9'
-  '3072b5efd90ba4f17cca15cd415a987b02650ccc8635112a6343840fcc449174'
-  '79436bc83c482c966a5481d64a35686988161156c8c760a78ffaa31b095083d0'
+  '4cfdd83b8a892eba82259989cc339bb3a311c671e753413cf24cf482f027160b'
+  '90e595d8cd5353f6a00ecfd56fd97cac7587894dfe97ac28ef5fec398b5901d9'
   'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
@@ -81,28 +81,6 @@ backup=(
   "etc/carbonio/preview/config.ini"
 )
 
-build__ubuntu_focal() {
-  pip3 install \
-    --prefix="${pkgdir}/opt/zextras/common" \
-    -r requirements.txt
-
-  python3 setup.py install \
-    --no-compile \
-    --prefix=/opt/zextras/common \
-    --root="${pkgdir}"
-
-  # Copy the start script template to fakeroot
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
-  # Replace python version and prefix according to distro
-  # without modify the start script in srcdir.
-  sed -i "s/PYTHON_VER/3.8/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PREFIX/common/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-}
-
 build__ubuntu_jammy() {
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
@@ -115,7 +93,6 @@ build__ubuntu_jammy() {
 
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
   sed -i "s/PYTHON_VER/3.10/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common\/local/g" \
@@ -134,7 +111,6 @@ build__ubuntu_noble() {
 
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
   sed -i "s/PYTHON_VER/3.12/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common\/local/g" \
@@ -143,12 +119,6 @@ build__ubuntu_noble() {
 }
 
 build__rocky_8() {
-  # ugly workaround to disable rpm system-wide stripping
-  # please don't execute outside of the build agent
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip-static-archive
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip
-
   pip3.8 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
@@ -160,7 +130,6 @@ build__rocky_8() {
 
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
   sed -i "s/PYTHON_VER/3.8/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common/g" \
@@ -168,12 +137,6 @@ build__rocky_8() {
 }
 
 build__rocky_9() {
-  # ugly workaround to disable rpm system-wide stripping
-  # please don't execute outside of the build agent
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-python-bytecompile
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip-static-archive
-  echo "#!/bin/sh" >/usr/lib/rpm/brp-strip
-
   pip3 install \
     --prefix="${pkgdir}/opt/zextras/common" \
     -r requirements.txt
@@ -185,7 +148,6 @@ build__rocky_9() {
 
   install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-
   sed -i "s/PYTHON_VER/3.9/g" \
     "${pkgdir}/usr/bin/carbonio-preview-start.sh"
   sed -i "s/PREFIX/common/g" \
@@ -248,10 +210,10 @@ package__ubuntu_jammy() {
 }
 
 postinst() {
-  getent group 'carbonio-preview' >/dev/null ||
-    groupadd -r 'carbonio-preview'
-  getent passwd 'carbonio-preview' >/dev/null ||
-    useradd -r -m \
+  getent group 'carbonio-preview' >/dev/null \
+    || groupadd -r 'carbonio-preview'
+  getent passwd 'carbonio-preview' >/dev/null \
+    || useradd -r -m \
       -d '/var/lib/carbonio-preview' \
       -g 'carbonio-preview' \
       -s /sbin/nologin 'carbonio-preview'
@@ -272,10 +234,8 @@ postinst() {
 
 prerm() {
   if [ -d /run/systemd/system ]; then
-    systemctl --no-reload disable carbonio-preview.service >/dev/null 2>&1 || :
-    systemctl --no-reload disable carbonio-preview-sidecar.service >/dev/null 2>&1 || :
-    systemctl stop carbonio-preview.service >/dev/null 2>&1 || :
-    systemctl stop carbonio-preview-sidecar.service >/dev/null 2>&1 || :
+    systemctl disable --now carbonio-preview.service >/dev/null 2>&1 || :
+    systemctl disable --now carbonio-preview-sidecar.service >/dev/null 2>&1 || :
   fi
 }
 
