@@ -6,14 +6,11 @@
 Description=Carbonio Preview Sidecar
 Documentation=https://docs.zextras.com/
 Requires=network-online.target
-After=network-online.target service-discover.service
-PartOf=service-discover.target
+After=network-online.target
 
 [Service]
 User=carbonio-preview
-Type=notify
-NotifyAccess=all
-ExecStart=/usr/bin/service-discover-wrapper.sh \
+ExecStart=/usr/bin/consul connect envoy \
     -token-file /etc/carbonio/preview/service-discover/token \
     -admin-bind localhost:0 \
     -sidecar-for carbonio-preview
@@ -43,4 +40,4 @@ MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
-WantedBy=service-discover.target
+WantedBy=multi-user.target
