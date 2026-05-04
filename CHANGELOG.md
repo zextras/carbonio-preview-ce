@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.0.1...v1.1.0) (2026-05-04)
+
+### Features
+
+* systemd hardening and service-discover.target orchestration ([#131](https://github.com/zextras/carbonio-preview-ce/issues/131)) ([2818405](https://github.com/zextras/carbonio-preview-ce/commit/2818405449e7f8eede817fcee36ce085d9adb98b))
+
 ## [1.0.1](https://github.com/zextras/carbonio-preview-ce/compare/v1.0.0...v1.0.1) (2026-02-23)
 
 ## [1.0.0](https://github.com/zextras/carbonio-preview-ce/compare/v0.6.4...v1.0.0) (2025-11-14)
