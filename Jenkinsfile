@@ -60,18 +60,18 @@ pipeline {
 
         stage('Build deb/rpm') {
             steps {
-                buildPackages([
-                    pkgbuildPath: 'package/preview/PKGBUILD',
-                    buildStageConfig: [
-                        buildDirs: ['package'],
-                        addCarbonioRepos: true,
-                        carbonioRepoCredentialId: 'artifactory-jenkins-gradle-properties-splitted',
-                        preStashScript: '''
-                            tar czf package/preview/carbonio-preview-src.tar.gz \
-                                app package requirements.txt README.md setup.py
-                        '''
-                    ]
-                ])
+                script {
+                    buildPackages([
+                        pkgbuildPath: 'package/preview/PKGBUILD',
+                        buildStageConfig: [
+                            buildDirs: ['package'],
+                            preStashScript: '''
+                                tar czf package/preview/carbonio-preview-src.tar.gz \
+                                    app package requirements.txt README.md setup.py
+                            '''
+                        ]
+                    ])
+                }
             }
         }
 
