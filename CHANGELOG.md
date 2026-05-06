@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/zextras/carbonio-preview-ce/compare/v1.1.0...v1.1.1) (2026-05-06)
+
+### Bug Fixes
+
+* restore buildPackages() to fix pkgrel on tag builds ([#136](https://github.com/zextras/carbonio-preview-ce/issues/136)) ([6e62ec4](https://github.com/zextras/carbonio-preview-ce/commit/6e62ec413b3ff6e9b17408aea8d1ea1c9e13abeb))
+
 ## [1.1.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.0.1...v1.1.0) (2026-05-04)
 
 ### Features
