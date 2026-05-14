@@ -1,0 +1,10 @@
+version = 1
+SPDX-PackageName = "carbonio-preview-ce"
+SPDX-PackageSupplier = "Zextras <packages@zextras.com>"
+SPDX-PackageDownloadLocation = "https://github.com/Zextras/carbonio-preview-ce"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
