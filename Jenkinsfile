@@ -3,149 +3,51 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 library(
-    identifier: 'jenkins-dt3-lib@v1.2.0',
-    retriever: modernSCM([
-        $class: 'GitSCMSource',
-        remote: 'git@github.com:zextras/jenkins-dt3-lib.git',
-        credentialsId: 'jenkins-integration-with-github-account'
-    ])
-)
-
-library(
-    identifier: 'jenkins-lib-common@v2.10.0',
+    identifier: 'jenkins-lib-common@dt3-pipeline',
     retriever: modernSCM([
         $class: 'GitSCMSource',
         credentialsId: 'jenkins-integration-with-github-account',
-        remote: 'git@github.com:zextras/jenkins-lib-common.git'
+        remote: 'git@github.com:zextras/jenkins-lib-common.git',
     ])
 )
 
-properties(defaultPipelineProperties())
-
-pipeline {
-    agent {
-        node {
-            label 'zextras-v1'
-        }
-    }
-
-    environment {
-        LC_ALL = 'C.UTF-8'
-        jenkins_build = 'true'
-    }
-
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '25'))
-        skipDefaultCheckout()
-        timeout(time: 2, unit: 'HOURS')
-    }
-
-    parameters {
-        booleanParam(
-            name: 'PREPARE_RELEASE',
-            defaultValue: false,
-            description: 'Check this to prepare a new release (creates pre-release branch and PR)'
-        )
-    }
-
-    stages {
-        stage('Setup') {
-            steps {
-                checkout scm
-                script {
-                    gitMetadata()
-                }
-            }
-        }
-
-        stage('Build deb/rpm') {
-            steps {
-                script {
-                    buildPackages([
-                        pkgbuildPath: 'package/preview/PKGBUILD',
-                        buildStageConfig: [
-                            buildDirs: ['package'],
-                            addCarbonioRepos: true,
-                            preStashScript: '''
-                                tar czf package/preview/carbonio-preview-src.tar.gz \
-                                    app package requirements.txt README.md setup.py
-                            '''
-                        ]
-                    ])
-                }
-            }
-        }
-
-        stage('Upload artifacts') {
-            when {
-                expression { return uploadStage.shouldUpload() }
-            }
-            tools {
-                jfrog 'jfrog-cli'
-            }
-            steps {
-                uploadStage(yapPath: 'package/yap.json')
-            }
-        }
-
-        stage('Prepare Release') {
-            agent {
-                node {
-                    label 'sm-release-v1'
-                }
-            }
-            when {
-                allOf {
-                    branch 'devel'
-                    expression { params.PREPARE_RELEASE == true }
-                    not {
-                        expression {
-                            return env.GIT_COMMIT_MSG.contains('[skip ci]') ||
-                                   env.GIT_COMMIT_MSG.contains('chore(release):')
-                        }
-                    }
-                }
-            }
-            steps {
-                script {
-                    container('nodejs-22') {
-                        prepareRelease(
-                            repoName: 'carbonio-preview-ce'
-                        )
-                    }
-                }
-            }
-        }
-
-        stage('Tag for release') {
-            when {
-                allOf {
-                    branch 'devel'
-                    expression {
-                        return env.GIT_COMMIT_MSG.contains('chore(release):') &&
-                               env.GIT_COMMIT_MSG.contains('[skip ci]')
-                    }
-                }
-            }
-            steps {
-                script {
-                    tagRelease()
-                }
-            }
-        }
-
-        stage('Publish docker images') {
-            steps {
-                dockerStage([
-                    dockerfile: 'docker/minimal/carbonio-preview/Dockerfile',
-                    imageName: 'carbonio-preview-ce',
-                    ocLabels: [
-                        title: 'Carbonio Preview CE',
-                        description: 'Carbonio Preview Community Edition'
-                    ],
-                    platforms: ['linux/amd64', 'linux/arm64'] as Set,
-                ])
-            }
-        }
-    }
-}
+// carbonio-preview-ce is a Python project.
+// PKGBUILD source=() expects a carbonio-preview-src.tar.gz tarball;
+// preBuildScript creates it inside the YAP container before `yap build`.
+//
+// zextrasRepoCredentialsId is required because PKGBUILD depends (runtime)
+// include pending-setups, service-discover, libcairo2-dev — these live in
+// the Zextras repo and yap build must resolve them.
+// Equivalent of Gen-1's addCarbonioRepos: true.
+dt3_pipeline(
+    repoName: 'carbonio-preview-ce',
+    packaging: [
+        pkgbuildPath: 'package/preview/PKGBUILD',
+        zextrasRepoCredentialsId: 'artifactory-jenkins-gradle-properties-splitted',
+        ubuntuSinglePkg: false,
+        rockySinglePkg: false,
+        overrides: [
+            ubuntu: [
+                preBuildScript: '''
+                    tar czf package/preview/carbonio-preview-src.tar.gz \
+                        app package requirements.txt README.md setup.py
+                ''',
+            ],
+            rocky: [
+                preBuildScript: '''
+                    tar czf package/preview/carbonio-preview-src.tar.gz \
+                        app package requirements.txt README.md setup.py
+                ''',
+            ],
+        ],
+    ],
+    docker: [[
+        dockerfile: 'docker/minimal/carbonio-preview/Dockerfile',
+        imageName: 'carbonio-preview-ce',
+        title: 'Carbonio Preview CE',
+        description: 'Carbonio Preview Community Edition',
+        platforms: ['linux/amd64', 'linux/arm64'] as Set,
+    ]],
+    reuse: [projectType: 'CE'],
+    gitleaks: true,
+)

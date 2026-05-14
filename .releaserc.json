@@ -1,6 +1,5 @@
 {
-  "branches": ["pre-release"],
-  "repositoryUrl": "https://github.com/zextras/carbonio-preview-ce",
+  "branches": ["devel"],
   "tagFormat": "v${version}",
   "plugins": [
     [
