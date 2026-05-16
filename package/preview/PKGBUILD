@@ -10,7 +10,7 @@ license=("AGPL-3.0-only")
 url="https://github.com/zextras"
 section="admin"
 priority="optional"
-arch=('x86_64')
+arch=('any')
 
 depends__apt=(
   "pending-setups"
