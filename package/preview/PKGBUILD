@@ -17,6 +17,7 @@ depends__apt=(
   "python3"
   "python3-setuptools"
   "service-discover"
+  "service-discover-base"
   "libcairo2-dev"
 )
 depends__rocky_8=(
@@ -24,6 +25,7 @@ depends__rocky_8=(
   "python38"
   "python38-setuptools"
   "service-discover"
+  "service-discover-base"
   "cairo-devel"
 )
 depends__rocky_9=(
@@ -31,6 +33,7 @@ depends__rocky_9=(
   "python3"
   "python3-setuptools"
   "service-discover"
+  "service-discover-base"
   "cairo-devel"
 )
 makedepends__apt=(
