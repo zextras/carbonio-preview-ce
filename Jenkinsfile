@@ -84,9 +84,7 @@ pipeline {
                 jfrog 'jfrog-cli'
             }
             steps {
-                uploadStage(
-                    packages: yapHelper.resolvePackageNames('package/yap.json')
-                )
+                uploadStage(yapPath: 'package/yap.json')
             }
         }
 
