@@ -1,3 +1,13 @@
+## [1.2.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.1.1...v1.2.0) (2026-05-27)
+
+### Features
+
+* **packaging:** use arch=('any') for architecture-independent package ([#140](https://github.com/zextras/carbonio-preview-ce/issues/140)) ([1061c6b](https://github.com/zextras/carbonio-preview-ce/commit/1061c6b1cb632f8d6c2efab5756ed8f618c27536))
+
+### Bug Fixes
+
+* **deps:** add explicit service-discover-base dependency ([#142](https://github.com/zextras/carbonio-preview-ce/issues/142)) ([ec784a0](https://github.com/zextras/carbonio-preview-ce/commit/ec784a07f47a29af0849ff7d7d27fcc2b1f4acac))
+
 ## [1.1.1](https://github.com/zextras/carbonio-preview-ce/compare/v1.1.0...v1.1.1) (2026-05-06)
 
 ### Bug Fixes

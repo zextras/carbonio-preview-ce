@@ -1,5 +1,5 @@
 pkgname="carbonio-preview-ce"
-pkgver="1.1.1"
+pkgver="1.2.0"
 pkgrel="SNAPSHOT"
 pkgdesc="Carbonio Preview"
 maintainer="Zextras <packages@zextras.com>"
