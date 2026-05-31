@@ -142,7 +142,8 @@ pipeline {
                     ocLabels: [
                         title: 'Carbonio Preview CE',
                         description: 'Carbonio Preview Community Edition'
-                    ]
+                    ],
+                    platforms: ['linux/amd64', 'linux/arm64'] as Set,
                 ])
             }
         }
