@@ -3,7 +3,7 @@
 # Stage 1: runs natively on BUILDPLATFORM (amd64 CI builder) — no QEMU.
 # Cross-fetches the Python wheels and the libcairo2 runtime closure for
 # TARGETARCH, then stages them so the final image needs zero RUN steps.
-FROM --platform=$BUILDPLATFORM python:3.10-slim AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.10-slim AS builder
 
 ARG TARGETARCH
 ARG BUILDARCH=amd64
@@ -65,7 +65,7 @@ COPY app /staging/opt/zextras/preview/app
 COPY package/preview/messages.ini /staging/etc/carbonio/preview/messages.ini
 
 # Stage 2: final image — TARGETPLATFORM, zero RUN steps (no QEMU needed).
-FROM --platform=$TARGETPLATFORM python:3.10-slim
+FROM --platform=$TARGETPLATFORM docker.io/library/python:3.10-slim
 
 COPY --from=builder /staging/opt/zextras/preview /opt/zextras/preview
 COPY --from=builder /staging/etc/carbonio/preview /etc/carbonio/preview
