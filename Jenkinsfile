@@ -49,5 +49,4 @@ dt3_pipeline(
         platforms: ['linux/amd64', 'linux/arm64'] as Set,
     ]],
     reuse: [projectType: 'CE'],
-    gitleaks: true,
 )
