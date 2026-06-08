@@ -23,20 +23,11 @@ dt3_pipeline(
     packaging: [
         pkgbuildPath: 'package/preview/PKGBUILD',
         addCarbonioRepos: true,
-        overrides: [
-            ubuntu: [
-                preBuildScript: '''
-                    tar czf package/preview/carbonio-preview-src.tar.gz \
-                        app package requirements.txt README.md setup.py
-                ''',
-            ],
-            rocky: [
-                preBuildScript: '''
-                    tar czf package/preview/carbonio-preview-src.tar.gz \
-                        app package requirements.txt README.md setup.py
-                ''',
-            ],
-        ],
+        preBuildScript: '''
+            set -e
+            tar czf package/preview/carbonio-preview-src.tar.gz \
+                app package requirements.txt README.md setup.py
+        ''',
     ],
     docker: [[
         dockerfile: 'docker/minimal/carbonio-preview/Dockerfile',
