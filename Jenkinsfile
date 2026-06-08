@@ -15,15 +15,14 @@ library(
 // PKGBUILD source=() expects a carbonio-preview-src.tar.gz tarball;
 // preBuildScript creates it inside the YAP container before `yap build`.
 //
-// zextrasRepoCredentialsId is required because PKGBUILD depends (runtime)
-// include pending-setups, service-discover, libcairo2-dev — these live in
-// the Zextras repo and yap build must resolve them.
-// Equivalent of Gen-1's addCarbonioRepos: true.
+// addCarbonioRepos wires the Carbonio repos so yap build can resolve the
+// PKGBUILD runtime deps (pending-setups, service-discover, libcairo2-dev)
+// that live in the Zextras repo.
 dt3_pipeline(
     repoName: 'carbonio-preview-ce',
     packaging: [
         pkgbuildPath: 'package/preview/PKGBUILD',
-        zextrasRepoCredentialsId: 'artifactory-jenkins-gradle-properties-splitted',
+        addCarbonioRepos: true,
         overrides: [
             ubuntu: [
                 preBuildScript: '''
