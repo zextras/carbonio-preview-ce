@@ -24,8 +24,6 @@ dt3_pipeline(
     packaging: [
         pkgbuildPath: 'package/preview/PKGBUILD',
         zextrasRepoCredentialsId: 'artifactory-jenkins-gradle-properties-splitted',
-        ubuntuSinglePkg: false,
-        rockySinglePkg: false,
         overrides: [
             ubuntu: [
                 preBuildScript: '''
