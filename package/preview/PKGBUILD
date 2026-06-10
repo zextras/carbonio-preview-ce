@@ -114,6 +114,7 @@ EOF
   export GOMODCACHE="${srcdir}/.gomodcache"
   export GOFLAGS="-mod=mod"
   export GOPRIVATE="github.com/zextras/*"
+  export GOTOOLCHAIN=local
   export CGO_ENABLED=1
   export PKG_CONFIG_PATH="${pkgconfig_dir}:/usr/lib/x86_64-linux-gnu/pkgconfig"
   export CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview"
