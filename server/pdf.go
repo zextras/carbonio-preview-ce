@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -134,7 +133,7 @@ func pdfGetPreview(
 		return
 	}
 
-	sliced, err := render.PDFSlice(data, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
 	if err != nil {
 		log.Printf("pdfGetPreview PDFSlice error: %v", err)
 		errBadRequest(w, config.Msg.InputError)
@@ -226,7 +225,7 @@ func pdfPostPreview(
 		return
 	}
 
-	sliced, err := render.PDFSlice(data, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
 	if err != nil {
 		log.Printf("pdfPostPreview PDFSlice error: %v", err)
 		errBadRequest(w, config.Msg.InputError)
@@ -299,7 +298,7 @@ func renderPDFThumbnail(
 	}
 
 	// PDF worker process: render in-process using PDFium + libvips.
-	out, err := render.PDFRasterize(sem, data, 0, width, height, outputFormat, quality, shape)
+	out, err := pdfRasterizeFunc(sem, data, 0, width, height, outputFormat, quality, shape)
 	if err != nil {
 		log.Printf("renderPDFThumbnail PDFRasterize: %v", err)
 		errBadRequest(w, config.Msg.InputError)

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -151,7 +150,7 @@ func imageGetPreview(
 		cropMode = "none"
 	}
 
-	out, err := render.ImageThumbnail(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
+	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
 	if err != nil {
 		log.Printf("imageGetPreview render error: %v", err)
 		errInternal(w, "render failed")
@@ -221,7 +220,7 @@ func imageGetThumbnail(
 	}
 
 	// Image thumbnails use CENTER crop (per Python spec).
-	out, err := render.ImageThumbnail(sem, data, width, height, outputFormat, quality, shape, "center")
+	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, shape, "center")
 	if err != nil {
 		log.Printf("imageGetThumbnail render error: %v", err)
 		errInternal(w, "render failed")
@@ -275,7 +274,7 @@ func imagePostPreview(
 		cropMode = "none"
 	}
 
-	out, err := render.ImageThumbnail(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
+	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
 	if err != nil {
 		log.Printf("imagePostPreview render error: %v", err)
 		errInternal(w, "render failed")
@@ -325,7 +324,7 @@ func imagePostThumbnail(
 	}
 
 	// Image thumbnails use CENTER crop (per Python spec).
-	out, err := render.ImageThumbnail(sem, data, width, height, outputFormat, quality, shape, "center")
+	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, shape, "center")
 	if err != nil {
 		log.Printf("imagePostThumbnail render error: %v", err)
 		errInternal(w, "render failed")

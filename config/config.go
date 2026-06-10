@@ -182,6 +182,12 @@ func loadINI() (*ini.File, error) {
 	return nil, fmt.Errorf("no config.ini found in any search path")
 }
 
+// iniLoad loads an ini file from an explicit path.
+// It is unexported so that only same-package tests can call it.
+func iniLoad(path string) (*ini.File, error) {
+	return ini.Load(path)
+}
+
 // iniStr is a helper that returns the string value of a dotted key
 // (section "carbonio.preview", key "default_host") or the fallback if
 // the key is absent.

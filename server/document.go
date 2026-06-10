@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -159,7 +158,7 @@ func docGetPreview(
 		return
 	}
 
-	sliced, err := render.PDFSlice(pdfBytes, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
 	if err != nil {
 		log.Printf("docGetPreview PDFSlice error: %v", err)
 		errBadRequest(w, config.Msg.InputError)
@@ -271,7 +270,7 @@ func docPostPreview(
 		return
 	}
 
-	sliced, err := render.PDFSlice(pdfBytes, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
 	if err != nil {
 		log.Printf("docPostPreview PDFSlice error: %v", err)
 		errBadRequest(w, config.Msg.InputError)
@@ -341,5 +340,5 @@ func convertDocToPDF(r *http.Request, data []byte, langTag string, cfg *config.C
 	docsTimeout := time.Duration(cfg.ServiceDocsTimeout) * time.Second
 	// docsEditorURL = full convert-to URL + "/pdf"
 	docsURL := cfg.DocumentConversionFullConvertAddress + "/pdf"
-	return render.CollaboraConvert(r.Context(), data, langTag, docsURL, docsTimeout)
+	return collaboraConvertFunc(r.Context(), data, langTag, docsURL, docsTimeout)
 }
