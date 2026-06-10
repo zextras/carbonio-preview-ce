@@ -12,7 +12,7 @@ PartOf=carbonio.target
 
 [Service]
 Type=simple
-ExecStart= /usr/bin/carbonio-preview-start.sh
+ExecStart= /usr/bin/carbonio-preview-bin
 User=carbonio-preview
 Group=carbonio-preview
 Restart=on-failure

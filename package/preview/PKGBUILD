@@ -10,44 +10,46 @@ license=("AGPL-3.0-only")
 url="https://github.com/zextras"
 section="admin"
 priority="optional"
-arch=('any')
+arch=('x86_64' 'aarch64')
 
 depends__apt=(
   "pending-setups"
-  "python3"
-  "python3-setuptools"
   "service-discover"
   "service-discover-base"
-  "libcairo2-dev"
+  "libvips42"
 )
 depends__rocky_8=(
   "pending-setups"
-  "python38"
-  "python38-setuptools"
   "service-discover"
   "service-discover-base"
-  "cairo-devel"
+  "vips"
 )
 depends__rocky_9=(
   "pending-setups"
-  "python3"
-  "python3-setuptools"
   "service-discover"
   "service-discover-base"
-  "cairo-devel"
+  "vips"
 )
 makedepends__apt=(
   "git"
-  "python3-pkg-resources"
-  "python3-pip"
+  "golang"
+  "gcc"
+  "libvips-dev"
+  "pkg-config"
 )
 makedepends__rocky_8=(
   "git"
-  "python38-pip"
+  "golang"
+  "gcc"
+  "vips-devel"
+  "pkgconfig"
 )
 makedepends__rocky_9=(
   "git"
-  "python3-pip"
+  "golang"
+  "gcc"
+  "vips-devel"
+  "pkgconfig"
 )
 
 source=(
@@ -55,21 +57,19 @@ source=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
   "carbonio-preview-sidecar-legacy.service"
-  "carbonio-preview-start.sh.in"
   "carbonio-preview.hcl"
   "carbonio-preview"
   "messages.ini"
   "intentions.json"
   "policies.json"
   "service-protocol.json"
-  "carbonio-preview-src.tar.gz"
+  "pdfium-linux-x64.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz"
 )
 sha256sums=(
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'cf5902414af144e4fde6c03f17308142596c65a8ec4f910e4cacfd93d863b0d9'
   '4cfdd83b8a892eba82259989cc339bb3a311c671e753413cf24cf482f027160b'
   '90e595d8cd5353f6a00ecfd56fd97cac7587894dfe97ac28ef5fec398b5901d9'
-  'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
   'e193105f8e0710525b696ac9236f9c24e42f2b9fe1e8950331bc2026d9e698f2'
@@ -84,77 +84,58 @@ backup=(
   "etc/carbonio/preview/config.ini"
 )
 
+_build_go() {
+  # Ensure Go is available (YAP containers may not have it in PATH)
+  if ! command -v go &>/dev/null; then
+    wget -q https://go.dev/dl/go1.25.linux-amd64.tar.gz -O /tmp/go.tar.gz
+    tar -C /usr/local -xzf /tmp/go.tar.gz
+    export PATH=/usr/local/go/bin:$PATH
+  fi
+
+  # PDFium setup
+  PDFIUM_DIR="${srcdir}/pdfium"
+  mkdir -p "${PDFIUM_DIR}"
+  tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${PDFIUM_DIR}"
+
+  # Go module cache inside srcdir to avoid permission issues
+  export GOMODCACHE="${srcdir}/.gomodcache"
+  export GOFLAGS="-mod=mod"
+  export GOPRIVATE="github.com/zextras/*"
+  export CGO_ENABLED=1
+  export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig"
+  export CGO_CFLAGS="-I${PDFIUM_DIR}/include"
+  export CGO_LDFLAGS="-L${PDFIUM_DIR}/lib -lpdfium -Wl,-rpath,/usr/lib/carbonio-preview"
+
+  go mod download
+
+  go build \
+    -ldflags="-s -w" \
+    -o "${pkgdir}/usr/bin/carbonio-preview-bin" \
+    ./cmd/carbonio-preview/...
+
+  # Install bundled libpdfium.so
+  install -Dm755 "${PDFIUM_DIR}/lib/libpdfium.so" \
+    "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
+}
+
+build__ubuntu_focal() {
+  _build_go
+}
+
 build__ubuntu_jammy() {
-  pip3 install \
-    --prefix="${pkgdir}/opt/zextras/common" \
-    -r requirements.txt
-
-  python3 setup.py install \
-    --no-compile \
-    --prefix=/opt/zextras/common \
-    --root="${pkgdir}"
-
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PYTHON_VER/3.10/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PREFIX/common\/local/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  _build_go
 }
 
 build__ubuntu_noble() {
-  pip3 install \
-    --prefix="${pkgdir}/opt/zextras/common" \
-    -r requirements.txt
-
-  python3 setup.py install \
-    --no-compile \
-    --prefix=/opt/zextras/common \
-    --root="${pkgdir}"
-
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PYTHON_VER/3.12/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PREFIX/common\/local/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/UBUNTU24/true/g" "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  _build_go
 }
 
 build__rocky_8() {
-  pip3.8 install \
-    --prefix="${pkgdir}/opt/zextras/common" \
-    -r requirements.txt
-
-  python3.8 setup.py install \
-    --no-compile \
-    --prefix=/opt/zextras/common \
-    --root="${pkgdir}"
-
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PYTHON_VER/3.8/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PREFIX/common/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  _build_go
 }
 
 build__rocky_9() {
-  pip3 install \
-    --prefix="${pkgdir}/opt/zextras/common" \
-    -r requirements.txt
-
-  python3 setup.py install \
-    --no-compile \
-    --prefix=/opt/zextras/common \
-    --root="${pkgdir}"
-
-  install -Dm755 "${srcdir}/carbonio-preview-start.sh.in" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PYTHON_VER/3.9/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
-  sed -i "s/PREFIX/common/g" \
-    "${pkgdir}/usr/bin/carbonio-preview-start.sh"
+  _build_go
 }
 
 _package_common() {
@@ -183,9 +164,6 @@ _package_common() {
     "${pkgdir}/etc/carbonio/preview/messages.ini"
 
   install -Ddm755 "${pkgdir}/var/log/carbonio/preview/"
-
-  # Remove generated bytecode
-  find "${pkgdir}" -iname "*.pyc" -exec rm {} \;
 }
 
 _package_systemd() {
