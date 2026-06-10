@@ -65,7 +65,16 @@ pipeline {
                         pkgbuildPath: 'package/preview/PKGBUILD',
                         buildStageConfig: [
                             buildDirs: ['package'],
-                            addCarbonioRepos: true
+                            addCarbonioRepos: true,
+                            preStashScript: '''
+                                tar czf package/preview/carbonio-preview-ce-src.tar.gz \
+                                    --exclude='.git' \
+                                    --exclude='venv' \
+                                    --exclude='package' \
+                                    --exclude='*.pyc' \
+                                    --exclude='__pycache__' \
+                                    .
+                            '''
                         ]
                     ])
                 }

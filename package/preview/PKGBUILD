@@ -63,6 +63,7 @@ source=(
   "intentions.json"
   "policies.json"
   "service-protocol.json"
+  "carbonio-preview-ce-src.tar.gz"
   "pdfium-linux-x64.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz"
 )
 sha256sums=(
@@ -77,6 +78,7 @@ sha256sums=(
   '7c3dd74a3bab5260cea7b4876a8e472bc3258cc5bf35ebf3d02dae02d7c02ece'
   '1d2e022f32d45f5d5b1118fb524f4bafacc92689b76e7f24eea37b9fed6286fe'
   'SKIP'
+  'SKIP'
 )
 
 backup=(
@@ -86,9 +88,6 @@ backup=(
 
 _build_go_ce() {
   local pkgconfig_dir="$1"
-
-  # Go source is at the workspace root (3 levels up from srcdir = package/preview/src/)
-  local workspace="${srcdir}/../../.."
 
   wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz
   rm -rf /usr/local/go
@@ -121,7 +120,9 @@ EOF
 
   go version
 
-  cd "${workspace}"
+  # Go source was packed by Jenkins preStashScript into carbonio-preview-ce-src.tar.gz
+  # YAP extracts it to srcdir, so go.mod is directly in srcdir
+  cd "${srcdir}"
   go mod download
   go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/...
   cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
