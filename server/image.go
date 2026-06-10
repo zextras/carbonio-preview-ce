@@ -138,13 +138,10 @@ func imageGetPreview(
 	}
 
 	// For preview, crop=true means cover crop (center), crop=false means scale-to-fit.
-	// render.ImageThumbnail always does cover crop, which matches "crop=true".
-	// For crop=false we pass the same data but the Python service uses resize_with_paddings
-	// (scale-to-fit with padding). libvips vips_thumbnail_buffer with VIPS_INTERESTING_NONE
-	// would give us that, but our C function uses VIPS_INTERESTING_CENTRE.
-	// For the initial implementation, we use the same cover_crop path for both.
-	// TODO: implement a separate scale-to-fit path via vips_thumbnail_buffer with
-	// VIPS_INTERESTING_NONE when crop=false.
+	// cropMode="none" triggers the scale_fit_pad C path in render.ImageThumbnail:
+	// vips_thumbnail_buffer with VIPS_INTERESTING_NONE scales to fit inside the box
+	// without cropping, then vips_embed centres it on a transparent canvas.
+	// This matches the Python resize_with_paddings behaviour.
 	cropMode := "center"
 	if !crop {
 		cropMode = "none"

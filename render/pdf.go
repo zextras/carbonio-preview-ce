@@ -107,7 +107,7 @@ func PDFRasterize(
 	}
 
 	if shape == "rounded" {
-		out, err = applyRoundedMask(out, width, height)
+		out, err = applyRoundedMaskVips(out, width, height)
 		if err != nil {
 			return out, nil // non-fatal: return untransformed
 		}
