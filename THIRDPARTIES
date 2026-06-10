@@ -319,6 +319,18 @@ Permission to use, copy, modify and distribute this software and its documentati
 
 ---------------------------------------------------------------------------------------------------
 
+LGPL-2.1-or-later License applies to:
+
+libvips 8.18.3 (bundled as @img/sharp-libvips-linux-x64 / sharp-libvips-linux-arm64 /
+sharp-libvips-dev v1.3.0), Copyright 1991-present John Cupitt and contributors;
+https://github.com/libvips/libvips
+The sharp-libvips prebuilt bundles libvips and its dependencies (libjpeg-turbo, libpng,
+libwebp, librsvg, libgif, libexif, libtiff, libffi, glib2, cairo, pixman, pango, et al.)
+all under LGPL-2.1-or-later or more permissive (BSD/MIT/zlib) licenses.
+No GPL-only components are included.
+
+---------------------------------------------------------------------------------------------------
+
 LGPLv3 License applies to:
 CairoSVG, Copyright Kozea and CourtBouillon;
 

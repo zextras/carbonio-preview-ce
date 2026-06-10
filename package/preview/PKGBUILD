@@ -16,25 +16,21 @@ depends__apt=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "libvips42"
 )
 depends__rocky_8=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "vips"
 )
 depends__rocky_9=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "vips"
 )
 makedepends__apt=(
   "git"
   "wget"
   "gcc"
-  "libvips-dev"
   "pkg-config"
 )
 makedepends__rocky_8=(
@@ -63,6 +59,9 @@ source=(
   "service-protocol.json"
   "carbonio-preview-ce-src.tar.gz"
   "pdfium-linux-x64.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz"
+  "sharp-libvips-x64.tgz::https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.0.tgz"
+  "sharp-libvips-arm64.tgz::https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.0.tgz"
+  "sharp-libvips-dev.tgz::https://registry.npmjs.org/@img/sharp-libvips-dev/-/sharp-libvips-dev-1.3.0.tgz"
 )
 sha256sums=(
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
@@ -77,6 +76,9 @@ sha256sums=(
   '1d2e022f32d45f5d5b1118fb524f4bafacc92689b76e7f24eea37b9fed6286fe'
   'SKIP'
   'SKIP'
+  'SKIP'
+  'SKIP'
+  'SKIP'
 )
 
 backup=(
@@ -87,12 +89,30 @@ backup=(
 _build_go_ce() {
   local pkgconfig_dir="$1"
 
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz
+  # Detect architecture for Go and libvips tarball selection
+  case "$(uname -m)" in
+    x86_64)  GOARCH=amd64; VARCH=x64  ;;
+    aarch64) GOARCH=arm64; VARCH=arm64 ;;
+  esac
+
+  wget "https://go.dev/dl/go1.25.11.linux-${GOARCH}.tar.gz" -O /tmp/go.tar.gz
   rm -rf /usr/local/go
   tar -C /usr/local -xzf /tmp/go.tar.gz
 
   mkdir -p "${srcdir}/pdfium"
   tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium"
+
+  # Bundle libvips from sharp-libvips prebuilt (no system libvips needed)
+  # Dev pkg layout:  package/include/vips/*.h  and  package/include/glib-2.0/*
+  # Platform layout: package/lib/libvips-cpp.so.8.18.3  and
+  #                  package/lib/glib-2.0/include/glibconfig.h  (arch-specific)
+  mkdir -p "${srcdir}/vips"
+  tar -xzf "${srcdir}/sharp-libvips-dev.tgz"        -C "${srcdir}/vips"
+  mkdir -p "${srcdir}/vips/platform"
+  tar -xzf "${srcdir}/sharp-libvips-${VARCH}.tgz"   -C "${srcdir}/vips/platform"
+
+  local VIPS_DEV="${srcdir}/vips/package"
+  local VIPS_PLAT="${srcdir}/vips/platform/package"
 
   mkdir -p "${pkgconfig_dir}"
   cat > "${pkgconfig_dir}/pdfium.pc" <<EOF
@@ -106,6 +126,14 @@ Libs: -L${srcdir}/pdfium/lib -lpdfium
 Cflags: -I${srcdir}/pdfium/include
 EOF
 
+  cat > "${pkgconfig_dir}/vips.pc" <<EOF
+Name: vips
+Description: vips (sharp-libvips bundle)
+Version: 8.18.3
+Cflags: -I${VIPS_DEV}/include -I${VIPS_DEV}/include/glib-2.0 -I${VIPS_PLAT}/lib/glib-2.0/include
+Libs: -L${VIPS_PLAT}/lib -l:libvips-cpp.so.8.18.3
+EOF
+
   export GOROOT=/usr/local/go
   export PATH=/usr/local/go/bin:$PATH
   export GOMODCACHE="${srcdir}/.gomodcache"
@@ -113,7 +141,7 @@ EOF
   export GOPRIVATE="github.com/zextras/*"
   export GOTOOLCHAIN=local
   export CGO_ENABLED=1
-  export PKG_CONFIG_PATH="${pkgconfig_dir}:/usr/lib/x86_64-linux-gnu/pkgconfig"
+  export PKG_CONFIG_PATH="${pkgconfig_dir}"
   export CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview"
 
   go version
@@ -124,6 +152,7 @@ EOF
   go mod download
   go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/...
   cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+  cp "${VIPS_PLAT}/lib/libvips-cpp.so.8.18.3" "${srcdir}/libvips-cpp.so.8.18.3"
 }
 
 build__ubuntu_focal() {
@@ -139,30 +168,10 @@ build__ubuntu_noble() {
 }
 
 build__rocky_8() {
-  # vips/vips-devel do not exist in BaseOS/AppStream/EPEL/PowerTools on EL8,
-  # so the `vips-devel` makedepends never installs and CGO's
-  # `pkg-config --cflags vips` fails with "Package vips was not found".
-  # The Remi repository provides them. Enable EPEL + PowerTools (glib2 build
-  # deps) + Remi here, then install vips-devel so vips.pc lands in
-  # /usr/lib64/pkgconfig (already on PKG_CONFIG_PATH via _build_go_ce).
-  dnf -y install epel-release dnf-plugins-core
-  dnf config-manager --set-enabled powertools
-  dnf -y install https://rpms.remirepo.net/enterprise/remi-release-8.rpm
-  dnf -y install vips-devel
   _build_go_ce /usr/lib64/pkgconfig
 }
 
 build__rocky_9() {
-  # vips/vips-devel do not exist in BaseOS/AppStream/EPEL/CRB on EL9,
-  # so the `vips-devel` makedepends never installs and CGO's
-  # `pkg-config --cflags vips` fails with "Package vips was not found".
-  # The Remi repository provides them. Enable EPEL + CRB (glib2 build deps)
-  # + Remi here, then install vips-devel so vips.pc lands in
-  # /usr/lib64/pkgconfig (already on PKG_CONFIG_PATH via _build_go_ce).
-  dnf -y install epel-release dnf-plugins-core
-  dnf config-manager --set-enabled crb
-  dnf -y install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
-  dnf -y install vips-devel
   _build_go_ce /usr/lib64/pkgconfig
 }
 
@@ -173,6 +182,8 @@ package() {
     "${pkgdir}/usr/bin/carbonio-preview-bin"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
+  install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
+    "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview.hcl" \
@@ -199,6 +210,8 @@ package__rocky_8() {
     "${pkgdir}/usr/bin/carbonio-preview-bin"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
+  install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
+    "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview.hcl" \
@@ -225,6 +238,8 @@ package__ubuntu_jammy() {
     "${pkgdir}/usr/bin/carbonio-preview-bin"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
+  install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
+    "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview.hcl" \
