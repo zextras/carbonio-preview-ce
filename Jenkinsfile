@@ -65,11 +65,7 @@ pipeline {
                         pkgbuildPath: 'package/preview/PKGBUILD',
                         buildStageConfig: [
                             buildDirs: ['package'],
-                            addCarbonioRepos: true,
-                            preStashScript: '''
-                                tar czf package/preview/carbonio-preview-src.tar.gz \
-                                    app package requirements.txt README.md setup.py
-                            '''
+                            addCarbonioRepos: true
                         ]
                     ])
                 }

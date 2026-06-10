@@ -84,24 +84,66 @@ backup=(
   "etc/carbonio/preview/config.ini"
 )
 
+_build_go_ce() {
+  local pkgconfig_dir="$1"
+
+  # Go source is at the workspace root (3 levels up from srcdir = package/preview/src/)
+  local workspace="${srcdir}/../../.."
+
+  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf /tmp/go.tar.gz
+
+  mkdir -p "${srcdir}/pdfium"
+  tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium"
+
+  mkdir -p "${pkgconfig_dir}"
+  cat > "${pkgconfig_dir}/pdfium.pc" <<EOF
+prefix=${srcdir}/pdfium
+libdir=${srcdir}/pdfium/lib
+includedir=${srcdir}/pdfium/include
+Name: PDFium
+Description: PDFium library
+Version: 7881
+Libs: -L${srcdir}/pdfium/lib -lpdfium
+Cflags: -I${srcdir}/pdfium/include
+EOF
+
+  export GOROOT=/usr/local/go
+  export PATH=/usr/local/go/bin:$PATH
+  export GOMODCACHE="${srcdir}/.gomodcache"
+  export GOFLAGS="-mod=mod"
+  export GOPRIVATE="github.com/zextras/*"
+  export CGO_ENABLED=1
+  export PKG_CONFIG_PATH="${pkgconfig_dir}:/usr/lib/x86_64-linux-gnu/pkgconfig"
+  export CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview"
+
+  go version
+
+  cd "${workspace}"
+  go mod download
+  go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/...
+  cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+}
+
 build__ubuntu_focal() {
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && mkdir -p "${srcdir}/pdfium" && tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium" && mkdir -p /usr/lib/pkgconfig && echo "prefix=${srcdir}/pdfium" > /usr/lib/pkgconfig/pdfium.pc && echo "libdir=${srcdir}/pdfium/lib" >> /usr/lib/pkgconfig/pdfium.pc && echo "includedir=${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && echo "Name: PDFium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Description: PDFium library" >> /usr/lib/pkgconfig/pdfium.pc && echo "Version: 7881" >> /usr/lib/pkgconfig/pdfium.pc && echo "Libs: -L${srcdir}/pdfium/lib -lpdfium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Cflags: -I${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && export GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH GOMODCACHE="${srcdir}/.gomodcache" GOFLAGS="-mod=mod" GOPRIVATE="github.com/zextras/*" CGO_ENABLED=1 PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview" && cd /tmp/staging && go mod download && go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/... && cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+  _build_go_ce /usr/lib/pkgconfig
 }
 
 build__ubuntu_jammy() {
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && mkdir -p "${srcdir}/pdfium" && tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium" && mkdir -p /usr/lib/pkgconfig && echo "prefix=${srcdir}/pdfium" > /usr/lib/pkgconfig/pdfium.pc && echo "libdir=${srcdir}/pdfium/lib" >> /usr/lib/pkgconfig/pdfium.pc && echo "includedir=${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && echo "Name: PDFium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Description: PDFium library" >> /usr/lib/pkgconfig/pdfium.pc && echo "Version: 7881" >> /usr/lib/pkgconfig/pdfium.pc && echo "Libs: -L${srcdir}/pdfium/lib -lpdfium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Cflags: -I${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && export GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH GOMODCACHE="${srcdir}/.gomodcache" GOFLAGS="-mod=mod" GOPRIVATE="github.com/zextras/*" CGO_ENABLED=1 PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview" && go version && cd /tmp/staging && go mod download && go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/... && cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so" && echo "BUILD_DONE"
+  _build_go_ce /usr/lib/pkgconfig
 }
 
 build__ubuntu_noble() {
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && mkdir -p "${srcdir}/pdfium" && tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium" && mkdir -p /usr/lib/pkgconfig && echo "prefix=${srcdir}/pdfium" > /usr/lib/pkgconfig/pdfium.pc && echo "libdir=${srcdir}/pdfium/lib" >> /usr/lib/pkgconfig/pdfium.pc && echo "includedir=${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && echo "Name: PDFium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Description: PDFium library" >> /usr/lib/pkgconfig/pdfium.pc && echo "Version: 7881" >> /usr/lib/pkgconfig/pdfium.pc && echo "Libs: -L${srcdir}/pdfium/lib -lpdfium" >> /usr/lib/pkgconfig/pdfium.pc && echo "Cflags: -I${srcdir}/pdfium/include" >> /usr/lib/pkgconfig/pdfium.pc && export GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH GOMODCACHE="${srcdir}/.gomodcache" GOFLAGS="-mod=mod" GOPRIVATE="github.com/zextras/*" CGO_ENABLED=1 PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview" && cd /tmp/staging && go mod download && go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/... && cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+  _build_go_ce /usr/lib/pkgconfig
 }
 
 build__rocky_8() {
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && mkdir -p "${srcdir}/pdfium" && tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium" && mkdir -p /usr/lib64/pkgconfig && echo "prefix=${srcdir}/pdfium" > /usr/lib64/pkgconfig/pdfium.pc && echo "libdir=${srcdir}/pdfium/lib" >> /usr/lib64/pkgconfig/pdfium.pc && echo "includedir=${srcdir}/pdfium/include" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Name: PDFium" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Description: PDFium library" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Version: 7881" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Libs: -L${srcdir}/pdfium/lib -lpdfium" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Cflags: -I${srcdir}/pdfium/include" >> /usr/lib64/pkgconfig/pdfium.pc && export GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH GOMODCACHE="${srcdir}/.gomodcache" GOFLAGS="-mod=mod" GOPRIVATE="github.com/zextras/*" CGO_ENABLED=1 PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/lib/pkgconfig" CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview" && cd /tmp/staging && go mod download && go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/... && cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+  _build_go_ce /usr/lib64/pkgconfig
 }
 
 build__rocky_9() {
-  wget https://go.dev/dl/go1.25.11.linux-amd64.tar.gz -O /tmp/go.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz && mkdir -p "${srcdir}/pdfium" && tar -xzf "${srcdir}/pdfium-linux-x64.tgz" -C "${srcdir}/pdfium" && mkdir -p /usr/lib64/pkgconfig && echo "prefix=${srcdir}/pdfium" > /usr/lib64/pkgconfig/pdfium.pc && echo "libdir=${srcdir}/pdfium/lib" >> /usr/lib64/pkgconfig/pdfium.pc && echo "includedir=${srcdir}/pdfium/include" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Name: PDFium" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Description: PDFium library" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Version: 7881" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Libs: -L${srcdir}/pdfium/lib -lpdfium" >> /usr/lib64/pkgconfig/pdfium.pc && echo "Cflags: -I${srcdir}/pdfium/include" >> /usr/lib64/pkgconfig/pdfium.pc && export GOROOT=/usr/local/go PATH=/usr/local/go/bin:$PATH GOMODCACHE="${srcdir}/.gomodcache" GOFLAGS="-mod=mod" GOPRIVATE="github.com/zextras/*" CGO_ENABLED=1 PKG_CONFIG_PATH="/usr/lib64/pkgconfig:/usr/lib/pkgconfig" CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview" && cd /tmp/staging && go mod download && go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/... && cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
+  _build_go_ce /usr/lib64/pkgconfig
 }
 
 package() {
