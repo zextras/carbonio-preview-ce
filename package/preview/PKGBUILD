@@ -41,14 +41,12 @@ makedepends__rocky_8=(
   "git"
   "wget"
   "gcc"
-  "vips-devel"
   "pkgconfig"
 )
 makedepends__rocky_9=(
   "git"
   "wget"
   "gcc"
-  "vips-devel"
   "pkgconfig"
 )
 
@@ -141,10 +139,30 @@ build__ubuntu_noble() {
 }
 
 build__rocky_8() {
+  # vips/vips-devel do not exist in BaseOS/AppStream/EPEL/PowerTools on EL8,
+  # so the `vips-devel` makedepends never installs and CGO's
+  # `pkg-config --cflags vips` fails with "Package vips was not found".
+  # The Remi repository provides them. Enable EPEL + PowerTools (glib2 build
+  # deps) + Remi here, then install vips-devel so vips.pc lands in
+  # /usr/lib64/pkgconfig (already on PKG_CONFIG_PATH via _build_go_ce).
+  dnf -y install epel-release dnf-plugins-core
+  dnf config-manager --set-enabled powertools
+  dnf -y install https://rpms.remirepo.net/enterprise/remi-release-8.rpm
+  dnf -y install vips-devel
   _build_go_ce /usr/lib64/pkgconfig
 }
 
 build__rocky_9() {
+  # vips/vips-devel do not exist in BaseOS/AppStream/EPEL/CRB on EL9,
+  # so the `vips-devel` makedepends never installs and CGO's
+  # `pkg-config --cflags vips` fails with "Package vips was not found".
+  # The Remi repository provides them. Enable EPEL + CRB (glib2 build deps)
+  # + Remi here, then install vips-devel so vips.pc lands in
+  # /usr/lib64/pkgconfig (already on PKG_CONFIG_PATH via _build_go_ce).
+  dnf -y install epel-release dnf-plugins-core
+  dnf config-manager --set-enabled crb
+  dnf -y install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+  dnf -y install vips-devel
   _build_go_ce /usr/lib64/pkgconfig
 }
 
