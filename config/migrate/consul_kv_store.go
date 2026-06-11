@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // consulKvStore is a ConfigStore backed by the Consul KV HTTP API.
@@ -26,7 +27,7 @@ func newConsulKvStore(consulBaseURL, token string) *consulKvStore {
 	return &consulKvStore{
 		baseURL: strings.TrimRight(consulBaseURL, "/"),
 		token:   token,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -35,17 +36,17 @@ func (c *consulKvStore) Set(key, value string) error {
 	url := c.baseURL + "/v1/kv/" + key
 	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(value))
 	if err != nil {
-		return fmt.Errorf("consul: build PUT %s: %w", key, err)
+		return fmt.Errorf("consul: build PUT %s/v1/kv/%s: %w", c.baseURL, key, err)
 	}
 	req.Header.Set("X-Consul-Token", c.token)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("consul: PUT %s: %w", key, err)
+		return fmt.Errorf("consul: PUT %s/v1/kv/%s: %w", c.baseURL, key, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("consul: PUT /v1/kv/%s returned HTTP %d", key, resp.StatusCode)
+		return fmt.Errorf("consul: PUT %s/v1/kv/%s returned HTTP %d", c.baseURL, key, resp.StatusCode)
 	}
 	return nil
 }

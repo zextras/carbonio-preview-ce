@@ -136,6 +136,9 @@ func (r *Runner) runNetworkingEntries(m Migration) int {
 }
 
 func (r *Runner) runApplicationEntries(m Migration) int {
+	if r.ini.isAbsent() {
+		return 0
+	}
 	migrated := 0
 	for oldKey, fn := range m.ApplicationEntries {
 		val, ok := r.ini.get(oldKey)

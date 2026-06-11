@@ -46,7 +46,18 @@ import (
 func main() {
 	// Intercept --setup <consul-url> BEFORE the config chain.
 	if idx := findArg(os.Args[1:], "--setup"); idx >= 0 {
-		runSetup(os.Args[1:], idx)
+		args := os.Args[1:]
+		if idx+1 >= len(args) {
+			fmt.Fprintln(os.Stderr, "Usage: --setup <consul-url>")
+			fmt.Fprintln(os.Stderr, "Example: --setup http://127.0.0.1:8500")
+			os.Exit(1)
+		}
+		consulURL := args[idx+1]
+		paths := migrate.Paths{
+			IniPath:   "/etc/carbonio/preview/config.ini",
+			PropsPath: "/etc/carbonio/preview/config.properties",
+		}
+		runSetup(consulURL, paths)
 		return
 	}
 
@@ -83,35 +94,20 @@ func main() {
 
 // runSetup executes registered config migrations and exits.
 // It mirrors SetupAwareMain from carbonio-quarkus-extensions:
-//   - Validates the consul-url argument.
 //   - Checks SETUP_CONSUL_TOKEN is set only when application entries will
 //     actually run (ini present + contains at least one application key).
 //   - Runs migrations, then always prints config documentation.
 //   - Exits 0 on success, 1 on failure.
-func runSetup(args []string, setupIdx int) {
-	if setupIdx+1 >= len(args) {
-		fmt.Fprintln(os.Stderr, "Usage: --setup <consul-url>")
-		fmt.Fprintln(os.Stderr, "Example: --setup http://127.0.0.1:8500")
-		os.Exit(1)
-	}
-	consulURL := args[setupIdx+1]
+//
+// paths holds the injectable file paths; main passes the production paths,
+// tests pass t.TempDir() paths directly without env-var hooks.
+func runSetup(consulURL string, paths migrate.Paths) {
+	// Read token up front so the Runner is constructed exactly once.
+	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))
+	paths.ConsulURL = consulURL
+	paths.ConsulToken = token
 
-	iniPath := "/etc/carbonio/preview/config.ini"
-	propsPath := "/etc/carbonio/preview/config.properties"
-	// Test hook: allow injecting temp paths without touching production logic.
-	if v := os.Getenv("CARBONIO_PREVIEW_TEST_INI_PATH"); v != "" {
-		iniPath = v
-	}
-	if v := os.Getenv("CARBONIO_PREVIEW_TEST_PROPS_PATH"); v != "" {
-		propsPath = v
-	}
-
-	runner, err := migrate.NewRunner(migrate.Paths{
-		IniPath:   iniPath,
-		PropsPath: propsPath,
-		ConsulURL: consulURL,
-		// Token not set yet — we check below.
-	})
+	runner, err := migrate.NewRunner(paths)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Setup failed: %v\n", err)
 		printConfigDocumentation()
@@ -119,22 +115,8 @@ func runSetup(args []string, setupIdx int) {
 	}
 
 	// Gate on token only when application-layer work is actually needed.
-	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))
 	if runner.HasApplicationWork() && token == "" {
 		fmt.Fprintln(os.Stderr, "Error: SETUP_CONSUL_TOKEN environment variable is not set.")
-		printConfigDocumentation()
-		os.Exit(1)
-	}
-
-	// Re-build runner with the token now that we know it's available (or not needed).
-	runner, err = migrate.NewRunner(migrate.Paths{
-		IniPath:     iniPath,
-		PropsPath:   propsPath,
-		ConsulURL:   consulURL,
-		ConsulToken: token,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Setup failed: %v\n", err)
 		printConfigDocumentation()
 		os.Exit(1)
 	}

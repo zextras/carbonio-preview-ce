@@ -6,6 +6,7 @@ package migrate
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -168,9 +169,8 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 			defer kvMu.Unlock()
 			switch r.Method {
 			case http.MethodPut:
-				body := make([]byte, 1024)
-				n, _ := r.Body.Read(body)
-				kvPuts[path] = string(body[:n])
+				body, _ := io.ReadAll(r.Body)
+				kvPuts[path] = string(body)
 				kvDeletes[path] = false
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, "true")

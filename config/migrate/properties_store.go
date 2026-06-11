@@ -18,9 +18,8 @@ import (
 // The file is written only if at least one entry was actually migrated
 // (tracked by the Runner via the modified flag returned from Remove).
 type propertiesStore struct {
-	path   string
-	props  map[string]string
-	loaded bool
+	path  string
+	props map[string]string
 }
 
 // newPropertiesStore loads the properties file at path.
@@ -38,8 +37,7 @@ func (s *propertiesStore) load() error {
 	f, err := os.Open(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			s.loaded = true // treat missing as empty
-			return nil
+			return nil // treat missing as empty
 		}
 		return fmt.Errorf("migrate: open properties %s: %w", s.path, err)
 	}
@@ -64,7 +62,6 @@ func (s *propertiesStore) load() error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("migrate: read properties %s: %w", s.path, err)
 	}
-	s.loaded = true
 	return nil
 }
 
@@ -72,17 +69,6 @@ func (s *propertiesStore) load() error {
 func (s *propertiesStore) Set(key, value string) error {
 	s.props[key] = value
 	return nil
-}
-
-// Get returns the value for key and whether it was present.
-func (s *propertiesStore) Get(key string) (string, bool) {
-	v, ok := s.props[key]
-	return v, ok
-}
-
-// Remove deletes key from the in-memory map.
-func (s *propertiesStore) Remove(key string) {
-	delete(s.props, key)
 }
 
 // Save writes the current in-memory map to disk with a header comment.
