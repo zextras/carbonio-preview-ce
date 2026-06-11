@@ -101,21 +101,22 @@ func overrideMessages(cfg *ini.File, m *Messages) {
 		secVal  = "validation"
 	)
 
-	m.StorageUnavailable = msgStr(cfg, secHard, "STORAGE_UNAVAILABLE_STRING", m.StorageUnavailable)
-	m.GenericErrorStorage = msgStr(cfg, secHard, "GENERIC_ERROR_WITH_STORAGE", m.GenericErrorStorage)
-	m.ItemNotFound = msgStr(cfg, secHard, "ITEM_NOT_FOUND", m.ItemNotFound)
-	m.InputError = msgStr(cfg, secHard, "INPUT_ERROR", m.InputError)
-	m.DocsEditorUnavailable = msgStr(cfg, secHard, "DOCS_EDITOR_UNAVAILABLE_STRING", m.DocsEditorUnavailable)
+	// Key names match the actual keys in package/preview/messages.ini (lowercase).
+	m.StorageUnavailable = msgStr(cfg, secHard, "storage_unavailable_string", m.StorageUnavailable)
+	m.GenericErrorStorage = msgStr(cfg, secHard, "generic_error_with_storage", m.GenericErrorStorage)
+	m.ItemNotFound = msgStr(cfg, secHard, "item_not_found", m.ItemNotFound)
+	m.InputError = msgStr(cfg, secHard, "input_error", m.InputError)
+	m.DocsEditorUnavailable = msgStr(cfg, secHard, "carbonio_docs_editor_not_running", m.DocsEditorUnavailable)
 
-	m.HeightOrWidthNotInserted = msgStr(cfg, secVal, "HEIGHT_OR_WIDTH_NOT_INSERTED_ERROR", m.HeightOrWidthNotInserted)
-	m.NumberOfPagesNotValid = msgStr(cfg, secVal, "NUMBER_OF_PAGES_NOT_VALID", m.NumberOfPagesNotValid)
-	m.HeightWidthNotValid = msgStr(cfg, secVal, "HEIGHT_WIDTH_NOT_VALID_ERROR", m.HeightWidthNotValid)
-	m.IDNotValid = msgStr(cfg, secVal, "ID_NOT_VALID_ERROR", m.IDNotValid)
-	m.VersionNotValid = msgStr(cfg, secVal, "VERSION_NOT_VALID_ERROR", m.VersionNotValid)
-	m.FormatNotSupported = msgStr(cfg, secVal, "FORMAT_NOT_SUPPORTED_ERROR", m.FormatNotSupported)
-	m.FileNotValid = msgStr(cfg, secVal, "FILE_NOT_VALID_ERROR", m.FileNotValid)
-	m.DocumentThumbnailDisabled = msgStr(cfg, secVal, "DOCUMENT_THUMBNAIL_NOT_ENABLED_ERROR", m.DocumentThumbnailDisabled)
-	m.DocumentPreviewDisabled = msgStr(cfg, secVal, "DOCUMENT_PREVIEW_NOT_ENABLED_ERROR", m.DocumentPreviewDisabled)
+	m.HeightOrWidthNotInserted = msgStr(cfg, secVal, "height_or_width_not_inserted_error", m.HeightOrWidthNotInserted)
+	m.NumberOfPagesNotValid = msgStr(cfg, secVal, "number_of_pages_not_valid_error", m.NumberOfPagesNotValid)
+	m.HeightWidthNotValid = msgStr(cfg, secVal, "height_or_width_not_valid_error", m.HeightWidthNotValid)
+	m.IDNotValid = msgStr(cfg, secVal, "id_not_valid_error", m.IDNotValid)
+	m.VersionNotValid = msgStr(cfg, secVal, "version_not_valid_error", m.VersionNotValid)
+	m.FormatNotSupported = msgStr(cfg, secVal, "format_not_supported_error", m.FormatNotSupported)
+	m.FileNotValid = msgStr(cfg, secVal, "file_not_valid_error", m.FileNotValid)
+	m.DocumentThumbnailDisabled = msgStr(cfg, secVal, "document_thumbnail_not_enabled_error", m.DocumentThumbnailDisabled)
+	m.DocumentPreviewDisabled = msgStr(cfg, secVal, "document_preview_not_enabled_error", m.DocumentPreviewDisabled)
 }
 
 // init loads messages together with the main config so that Msg is

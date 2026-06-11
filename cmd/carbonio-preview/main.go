@@ -6,12 +6,18 @@
 //   - ROLE=pdfworker  — PDF rendering worker (internal port, SO_REUSEPORT)
 //   - (default)       — main process (public port, spawns PDF workers, relays PDF requests)
 //
-// Configuration is read from /etc/carbonio/preview/config.ini (if present) and from
-// environment variable overrides (PREVIEW_HOST, PREVIEW_PORT, STORAGES_HOST, etc.).
+// Configuration is loaded from the extensions-equivalent chain:
+//   - Registry defaults
+//   - /etc/carbonio/preview/config.properties  (networking layer)
+//   - Consul KV carbonio-preview/?recurse       (application layer)
+//   - Environment variables: NETWORKING_CONFIG_* / APPLICATION_CONFIG_*
+//
+// Process-level variables (not part of the chain): ROLE, PDF_INTERNAL_PORT.
 package main
 
 import (
 	"log"
+	"os"
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/config"
@@ -21,10 +27,12 @@ import (
 )
 
 func main() {
-	// Load config (defaults → config.ini → env vars).
+	// Load config (registry defaults → config.properties / Consul KV → ENV).
+	// Failure is fatal: an unreachable Consul or a bad value means the service
+	// cannot start with a consistent configuration.
 	if err := config.Load(); err != nil {
-		// Non-fatal: Load() falls back to hardcoded defaults on any error.
-		log.Printf("config.Load: %v (using defaults)", err)
+		log.Printf("FATAL: config.Load failed: %v", err)
+		os.Exit(1)
 	}
 
 	cfg := &config.App
