@@ -87,9 +87,9 @@ func TestDefaults(t *testing.T) {
 		{"VIPSConcurrency", App.VIPSConcurrency, 1},
 		{"ImageMinimumResolution", App.ImageMinimumResolution, 80},
 		{"ServiceEnableDocumentPreview", App.ServiceEnableDocumentPreview, true},
-		{"ServiceEnableDocumentThumbnail", App.ServiceEnableDocumentThumbnail, true},
+		{"ServiceEnableDocumentThumbnail", App.ServiceEnableDocumentThumbnail, false},
 		{"StorageDownloadAPI", App.StorageDownloadAPI, "download"},
-		{"StorageHealthCheck", App.StorageHealthCheck, "health/ready/"},
+		{"StorageHealthCheck", App.StorageHealthCheck, "health/live"},
 		{"DocumentConversionServiceEndpoint", App.DocumentConversionServiceEndpoint, "services/docs/editor"},
 		{"DocumentConversionConvertAPI", App.DocumentConversionConvertAPI, "cool/convert-to"},
 		// hardcoded routes
@@ -308,7 +308,7 @@ func TestDerivedAddresses(t *testing.T) {
 
 // TestAreDocsEnabled verifies the derived AreDocsEnabled flag.
 func TestAreDocsEnabled(t *testing.T) {
-	// default: preview=true, thumbnail=true → AreDocsEnabled=true
+	// default: preview=true, thumbnail=false → AreDocsEnabled=true (via preview)
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)

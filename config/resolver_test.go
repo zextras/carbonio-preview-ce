@@ -73,7 +73,7 @@ func TestResolverDefaultsWhenAllAbsent(t *testing.T) {
 		{"workers", "2"},
 		{"vips-concurrency", "1"},
 		{"storages.download-api", "download"},
-		{"storages.health-check", "health/ready/"},
+		{"storages.health-check", "health/live"},
 		{"docs-editor.service-endpoint", "services/docs/editor"},
 		{"docs-editor.convert-api", "cool/convert-to"},
 	}

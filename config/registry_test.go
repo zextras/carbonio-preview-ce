@@ -117,9 +117,9 @@ func TestKeyDefaults(t *testing.T) {
 		{"vips-concurrency", "1", ""},
 		{"image-minimum-resolution", "80", ""},
 		{"enable-document-preview", "true", ""},
-		{"enable-document-thumbnail", "true", ""},
+		{"enable-document-thumbnail", "false", ""},
 		{"storages.download-api", "download", ""},
-		{"storages.health-check", "health/ready/", ""},
+		{"storages.health-check", "health/live", ""},
 		{"docs-editor.service-endpoint", "services/docs/editor", ""},
 		{"docs-editor.convert-api", "cool/convert-to", ""},
 	}

@@ -224,7 +224,7 @@ func registerCEKeys() {
 		{
 			Key:         "enable-document-thumbnail",
 			Namespace:   NamespaceApplication,
-			Default:     "true",
+			Default:     "false",
 			Description: "Whether document thumbnail generation is enabled.",
 		},
 		{
@@ -236,7 +236,7 @@ func registerCEKeys() {
 		{
 			Key:         "storages.health-check",
 			Namespace:   NamespaceApplication,
-			Default:     "health/ready/",
+			Default:     "health/live",
 			Description: "Path segment of the carbonio-storages health-check endpoint.",
 		},
 		{
