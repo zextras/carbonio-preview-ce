@@ -142,7 +142,7 @@ pipeline {
         stage('Publish docker images') {
             steps {
                 dockerStage([
-                    dockerfile: 'docker/minimal/carbonio-preview/Dockerfile',
+                    dockerfile: 'docker/Dockerfile',
                     imageName: 'carbonio-preview-ce',
                     ocLabels: [
                         title: 'Carbonio Preview CE',

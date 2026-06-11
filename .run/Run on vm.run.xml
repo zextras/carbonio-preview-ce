@@ -1,0 +1,17 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Run on vm" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="#!/bin/bash # Stampare il path corrente echo &quot;Current working directory: $(pwd)&quot; # Fermare il servizio echo &quot;Stopping carbonio-preview service...&quot; ssh root@192.168.1.150 'systemctl stop carbonio-preview' # Trasferire i file del progetto echo &quot;Transferring project files...&quot; scp -r ./* root@192.168.1.150:/opt/zextras/common/lib/python3.10/site-packages/ # Riavviare il servizio echo &quot;Starting carbonio-preview service...&quot; ssh root@192.168.1.150 'systemctl start carbonio-preview' # Mostrare i log del progetto echo &quot;Displaying logs...&quot; ssh root@192.168.1.150 'journalctl -u carbonio-preview -f | grep -v &quot;GET /health/ready/&quot;'" />
+    <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+    <option name="SCRIPT_PATH" value="$USER_HOME$/Documenti/backup/ideaScripts/start_intellij_preview.sh" />
+    <option name="SCRIPT_OPTIONS" value="" />
+    <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+    <option name="INTERPRETER_PATH" value="/bin/bash" />
+    <option name="INTERPRETER_OPTIONS" value="" />
+    <option name="EXECUTE_IN_TERMINAL" value="true" />
+    <option name="EXECUTE_SCRIPT_FILE" value="true" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>
