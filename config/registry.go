@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package config provides the configuration chain and key registry.
 //
 //go:generate go run ../cmd/configdocs
@@ -5,6 +9,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -100,6 +105,16 @@ func RegisteredKeys() []KeyEntry {
 
 	out := make([]KeyEntry, len(registry))
 	copy(out, registry)
+
+	sort.Slice(out, func(i, j int) bool {
+		ni, nj := out[i].Namespace, out[j].Namespace
+		if ni != nj {
+			// networking < application
+			return ni == NamespaceNetworking
+		}
+		return out[i].Key < out[j].Key
+	})
+
 	return out
 }
 

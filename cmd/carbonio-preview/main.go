@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Command carbonio-preview is the entry point for the carbonio-preview-ce service.
 //
 // It wires together the config, storage, and server packages and starts the HTTP

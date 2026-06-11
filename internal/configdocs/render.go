@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package configdocs contains the shared renderer used by the config-docs
 // generator (cmd/configdocs) and by the drift-guard tests.
 //
@@ -137,13 +141,29 @@ func RenderTxt(d Docs) string {
 
 // RenderMd produces the Markdown pipe-table format, matching
 // generateConfigDocumentation / appendTable in ExtensionsBootstrapProcessor.
+// The output begins with an SPDX HTML comment block (year 2026, Zextras) so
+// that the committed docs/configs.md satisfies REUSE/SPDX requirements.
 func RenderMd(d Docs) string {
 	net := SectionDoc{Entries: d.NetworkingEntries}
 	app := SectionDoc{Entries: d.ApplicationEntries}
 
 	configPropertiesPath := "/etc/carbonio/" + d.ShortName + "/config.properties"
 
+	// spdxBlock is broken across multiple concatenations so that the reuse
+	// scanner does not mistake these string literals for SPDX file headers.
+	const (
+		spdxCopyright = "SPDX-FileCopyright" + "Text: 2026 Zextras <https://www.zextras.com>"
+		spdxLicense   = "SPDX-License-Identi" + "fier: AGPL-3.0-only"
+	)
+
 	var sb strings.Builder
+	sb.WriteString("<!--\n")
+	sb.WriteString(spdxCopyright)
+	sb.WriteString("\n\n")
+	sb.WriteString(spdxLicense)
+	sb.WriteString("\n")
+	sb.WriteString("-->\n")
+	sb.WriteString("\n")
 	sb.WriteString("# Default Configuration\n\n")
 
 	if len(net.Entries) > 0 {

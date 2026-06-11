@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package config
 
 import (
@@ -176,6 +180,102 @@ func TestAllKeysHaveDescription(t *testing.T) {
 			if e.Description == "" {
 				t.Errorf("key %q (ns=%s) has no description", e.Key, ns)
 			}
+		}
+	}
+}
+
+// TestRegisteredKeysSortOrder pins the exact contract of RegisteredKeys:
+//   - networking namespace comes before application namespace
+//   - within each namespace keys are sorted alphabetically by Key
+func TestRegisteredKeysSortOrder(t *testing.T) {
+	keys := RegisteredKeys()
+
+	// Find the boundary between namespaces.
+	firstAppIdx := -1
+	for i, k := range keys {
+		if k.Namespace == NamespaceApplication {
+			firstAppIdx = i
+			break
+		}
+	}
+	if firstAppIdx < 0 {
+		t.Fatal("no application-namespace key found in RegisteredKeys output")
+	}
+
+	// All entries before the boundary must be networking.
+	for i := 0; i < firstAppIdx; i++ {
+		if keys[i].Namespace != NamespaceNetworking {
+			t.Errorf("index %d: expected NamespaceNetworking, got %q (key=%q)", i, keys[i].Namespace, keys[i].Key)
+		}
+	}
+	// All entries from the boundary onward must be application.
+	for i := firstAppIdx; i < len(keys); i++ {
+		if keys[i].Namespace != NamespaceApplication {
+			t.Errorf("index %d: expected NamespaceApplication, got %q (key=%q)", i, keys[i].Namespace, keys[i].Key)
+		}
+	}
+
+	// Networking section: alphabetical by Key.
+	for i := 1; i < firstAppIdx; i++ {
+		if keys[i].Key < keys[i-1].Key {
+			t.Errorf("networking keys out of order: %q before %q", keys[i-1].Key, keys[i].Key)
+		}
+	}
+
+	// Application section: alphabetical by Key.
+	for i := firstAppIdx + 1; i < len(keys); i++ {
+		if keys[i].Key < keys[i-1].Key {
+			t.Errorf("application keys out of order: %q before %q", keys[i-1].Key, keys[i].Key)
+		}
+	}
+
+	// Spot-check: known networking keys that must appear in order.
+	netExpected := []string{
+		"carbonio.docs-editor.host",
+		"carbonio.docs-editor.port",
+		"carbonio.docs-editor.protocol",
+		"carbonio.service-discover.host",
+		"carbonio.service-discover.port",
+		"carbonio.service.host",
+		"carbonio.service.port",
+		"carbonio.storages.host",
+		"carbonio.storages.port",
+		"carbonio.storages.protocol",
+	}
+	netKeys := keys[:firstAppIdx]
+	for i, want := range netExpected {
+		if i >= len(netKeys) {
+			t.Errorf("networking section too short: missing key at index %d (want %q)", i, want)
+			break
+		}
+		if netKeys[i].Key != want {
+			t.Errorf("networking[%d] = %q, want %q", i, netKeys[i].Key, want)
+		}
+	}
+
+	// Spot-check: known application keys that must appear in order.
+	appExpected := []string{
+		"docs-editor.convert-api",
+		"docs-editor.service-endpoint",
+		"docs-timeout-in-seconds",
+		"enable-document-preview",
+		"enable-document-thumbnail",
+		"image-minimum-resolution",
+		"pdf-workers",
+		"storages.download-api",
+		"storages.health-check",
+		"timeout-in-seconds",
+		"vips-concurrency",
+		"workers",
+	}
+	appKeys := keys[firstAppIdx:]
+	for i, want := range appExpected {
+		if i >= len(appKeys) {
+			t.Errorf("application section too short: missing key at index %d (want %q)", i, want)
+			break
+		}
+		if appKeys[i].Key != want {
+			t.Errorf("application[%d] = %q, want %q", i, appKeys[i].Key, want)
 		}
 	}
 }
