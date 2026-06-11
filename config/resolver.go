@@ -117,9 +117,12 @@ func buildFrozenMap(ns Namespace, prefix string, sourceValues map[string]string)
 
 	// Pass-through: include everything from sourceValues that is not registered
 	// (registered keys are handled below with full priority logic).
+	// Blank values are skipped: extensions parity requires blank = absent at
+	// every layer, so an unregistered key with an empty value must not appear
+	// in the frozen map (Get returns "", false).
 	regMap := registeredKeyMap(ns)
 	for k, v := range sourceValues {
-		if _, registered := regMap[k]; !registered {
+		if _, registered := regMap[k]; !registered && v != "" {
 			result[k] = v
 		}
 	}

@@ -87,6 +87,28 @@ func TestReadPropertiesUnreadableFile(t *testing.T) {
 	}
 }
 
+// TestReadPropertiesLineWithoutEqualsIsIgnored pins the intentional behavior
+// that lines without '=' are silently skipped by the parser.
+//
+// This mirrors carbonio-quarkus-extensions semantics: such lines are not stored
+// in the source map, so they resolve as blank → absent in the config chain.
+func TestReadPropertiesLineWithoutEqualsIsIgnored(t *testing.T) {
+	// "noequalskey" has no '=' so it must be dropped entirely.
+	// "good.key=value" is a valid line and must be present.
+	content := "noequalskey\ngood.key=value\n"
+	f := writeTemp(t, content)
+	m, err := readPropertiesFile(f)
+	if err != nil {
+		t.Fatalf("readPropertiesFile: %v", err)
+	}
+	if _, ok := m["noequalskey"]; ok {
+		t.Error("line without '=' must be ignored by the parser (intentional: such keys resolve as blank → absent)")
+	}
+	if m["good.key"] != "value" {
+		t.Errorf("good.key: got %q, want %q", m["good.key"], "value")
+	}
+}
+
 // writeTemp creates a temp file with the given content and returns its path.
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()

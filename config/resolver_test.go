@@ -251,3 +251,94 @@ func TestResolverFrozenMap(t *testing.T) {
 		t.Errorf("Get(absent key) = (%q, %v), want (\"\", false)", got, ok)
 	}
 }
+
+// --- Blank-as-absent parity tests (extensions semantics) ---
+
+// TestBlankEnvFallsThroughToFile verifies that an env var set to empty string
+// is treated as absent and the file value wins (networking layer).
+func TestBlankEnvFallsThroughToFile(t *testing.T) {
+	props := "carbonio.service.host=10.0.0.99\n"
+	f := writeTemp(t, props)
+
+	srv := buildConsulServer(t, nil)
+	// Blank env must not win over file.
+	t.Setenv("NETWORKING_CONFIG_CARBONIO_SERVICE_HOST", "")
+	r, err := resolveWithConsulServer(t, f, srv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	got, ok := r.Networking.Get("carbonio.service.host")
+	if !ok || got != "10.0.0.99" {
+		t.Errorf("Networking.Get(carbonio.service.host) = (%q, %v), want (10.0.0.99, true); blank env must fall through to file", got, ok)
+	}
+}
+
+// TestBlankFileValueFallsThroughToDefault verifies that a file line of the form
+// "key=" (empty value after '=') is treated as absent and the registry default wins.
+func TestBlankFileValueFallsThroughToDefault(t *testing.T) {
+	// "carbonio.service.host=" — empty value; default is "127.78.0.6".
+	props := "carbonio.service.host=\n"
+	f := writeTemp(t, props)
+
+	srv := buildConsulServer(t, nil)
+	r, err := resolveWithConsulServer(t, f, srv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	got, ok := r.Networking.Get("carbonio.service.host")
+	if !ok || got != "127.78.0.6" {
+		t.Errorf("Networking.Get(carbonio.service.host) = (%q, %v), want (127.78.0.6, true); blank file value must fall through to default", got, ok)
+	}
+}
+
+// TestUnregisteredFileKeyBlankValueAbsent verifies that an unregistered key in
+// the properties file with a blank value does NOT appear in the frozen map
+// (extensions parity: blank → absent).
+func TestUnregisteredFileKeyBlankValueAbsent(t *testing.T) {
+	props := "unknown.blank.key=\n"
+	f := writeTemp(t, props)
+
+	srv := buildConsulServer(t, nil)
+	r, err := resolveWithConsulServer(t, f, srv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	got, ok := r.Networking.Get("unknown.blank.key")
+	if ok || got != "" {
+		t.Errorf("Networking.Get(unknown.blank.key) = (%q, %v), want (\"\", false); unregistered blank file value must be absent", got, ok)
+	}
+}
+
+// TestUnregisteredKVKeyBlankValueAbsent verifies that an unregistered Consul KV
+// key whose decoded value is empty does NOT appear in the frozen map.
+func TestUnregisteredKVKeyBlankValueAbsent(t *testing.T) {
+	srv := buildConsulServer(t, map[string]string{"custom.blank.flag": ""})
+	r, err := resolveWithConsulServer(t, "", srv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	got, ok := r.Application.Get("custom.blank.flag")
+	if ok || got != "" {
+		t.Errorf("Application.Get(custom.blank.flag) = (%q, %v), want (\"\", false); unregistered blank KV value must be absent", got, ok)
+	}
+}
+
+// TestBlankKVValueFallsThroughToDefault verifies that a Consul KV entry whose
+// decoded value is empty string is treated as absent and the registry default wins.
+func TestBlankKVValueFallsThroughToDefault(t *testing.T) {
+	// "workers" has default "2"; KV entry with empty value must not override it.
+	srv := buildConsulServer(t, map[string]string{"workers": ""})
+	r, err := resolveWithConsulServer(t, "", srv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	got, ok := r.Application.Get("workers")
+	if !ok || got != "2" {
+		t.Errorf("Application.Get(workers) = (%q, %v), want (2, true); blank KV value must fall through to default", got, ok)
+	}
+}

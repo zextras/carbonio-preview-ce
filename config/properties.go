@@ -43,7 +43,9 @@ func readPropertiesFile(path string) (map[string]string, error) {
 
 		idx := strings.IndexByte(line, '=')
 		if idx < 0 {
-			// No '=' found; skip malformed lines.
+			// No '=' found: intentionally skip these lines. This mirrors
+			// carbonio-quarkus-extensions semantics — such a line is never stored,
+			// so any key it might represent resolves as blank → absent in the chain.
 			continue
 		}
 

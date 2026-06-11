@@ -98,6 +98,13 @@ func fetchConsulKV(host, port string) (map[string]string, error) {
 			return nil, fmt.Errorf("consul: base64 decode key %q: %w", e.Key, err)
 		}
 
+		// Blank decoded values are treated as absent (extensions parity: an
+		// empty KV entry falls through to the next layer, just like an empty
+		// Optional in SmallRye).
+		if string(decoded) == "" {
+			continue
+		}
+
 		// Convert the KV path suffix back to dot-notation.
 		dotKey := strings.ReplaceAll(suffix, "/", ".")
 		result[dotKey] = string(decoded)
