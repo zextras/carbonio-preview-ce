@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -314,7 +315,7 @@ func TestAreDocsEnabled(t *testing.T) {
 		t.Fatalf("Load(): %v", err)
 	}
 	if !App.AreDocsEnabled {
-		t.Error("expected AreDocsEnabled=true (defaults: preview=true, thumbnail=true)")
+		t.Error("expected AreDocsEnabled=true (defaults: preview=true, thumbnail=false)")
 	}
 
 	// Both disabled via KV
@@ -356,7 +357,7 @@ func TestParseFailureIntKey(t *testing.T) {
 		t.Fatal("expected error for bad int value, got nil")
 	}
 	const wantKey = "timeout-in-seconds"
-	if !containsStr(err.Error(), wantKey) {
+	if !strings.Contains(err.Error(), wantKey) {
 		t.Errorf("error %q should mention key %q", err.Error(), wantKey)
 	}
 }
@@ -373,7 +374,7 @@ func TestParseFailureBoolKey(t *testing.T) {
 		t.Fatal("expected error for bad bool value, got nil")
 	}
 	const wantKey = "enable-document-preview"
-	if !containsStr(err.Error(), wantKey) {
+	if !strings.Contains(err.Error(), wantKey) {
 		t.Errorf("error %q should mention key %q", err.Error(), wantKey)
 	}
 }
@@ -388,7 +389,7 @@ func TestParseFailurePDFWorkers(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for bad pdf-workers value, got nil")
 	}
-	if !containsStr(err.Error(), "pdf-workers") {
+	if !strings.Contains(err.Error(), "pdf-workers") {
 		t.Errorf("error %q should mention key pdf-workers", err.Error())
 	}
 }
@@ -470,19 +471,4 @@ height_or_width_not_valid_error = OVERRIDDEN hw not valid
 	if m.ItemNotFound != "Requested item was not found in the storage." {
 		t.Errorf("ItemNotFound = %q, want default", m.ItemNotFound)
 	}
-}
-
-// ─── utilities ────────────────────────────────────────────────────────────────
-
-// containsStr returns true if s contains substr.
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
 }
