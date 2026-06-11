@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func TestConsulClientRecurseAndDecode(t *testing.T) {
 	// Build a consul-style KV response: mix of real entries, null value, and
 	// prefix-only entry.
 	const kvPrefix = "carbonio-preview/"
-	entries := []consulKVEntry{
+	entries := []kvEntry{
 		// Real entries.
 		{Key: kvPrefix + "timeout-in-seconds", Value: ptr(encodeB64("60"))},
 		{Key: kvPrefix + "storages/download-api", Value: ptr(encodeB64("get"))},
@@ -38,7 +39,7 @@ func TestConsulClientRecurseAndDecode(t *testing.T) {
 			return
 		}
 		// Consul uses bare ?recurse with no value; check the raw query string.
-		gotRecurse = r.URL.RawQuery == "recurse" || containsSubstring(r.URL.RawQuery, "recurse")
+		gotRecurse = r.URL.RawQuery == "recurse" || strings.Contains(r.URL.RawQuery, "recurse")
 		gotToken = r.Header.Get("X-Consul-Token")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(entries)
@@ -90,7 +91,7 @@ func TestConsulClientNoToken(t *testing.T) {
 		if r.Header.Get("X-Consul-Token") != "" {
 			t.Error("token header sent when env var is empty")
 		}
-		json.NewEncoder(w).Encode([]consulKVEntry{})
+		json.NewEncoder(w).Encode([]kvEntry{})
 	}))
 	defer srv.Close()
 
@@ -151,40 +152,17 @@ func TestConsulClientConnectionRefused(t *testing.T) {
 // ptr returns a pointer to s, used for building test KV entries.
 func ptr(s string) *string { return &s }
 
-// consulKVEntry mirrors the JSON structure returned by the Consul KV API.
-// Declared here for test use; the real type lives in consul.go.
-// We define it as a type alias to avoid ambiguity with the real type.
-type consulKVEntry = kvEntry
-
 func TestConsulClientRecurseQueryParam(t *testing.T) {
-	var queryStr string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		queryStr = r.URL.RawQuery
+		if !r.URL.Query().Has("recurse") {
+			t.Errorf("expected ?recurse in query, got %q", r.URL.RawQuery)
+		}
 		json.NewEncoder(w).Encode([]kvEntry{})
 	}))
 	defer srv.Close()
 
 	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	fetchConsulKV(host, port)
-
-	if queryStr == "" || !containsRecurse(queryStr) {
-		t.Errorf("expected ?recurse in query, got %q", queryStr)
-	}
-}
-
-func containsRecurse(q string) bool {
-	return len(q) >= 7 && (q == "recurse" || len(q) > 7 && (q[:8] == "recurse=" || containsSubstring(q, "&recurse") || containsSubstring(q, "recurse&")))
-}
-
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
 }
 
 func TestConsulClientURLPath(t *testing.T) {

@@ -52,18 +52,39 @@ func init() {
 
 // RegisterKey adds a new entry to the global key registry.
 // It returns an error if a key with the same Key and Namespace combination is
-// already registered.
+// already registered, or if the new key's env-var name (EnvName) collides with
+// an already-registered entry in the same namespace.
 func RegisterKey(e KeyEntry) error {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
+	prefix := namespacePrefix(e.Namespace)
+	newEnv := EnvName(prefix, e.Key)
+
 	for _, existing := range registry {
-		if existing.Key == e.Key && existing.Namespace == e.Namespace {
+		if existing.Namespace != e.Namespace {
+			continue
+		}
+		if existing.Key == e.Key {
 			return fmt.Errorf("config: key %q (namespace %s) is already registered", e.Key, e.Namespace)
+		}
+		if EnvName(prefix, existing.Key) == newEnv {
+			return fmt.Errorf("config: key %q and existing key %q (namespace %s) both map to env var %s", e.Key, existing.Key, e.Namespace, newEnv)
 		}
 	}
 	registry = append(registry, e)
 	return nil
+}
+
+// namespacePrefix returns the config key prefix string for the given namespace,
+// matching the constants used by the resolver.
+func namespacePrefix(ns Namespace) string {
+	switch ns {
+	case NamespaceNetworking:
+		return NetworkingPrefix
+	default:
+		return ApplicationPrefix
+	}
 }
 
 // registeredKeys returns a snapshot of all registered keys for the given namespace.

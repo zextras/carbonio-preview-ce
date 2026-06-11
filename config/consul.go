@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -62,7 +61,7 @@ func fetchConsulKV(host, port string) (map[string]string, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("consul: request failed: %w", err)
+		return nil, fmt.Errorf("consul: request to %s:%s failed: %w", host, port, err)
 	}
 	defer resp.Body.Close()
 
@@ -70,7 +69,7 @@ func fetchConsulKV(host, port string) (map[string]string, error) {
 		return map[string]string{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("consul: unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("consul: %s:%s returned unexpected status %d for prefix %q", host, port, resp.StatusCode, kvPrefix)
 	}
 
 	var entries []kvEntry
@@ -106,8 +105,7 @@ func fetchConsulKV(host, port string) (map[string]string, error) {
 		}
 
 		// Convert the KV path suffix back to dot-notation.
-		dotKey := strings.ReplaceAll(suffix, "/", ".")
-		result[dotKey] = string(decoded)
+		result[kvSuffixToKey(suffix)] = string(decoded)
 	}
 
 	return result, nil

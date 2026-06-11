@@ -25,6 +25,9 @@ const (
 // It concatenates prefix+key, uppercases the result, and replaces every '.'
 // and '-' with '_'.
 //
+// NOTE: this mapping is lossy — both '.' and '-' collapse to '_', so distinct
+// keys such as "a.b-c" and "a.b.c" produce the same env var name.
+//
 // Examples:
 //
 //	EnvName("networking-config.", "carbonio.service.host")

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRegisterKeyDuplicate(t *testing.T) {
 	// Duplicate key+namespace must return an error.
@@ -132,6 +135,38 @@ func TestKeyDefaults(t *testing.T) {
 		if tc.ifNotPresent != "" && e.IfNotPresent != tc.ifNotPresent {
 			t.Errorf("application key %q IfNotPresent = %q, want %q", tc.key, e.IfNotPresent, tc.ifNotPresent)
 		}
+	}
+}
+
+func TestRegisterKeyEnvNameCollision(t *testing.T) {
+	// "a.b-c" and "a.b.c" both map to APPLICATION_CONFIG_A_B_C via EnvName,
+	// so registering the second must fail with an actionable error.
+	ns := NamespaceApplication
+	first := KeyEntry{Key: "a.b-c", Namespace: ns, Default: "v1", Description: "test key one"}
+	second := KeyEntry{Key: "a.b.c", Namespace: ns, Default: "v2", Description: "test key two"}
+
+	if err := RegisterKey(first); err != nil {
+		t.Fatalf("registering first key: %v", err)
+	}
+	t.Cleanup(func() {
+		// Remove the test keys so they don't pollute other tests.
+		registryMu.Lock()
+		defer registryMu.Unlock()
+		filtered := registry[:0]
+		for _, e := range registry {
+			if e.Key != "a.b-c" && e.Key != "a.b.c" {
+				filtered = append(filtered, e)
+			}
+		}
+		registry = filtered
+	})
+
+	err := RegisterKey(second)
+	if err == nil {
+		t.Fatal("expected env-name collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "a.b-c") || !strings.Contains(err.Error(), "a.b.c") {
+		t.Errorf("collision error should name both keys; got: %v", err)
 	}
 }
 
