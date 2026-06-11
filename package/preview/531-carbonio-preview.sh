@@ -9,6 +9,7 @@
 # consumed by carbonio-preview-bin --setup when the legacy config.ini
 # contains application-level keys that must be migrated.
 export SETUP_CONSUL_TOKEN
+# TODO(dockerization): derive the consul URL from env instead of hardcoding localhost
 /usr/bin/carbonio-preview-bin --setup http://127.0.0.1:8500 || {
   echo "carbonio-preview config migration failed; aborting setup" >&2
   exit 1

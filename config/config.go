@@ -85,21 +85,33 @@ var App Config
 var (
 	resolvedNetworking  FrozenMap
 	resolvedApplication FrozenMap
+
+	// loaded is set to true by a successful Load() call.
+	// Networking() and Application() panic when it is false.
+	loaded bool
 )
 
 // Networking returns a snapshot of the resolved networking-layer key→value map.
-// Valid after a successful Load(); returns a zero-value FrozenMap before that
-// (Get always returns "", false).
+// Valid after a successful Load().
+// Panics with "config: accessor called before Load()" if Load() has not been
+// called successfully yet.
 // The advanced module reads its extra registered networking keys through this.
 func Networking() FrozenMap {
+	if !loaded {
+		panic("config: accessor called before Load()")
+	}
 	return resolvedNetworking
 }
 
 // Application returns a snapshot of the resolved application-layer key→value map.
-// Valid after a successful Load(); returns a zero-value FrozenMap before that
-// (Get always returns "", false).
+// Valid after a successful Load().
+// Panics with "config: accessor called before Load()" if Load() has not been
+// called successfully yet.
 // The advanced module reads its extra registered application keys through this.
 func Application() FrozenMap {
+	if !loaded {
+		panic("config: accessor called before Load()")
+	}
 	return resolvedApplication
 }
 
@@ -204,6 +216,7 @@ func Load() error {
 	App = c
 	resolvedNetworking = r.Networking
 	resolvedApplication = r.Application
+	loaded = true
 	return nil
 }
 

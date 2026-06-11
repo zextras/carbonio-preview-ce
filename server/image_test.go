@@ -69,20 +69,20 @@ func stubImageThumbnail(
 // testCfg builds a minimal config.Config for routing.
 func testCfg() *config.Config {
 	return &config.Config{
-		ServiceName:             "preview",
-		ServiceImageName:        "image",
-		ServicePDFName:          "pdf",
-		ServiceDocumentName:     "document",
-		ServiceHealthName:       "health",
-		ServiceTimeoutInSeconds: 30,
-		ServiceDocsTimeout:      15,
-		ServiceEnableDocumentPreview:   true,
-		ServiceEnableDocumentThumbnail: true,
-		StorageFullAddress:             "http://127.0.0.1:20000",
-		StorageHealthCheck:             "health/live",
+		ServiceName:                          "preview",
+		ServiceImageName:                     "image",
+		ServicePDFName:                       "pdf",
+		ServiceDocumentName:                  "document",
+		ServiceHealthName:                    "health",
+		ServiceTimeoutInSeconds:              30,
+		ServiceDocsTimeout:                   15,
+		ServiceEnableDocumentPreview:         true,
+		ServiceEnableDocumentThumbnail:       true,
+		StorageFullAddress:                   "http://127.0.0.1:20000",
+		StorageHealthCheck:                   "health/live",
 		DocumentConversionFullServiceAddress: "http://127.0.0.1:20001/services/docs/editor/",
 		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/services/docs/editor/cool/convert-to",
-		AreDocsEnabled: true,
+		AreDocsEnabled:                       true,
 	}
 }
 

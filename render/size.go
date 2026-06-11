@@ -30,7 +30,8 @@ func SetImageMinRes(min int) {
 //
 // The returned values are always >= 1 (and >= minRes when minRes >= 1).
 // This prevents passing width=0 or height=0 to libvips, which causes:
-//   "value 0 of type gint is invalid for property width/height"
+//
+//	"value 0 of type gint is invalid for property width/height"
 //
 // origW/origH are the actual source image dimensions.
 // minRes is the configured minimum resolution (IMAGE_MIN_RES, default 80).

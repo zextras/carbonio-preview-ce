@@ -476,3 +476,53 @@ height_or_width_not_valid_error = OVERRIDDEN hw not valid
 		t.Errorf("ItemNotFound = %q, want default", m.ItemNotFound)
 	}
 }
+
+// ─── accessor guard ───────────────────────────────────────────────────────────
+
+// TestAccessorPanicsBeforeLoad verifies that calling Networking() or
+// Application() before Load() panics with the documented message.
+func TestAccessorPanicsBeforeLoad(t *testing.T) {
+	// Reset the loaded flag for this test.
+	orig := loaded
+	loaded = false
+	t.Cleanup(func() { loaded = orig })
+
+	for _, name := range []string{"Networking", "Application"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("%s(): expected panic, got none", name)
+				}
+				msg, ok := r.(string)
+				if !ok || msg != "config: accessor called before Load()" {
+					t.Fatalf("%s(): unexpected panic value: %v", name, r)
+				}
+			}()
+			if name == "Networking" {
+				Networking()
+			} else {
+				Application()
+			}
+		})
+	}
+}
+
+// TestAccessorWorksAfterLoad verifies that Networking() and Application()
+// return non-zero FrozenMaps after a successful Load().
+func TestAccessorWorksAfterLoad(t *testing.T) {
+	srv := buildKVServer(t, nil) // 404 → empty application map
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+
+	// After Load(), Networking() must contain at least one registered key.
+	net := Networking()
+	if _, ok := net.Get("carbonio.service.host"); !ok {
+		t.Error("Networking(): carbonio.service.host missing after Load()")
+	}
+
+	// Application() must also be accessible without panicking.
+	_ = Application()
+}

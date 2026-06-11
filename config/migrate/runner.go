@@ -24,6 +24,7 @@ type Runner struct {
 // application entry whose old key is present in the legacy ini.  This is used
 // by --setup to decide whether SETUP_CONSUL_TOKEN is required before any
 // modification is made.
+// It must be consulted BEFORE Run() — the token gate is enforced only by call ordering in RunSetup.
 func (r *Runner) HasApplicationWork() bool {
 	if r.ini.isAbsent() {
 		return false
