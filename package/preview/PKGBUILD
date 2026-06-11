@@ -89,7 +89,7 @@ sha256sums=(
 
 backup=(
   "etc/zextras/service-discover/carbonio-preview.hcl"
-  "etc/carbonio/preview/config.ini"
+  "etc/carbonio/preview/config.properties"
 )
 
 _build_go_ce() {

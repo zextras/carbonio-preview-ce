@@ -295,14 +295,13 @@ func (s *Server) spawnPDFWorkers() ([]*exec.Cmd, error) {
 func buildChildEnv(cfg *config.Config) []string {
 	// Strip keys we are about to set, then append the worker values.
 	strip := map[string]bool{
-		"ROLE":            true,
-		"REUSEPORT":       true,
+		"ROLE":              true,
+		"REUSEPORT":         true,
 		"PDF_INTERNAL_PORT": true,
-		"HYBRID":          true,
-		"PDF_WORKERS":     true,
+		"PDF_WORKERS":       true,
 	}
 
-	env := make([]string, 0, len(os.Environ())+5)
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, kv := range os.Environ() {
 		key := kv
 		if idx := len(kv); idx > 0 {
@@ -322,7 +321,6 @@ func buildChildEnv(cfg *config.Config) []string {
 		"ROLE=pdfworker",
 		"REUSEPORT=1",
 		fmt.Sprintf("PDF_INTERNAL_PORT=%d", cfg.PDFInternalPort),
-		"HYBRID=0",
 		"PDF_WORKERS=0",
 	)
 	return env

@@ -4,4 +4,13 @@
 # 
 # SPDX-License-Identifier: AGPL-3.0-only
 
+# Run config migration (writes application keys to Consul KV).
+# SETUP_CONSUL_TOKEN is provided by the pending-setups framework and is
+# consumed by carbonio-preview-bin --setup when the legacy config.ini
+# contains application-level keys that must be migrated.
+export SETUP_CONSUL_TOKEN
+/usr/bin/carbonio-preview-bin --setup http://127.0.0.1:8500
+
+# Register service-discover ACL policy/token, write intentions and
+# service-protocol, create systemd override, then restart the service.
 carbonio-preview setup
