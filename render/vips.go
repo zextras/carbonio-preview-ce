@@ -267,6 +267,41 @@ static int apply_rounded_mask(
     return rc;
 }
 
+// image_dims: read width and height of any libvips-loadable buffer.
+// Uses vips_thumbnail_buffer with VIPS_SIZE_DOWN (never upscale) at a 1×1
+// target — libvips reads only the image header for most formats (JPEG, PNG,
+// WebP, TIFF) before deciding whether to scale, so this is cheap.
+// The returned thumbnail is discarded; we query the source dimensions via
+// vips_image_get_page_height / Xsize of the *original*, not the thumb.
+// We abuse the fact that vips_thumbnail_buffer populates err metadata from the
+// original image before scaling; instead we open the image with a 64k×64k
+// target (larger than any real image) and VIPS_SIZE_DOWN so that the image is
+// returned at its native size — we then read those native dimensions.
+// Returns 0 on success and sets *w/*h; returns -1 on error.
+static int image_dims(const void *buf, size_t len, int *w, int *h)
+{
+    VipsImage *img = NULL;
+    // Use a very large target with VIPS_SIZE_DOWN so the image is never
+    // upscaled; for most formats libvips will return it at original size.
+    int rc = vips_thumbnail_buffer(
+            (void *)buf, len, &img, 65535,
+            "height", 65535,
+            "crop",   VIPS_INTERESTING_NONE,
+            "size",   VIPS_SIZE_DOWN,
+            NULL);
+    if (rc != 0) {
+        vips_error_clear();
+        return -1;
+    }
+    if (img == NULL) {
+        return -1;
+    }
+    *w = img->Xsize;
+    *h = img->Ysize;
+    g_object_unref(img);
+    return 0;
+}
+
 // cover_crop_rgba: COVER resize + center-crop from a raw RGBA8888 buffer
 // (e.g. the output of PDFium render). Avoids the PNG encode/decode round-trip.
 // data must be tightly packed: stride == width * 4.
@@ -566,6 +601,23 @@ func applyRoundedMaskVips(pngData []byte, width, height int) ([]byte, error) {
 	return out, nil
 }
 
+// imageDimsVips returns the width and height of any libvips-loadable buffer
+// (JPEG, PNG, WebP, TIFF, SVG…) by reading only the image header.
+// Returns an error if the buffer cannot be decoded.
+func imageDimsVips(buf []byte) (w, h int, err error) {
+	if len(buf) == 0 {
+		return 0, 0, fmt.Errorf("imageDimsVips: empty buffer")
+	}
+	var cw, ch C.int
+	rc := C.image_dims(unsafe.Pointer(&buf[0]), C.size_t(len(buf)), &cw, &ch)
+	if rc != 0 {
+		errStr := C.vips_error_buffer()
+		C.vips_error_clear()
+		return 0, 0, fmt.Errorf("imageDimsVips: %s", C.GoString(errStr))
+	}
+	return int(cw), int(ch), nil
+}
+
 // ImageThumbnail processes an image or SVG buffer and returns an encoded
 // thumbnail/preview. It implements the full image pipeline described in
 // the Python service spec:
@@ -606,6 +658,28 @@ func ImageThumbnail(
 		return nil, fmt.Errorf("empty input data")
 	}
 
+	// Read original image dimensions so that ConvertRequestedSize can apply
+	// the Python _convert_requested_size_to_true_res_to_scale semantics:
+	//   - 0 means "use original dimension"
+	//   - sub-minimum values are clamped to ImageMinimumResolution
+	// Without this, width=0 or height=0 reaches libvips and triggers:
+	//   "value 0 of type gint is invalid for property width/height"
+	origW, origH, err := imageDimsVips(data)
+	if err != nil {
+		// If we cannot read dimensions (corrupt/unsupported format), fall back
+		// to a safe minimum so we don't crash — the render call will fail with
+		// a proper error from libvips instead of a panic.
+		origW, origH = width, height
+		if origW == 0 {
+			origW = ImageMinRes
+		}
+		if origH == 0 {
+			origH = ImageMinRes
+		}
+	}
+
+	width, height = ConvertRequestedSize(width, height, origW, origH, ImageMinRes)
+
 	jpegQuality := QualityToInt(quality)
 
 	// Rounded thumbnails must be PNG (need alpha channel for the mask).
@@ -615,7 +689,6 @@ func ImageThumbnail(
 	}
 
 	var out []byte
-	var err error
 
 	if cropMode == "none" {
 		// Preview with crop=false: scale-to-fit with transparent padding.

@@ -94,6 +94,12 @@ func PDFRasterize(
 		return nil, fmt.Errorf("pdfium returned nil image for page %d", page)
 	}
 
+	// Apply the same size-normalisation as the image path: 0 means "keep the
+	// rasterised page size"; sub-minimum values are clamped to ImageMinRes.
+	origW := rgba.Bounds().Dx()
+	origH := rgba.Bounds().Dy()
+	width, height = ConvertRequestedSize(width, height, origW, origH, ImageMinRes)
+
 	jpegQuality := QualityToInt(quality)
 	fmtStr := outputFormat
 	if shape == "rounded" {

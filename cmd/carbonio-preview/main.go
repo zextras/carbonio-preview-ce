@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/server"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
@@ -27,6 +28,11 @@ func main() {
 	}
 
 	cfg := &config.App
+
+	// Propagate the configured minimum resolution to the render package so that
+	// ConvertRequestedSize applies the operator-configured IMAGE_MIN_RES value
+	// (default 80) instead of the package default.
+	render.SetImageMinRes(cfg.ImageMinimumResolution)
 
 	// Build the storage client.
 	// CE uses DirectClient: a single-endpoint HTTP client to carbonio-storages.
