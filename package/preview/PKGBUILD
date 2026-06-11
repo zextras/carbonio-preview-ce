@@ -16,33 +16,39 @@ depends__apt=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "libstdc++6"
 )
 depends__rocky_8=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "libstdc++"
 )
 depends__rocky_9=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "libstdc++"
 )
 makedepends__apt=(
   "git"
   "wget"
   "gcc"
+  "libc6-dev"
   "pkg-config"
 )
 makedepends__rocky_8=(
   "git"
   "wget"
   "gcc"
+  "glibc-devel"
   "pkgconfig"
 )
 makedepends__rocky_9=(
   "git"
   "wget"
   "gcc"
+  "glibc-devel"
   "pkgconfig"
 )
 
