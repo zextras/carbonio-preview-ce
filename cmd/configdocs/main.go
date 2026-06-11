@@ -23,10 +23,10 @@ import (
 )
 
 func main() {
-	// Determine the repo root.  The go:generate directive in config/ changes
-	// the working directory to the package directory, so we walk up one level.
-	// When invoked directly from the repo root the working directory is already
-	// correct.  We detect by looking for go.mod.
+	// Determine the repo root by walking up from cwd until go.mod is found.
+	// The go:generate directive in config/ sets the working directory to the
+	// package directory; direct invocations from the repo root also work because
+	// go.mod is found on the first iteration.
 	root := repoRoot()
 
 	keys := config.RegisteredKeys()

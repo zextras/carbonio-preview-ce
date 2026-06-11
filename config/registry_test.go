@@ -174,6 +174,18 @@ func TestRegisterKeyEnvNameCollision(t *testing.T) {
 	}
 }
 
+func TestAllKeysAreASCII(t *testing.T) {
+	for _, e := range RegisteredKeys() {
+		for _, s := range []string{e.Key, e.Default, e.IfNotPresent} {
+			for i := 0; i < len(s); i++ {
+				if s[i] > 127 {
+					t.Errorf("non-ASCII byte 0x%02x at index %d in %q (key=%q)", s[i], i, s, e.Key)
+				}
+			}
+		}
+	}
+}
+
 func TestAllKeysHaveDescription(t *testing.T) {
 	for _, ns := range []Namespace{NamespaceNetworking, NamespaceApplication} {
 		for _, e := range registeredKeys(ns) {

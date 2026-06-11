@@ -337,6 +337,11 @@ func appendMdTable(sb *strings.Builder, sec SectionDoc) {
 //
 //	if (value.length() >= width) return " " + value + " ";
 //	return " " + value + " ".repeat(width - value.length() - 1);
+//
+// Width is measured with len(), which counts bytes, not Unicode code points —
+// matching Java's String.length() semantics. This is correct only for ASCII
+// input. Registry keys, defaults, and IfNotPresent strings are ASCII by
+// construction, so the output is well-defined.
 func padCell(value string, width int) string {
 	vlen := len(value)
 	if vlen >= width {

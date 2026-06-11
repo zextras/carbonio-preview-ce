@@ -329,10 +329,3 @@ func TestRenderTxt_TrailingNewline(t *testing.T) {
 			txt, txt[max(0, len(txt)-10):])
 	}
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
