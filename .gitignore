@@ -6,6 +6,9 @@
 *.rpm
 .coverage
 .idea
+.run/
+carbonio-preview
+carbonio-preview-bin
 LICENSES
 __pycache__
 app/core/resources/config.ini
