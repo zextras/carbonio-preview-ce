@@ -1,0 +1,205 @@
+package config
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// encodeB64 is a local helper for base64-encoding strings in test data.
+func encodeB64(s string) string {
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+func TestConsulClientRecurseAndDecode(t *testing.T) {
+	// Build a consul-style KV response: mix of real entries, null value, and
+	// prefix-only entry.
+	const kvPrefix = "carbonio-preview/"
+	entries := []consulKVEntry{
+		// Real entries.
+		{Key: kvPrefix + "timeout-in-seconds", Value: ptr(encodeB64("60"))},
+		{Key: kvPrefix + "storages/download-api", Value: ptr(encodeB64("get"))},
+		// Null Value — must be filtered out.
+		{Key: kvPrefix + "workers", Value: nil},
+		// Prefix-only entry — must be filtered out (key == prefix, no suffix).
+		{Key: kvPrefix, Value: ptr(encodeB64("ignored"))},
+	}
+
+	var gotRecurse bool
+	var gotToken string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/kv/"+kvPrefix {
+			http.NotFound(w, r)
+			return
+		}
+		// Consul uses bare ?recurse with no value; check the raw query string.
+		gotRecurse = r.URL.RawQuery == "recurse" || containsSubstring(r.URL.RawQuery, "recurse")
+		gotToken = r.Header.Get("X-Consul-Token")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+
+	t.Setenv("CONSUL_HTTP_TOKEN", "test-token")
+
+	m, err := fetchConsulKV(host, port)
+	if err != nil {
+		t.Fatalf("fetchConsulKV: %v", err)
+	}
+
+	if !gotRecurse {
+		t.Error("?recurse query param not sent")
+	}
+	if gotToken != "test-token" {
+		t.Errorf("X-Consul-Token = %q, want %q", gotToken, "test-token")
+	}
+
+	// Real entries: slash→dot conversion applied.
+	if m["timeout-in-seconds"] != "60" {
+		t.Errorf("timeout-in-seconds = %q, want %q", m["timeout-in-seconds"], "60")
+	}
+	if m["storages.download-api"] != "get" {
+		t.Errorf("storages.download-api = %q, want %q", m["storages.download-api"], "get")
+	}
+
+	// Null value entry must not be present.
+	if _, ok := m["workers"]; ok {
+		t.Error("workers (null value) must be filtered out")
+	}
+
+	// Prefix-only entry must not be present (key == prefix, empty suffix).
+	if _, ok := m[""]; ok {
+		t.Error("prefix-only entry must be filtered out")
+	}
+
+	// Total: only 2 real entries.
+	if len(m) != 2 {
+		t.Errorf("expected 2 entries, got %d: %v", len(m), m)
+	}
+}
+
+func TestConsulClientNoToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Consul-Token") != "" {
+			t.Error("token header sent when env var is empty")
+		}
+		json.NewEncoder(w).Encode([]consulKVEntry{})
+	}))
+	defer srv.Close()
+
+	t.Setenv("CONSUL_HTTP_TOKEN", "")
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	_, err := fetchConsulKV(host, port)
+	if err != nil {
+		t.Fatalf("fetchConsulKV: %v", err)
+	}
+}
+
+func TestConsulClient404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	m, err := fetchConsulKV(host, port)
+	if err != nil {
+		t.Fatalf("404 should return empty map, got error: %v", err)
+	}
+	if len(m) != 0 {
+		t.Errorf("404: expected empty map, got %v", m)
+	}
+}
+
+func TestConsulClient500(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	_, err := fetchConsulKV(host, port)
+	if err == nil {
+		t.Fatal("500: expected error, got nil")
+	}
+}
+
+func TestConsulClientConnectionRefused(t *testing.T) {
+	// Find a free port then close it immediately so it's not listening.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+
+	host, port, _ := net.SplitHostPort(addr)
+	_, err = fetchConsulKV(host, port)
+	if err == nil {
+		t.Fatal("connection refused: expected error, got nil")
+	}
+}
+
+// ptr returns a pointer to s, used for building test KV entries.
+func ptr(s string) *string { return &s }
+
+// consulKVEntry mirrors the JSON structure returned by the Consul KV API.
+// Declared here for test use; the real type lives in consul.go.
+// We define it as a type alias to avoid ambiguity with the real type.
+type consulKVEntry = kvEntry
+
+func TestConsulClientRecurseQueryParam(t *testing.T) {
+	var queryStr string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queryStr = r.URL.RawQuery
+		json.NewEncoder(w).Encode([]kvEntry{})
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	fetchConsulKV(host, port)
+
+	if queryStr == "" || !containsRecurse(queryStr) {
+		t.Errorf("expected ?recurse in query, got %q", queryStr)
+	}
+}
+
+func containsRecurse(q string) bool {
+	return len(q) >= 7 && (q == "recurse" || len(q) > 7 && (q[:8] == "recurse=" || containsSubstring(q, "&recurse") || containsSubstring(q, "recurse&")))
+}
+
+func containsSubstring(s, sub string) bool {
+	return len(s) >= len(sub) && (func() bool {
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				return true
+			}
+		}
+		return false
+	})()
+}
+
+func TestConsulClientURLPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		json.NewEncoder(w).Encode([]kvEntry{})
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	fetchConsulKV(host, port)
+
+	wantPath := fmt.Sprintf("/v1/kv/%s/", ServiceName)
+	if gotPath != wantPath {
+		t.Errorf("URL path = %q, want %q", gotPath, wantPath)
+	}
+}
