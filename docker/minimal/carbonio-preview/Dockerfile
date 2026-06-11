@@ -3,39 +3,31 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Two-stage Go image for carbonio-preview-ce.
-# Builder: golang:1.25-bookworm (amd64) + CGO cross-compile for arm64.
+# Builder: golang:1.25-bookworm running on TARGETPLATFORM (native per arch).
 # Runtime: debian:bookworm-slim + apt libvips42 + libpdfium.so.
-# Multi-arch: TARGETARCH drives pdfium download, CC selection, and Go cross-build.
-#
-# Cross-compilation strategy (faster than QEMU emulation):
-#   amd64 → native gcc + amd64 pdfium
-#   arm64 → gcc-aarch64-linux-gnu + arm64 pdfium + multiarch libvips-dev:arm64
+# Multi-arch: TARGETARCH drives the pdfium download; the builder runs natively
+# under QEMU for arm64 so CGO links against the correct arch libraries.
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder (always runs as amd64 native)
+# Stage 1: builder (runs natively on each target platform via QEMU for arm64)
 # ---------------------------------------------------------------------------
-ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 ARG TARGETARCH
 
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.25-bookworm AS builder
+FROM --platform=${TARGETPLATFORM} golang:1.25-bookworm AS builder
 
 ARG TARGETARCH
 
 # Install build dependencies.
-# crossbuild-essential-arm64 pulls in the full aarch64 toolchain (gcc, binutils,
-# libc headers) in one shot — the standard Debian approach for CGO cross-compile.
-# libvips-dev:arm64 provides arm64 C headers for govips via Debian multiarch.
-RUN set -eux; \
-    dpkg --add-architecture arm64; \
-    apt-get update; \
+# libvips-dev brings vips.pc + all CGO headers needed by render/vips.go.
+# gcc + pkg-config are required by CGO.
+RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         gcc \
-        crossbuild-essential-arm64 \
         pkg-config \
         libvips-dev \
-        libvips-dev:arm64 \
         wget \
-        ca-certificates; \
+        ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Download pdfium for the TARGET architecture.
@@ -75,29 +67,17 @@ COPY render/ ./render/
 COPY server/ ./server/
 COPY storage/ ./storage/
 
-# Build the Go binary with CGO cross-compilation support.
-# For arm64: use aarch64-linux-gnu-gcc as the C compiler (CC).
-# GOARCH + GOOS make Go produce the correct target binary.
+# Build the Go binary.
 # CGO_LDFLAGS rpath: at runtime the binary looks for libpdfium.so in
 # /usr/lib/carbonio-preview (same path the .deb package uses).
 ENV CGO_ENABLED=1
 ENV GOPRIVATE=github.com/zextras/*
-RUN set -eux; \
-    case "${TARGETARCH:-amd64}" in \
-      amd64) \
-        PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" \
-        CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview -L/staging/pdfium/lib" \
-        GOOS=linux GOARCH=amd64 \
-        go build -ldflags="-s -w" -o /staging/carbonio-preview-bin ./cmd/carbonio-preview/... \
-        ;; \
-      arm64) \
-        PKG_CONFIG_LIBDIR="/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig" \
-        CC=aarch64-linux-gnu-gcc \
-        CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview -L/staging/pdfium/lib" \
-        GOOS=linux GOARCH=arm64 \
-        go build -ldflags="-s -w" -o /staging/carbonio-preview-bin ./cmd/carbonio-preview/... \
-        ;; \
-    esac
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
+ENV CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview -L/staging/pdfium/lib"
+RUN go build \
+      -ldflags="-s -w" \
+      -o /staging/carbonio-preview-bin \
+      ./cmd/carbonio-preview/...
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
