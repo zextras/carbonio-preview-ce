@@ -1,121 +1,115 @@
 # syntax=docker/dockerfile:1.4
+# SPDX-FileCopyrightText: 2025 Zextras <https://www.zextras.com>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Two-stage Go image for carbonio-preview-ce.
+# Builder: golang:1.25-bookworm + apt libvips-dev + bblanchon pdfium.
+# Runtime: debian:bookworm-slim + apt libvips42 + libpdfium.so.
+# Multi-arch: TARGETARCH drives both the pdfium download and the Go build.
 
-# Stage 1: runs natively on BUILDPLATFORM (amd64 CI builder) — no QEMU.
-# Cross-fetches the Python wheels and the libcairo2 runtime closure for
-# TARGETARCH, then stages them so the final image needs zero RUN steps.
-FROM --platform=$BUILDPLATFORM docker.io/library/python:3.10-slim AS builder
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# ---------------------------------------------------------------------------
+ARG BUILDPLATFORM
+ARG TARGETARCH
+
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.25-bookworm AS builder
 
 ARG TARGETARCH
-ARG BUILDARCH=amd64
 
-WORKDIR /build
+# Install build dependencies.
+# libvips-dev brings vips.pc + all CGO headers needed by render/vips.go.
+# gcc + pkg-config are required by CGO.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        gcc \
+        pkg-config \
+        libvips-dev \
+        wget \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /tmp/requirements.txt
-
-# Cross-install Python deps for the target arch into a staging tree.
-# Wheels are only unpacked (no target code runs), so this is QEMU-free.
-# Map Docker's TARGETARCH (amd64/arm64) to the manylinux wheel arch tag
-# (x86_64/aarch64). Pure-python wheels are picked up via the implicit
-# 'any' platform that pip always considers alongside --platform.
+# Download pdfium for the TARGET architecture.
+# bblanchon release naming: x64 for amd64, arm64 for arm64.
 RUN set -eux; \
-    case "${TARGETARCH}" in \
-        amd64) WHEELARCH=x86_64 ;; \
-        arm64) WHEELARCH=aarch64 ;; \
+    case "${TARGETARCH:-amd64}" in \
+        amd64) PDFARCH=x64 ;; \
+        arm64) PDFARCH=arm64 ;; \
         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    pip install --no-cache-dir --no-compile \
-        --target=/staging/opt/zextras/preview/site-packages \
-        --platform manylinux2014_${WHEELARCH} \
-        --platform manylinux_2_17_${WHEELARCH} \
-        --platform manylinux_2_28_${WHEELARCH} \
-        --python-version 310 --implementation cp --abi cp310 \
-        --only-binary=:all: \
-        -r /tmp/requirements.txt
+    mkdir -p /staging/pdfium; \
+    wget -q \
+      "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-${PDFARCH}.tgz" \
+      -O /tmp/pdfium.tgz; \
+    tar -xzf /tmp/pdfium.tgz -C /staging/pdfium; \
+    rm /tmp/pdfium.tgz
 
-# Cross-fetch libcairo2 + its runtime .so closure for the target arch using
-# apt-get download + dpkg -x (no postinst, no target execution).
-RUN set -eux; \
-    if [ "${TARGETARCH}" != "${BUILDARCH}" ]; then \
-        dpkg --add-architecture ${TARGETARCH}; \
-    fi; \
-    apt-get update; \
-    mkdir -p /tmp/debs /staging/usr/local/lib; \
-    cd /tmp/debs; \
-    apt-get download \
-        libcairo2:${TARGETARCH} \
-        libpixman-1-0:${TARGETARCH} \
-        libfontconfig1:${TARGETARCH} \
-        libfreetype6:${TARGETARCH} \
-        libpng16-16t64:${TARGETARCH} \
-        libxcb-render0:${TARGETARCH} \
-        libxcb-shm0:${TARGETARCH} \
-        libxcb1:${TARGETARCH} \
-        libxext6:${TARGETARCH} \
-        libxrender1:${TARGETARCH} \
-        libx11-6:${TARGETARCH} \
-        libxau6:${TARGETARCH} \
-        libxdmcp6:${TARGETARCH} \
-        libbrotli1:${TARGETARCH} \
-        libexpat1:${TARGETARCH}; \
-    for deb in /tmp/debs/*.deb; do dpkg -x "$deb" /staging/cairo-root; done; \
-    find /staging/cairo-root -name '*.so*' -exec cp -Pv {} /staging/usr/local/lib/ \; ; \
-    rm -rf /tmp/debs /staging/cairo-root /var/lib/apt/lists/*
+# Synthesize pdfium.pc so that go-pdfium CGO can find the library.
+RUN mkdir -p /usr/local/lib/pkgconfig && \
+    printf 'prefix=/staging/pdfium\nlibdir=/staging/pdfium/lib\nincludedir=/staging/pdfium/include\nName: PDFium\nDescription: PDFium library\nVersion: 7881\nLibs: -L/staging/pdfium/lib -lpdfium\nCflags: -I/staging/pdfium/include\n' \
+        > /usr/local/lib/pkgconfig/pdfium.pc
 
-COPY app /staging/opt/zextras/preview/app
-COPY package/preview/messages.ini /staging/etc/carbonio/preview/messages.ini
+WORKDIR /src
 
-# Stage 2: final image — TARGETPLATFORM, zero RUN steps (no QEMU needed).
-FROM --platform=$TARGETPLATFORM docker.io/library/python:3.10-slim
+# Copy Go module files first so the layer is cached unless deps change.
+COPY go.mod go.sum ./
 
-COPY --from=builder /staging/opt/zextras/preview /opt/zextras/preview
-COPY --from=builder /staging/etc/carbonio/preview /etc/carbonio/preview
-COPY --from=builder /staging/usr/local/lib /usr/local/lib
+# Download all modules before copying source.
+ENV GOPRIVATE=github.com/zextras/*
+ENV GONOSUMCHECK=github.com/zextras/*
+RUN go mod download
 
-ENV LD_LIBRARY_PATH="/usr/local/lib"
-ENV PYTHONPATH="/opt/zextras/preview/app:/opt/zextras/preview/site-packages:/opt/zextras/common/lib/python3.10/dist-packages:/opt/zextras/common/lib/python3.10/site-packages:/opt/zextras/common/lib64/python3.10/dist-packages:/opt/zextras/common/lib64/python3.10/site-packages:/opt/zextras/common/local/lib/python3.10/dist-packages:/opt/zextras/common/local/lib/python3.10/site-packages:/opt/zextras/common/local/lib64/python3.10/dist-packages:/opt/zextras/common/local/lib64/python3.10/site-packages:"
+# Copy source tree.
+COPY cmd/    ./cmd/
+COPY config/ ./config/
+COPY render/ ./render/
+COPY server/ ./server/
+COPY storage/ ./storage/
 
+# Build the Go binary.
+# CGO_LDFLAGS rpath: at runtime the binary looks for libpdfium.so in
+# /usr/lib/carbonio-preview (same path the .deb package uses).
+ENV CGO_ENABLED=1
+ENV GOPRIVATE=github.com/zextras/*
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
+ENV CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview -L/staging/pdfium/lib"
+RUN go build \
+      -ldflags="-s -w" \
+      -o /staging/carbonio-preview-bin \
+      ./cmd/carbonio-preview/...
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim
+
+# Install runtime: libvips42 pulls in the full vips + glib runtime closure.
+# libstdc++6 is needed for C++ symbols from pdfium and vips-cpp.
+# ca-certificates is needed for any outbound HTTPS the binary makes.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libvips42 \
+        libstdc++6 \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the compiled binary.
+COPY --from=builder /staging/carbonio-preview-bin /usr/bin/carbonio-preview-bin
+
+# Copy libpdfium.so to the rpath directory.
+COPY --from=builder /staging/pdfium/lib/libpdfium.so \
+                    /usr/lib/carbonio-preview/libpdfium.so
+
+# ldconfig so the dynamic linker picks up /usr/lib/carbonio-preview.
+RUN ldconfig
+
+# Create directories expected by the service.
+RUN mkdir -p /etc/carbonio/preview /var/log/carbonio/preview
+
+# The service binds on 0.0.0.0:10000 by default (overridable via PREVIEW_HOST/PREVIEW_PORT).
+EXPOSE 10000
+
+# Run as root (matching legacy behaviour; no USER added).
 WORKDIR /opt/zextras/preview
 
-CMD sh -c 'echo "# Carbonio Preview service configuration\n\
-[carbonio.preview]\n\
-name = preview\n\
-default_host = ${PREVIEW_HOST}\n\
-default_port = ${PREVIEW_PORT}\n\
-timeout_in_seconds = 30\n\
-docs-timeout = 15\n\
-workers = 2\n\
-image_name = image\n\
-health_name = health\n\
-pdf_name = pdf\n\
-document_name = document\n\
-enable_document_preview = true\n\
-enable_document_thumbnail = false\n\
-\n\
-# Log configuration\n\
-[log]\n\
-format = [%(asctime)s] %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s\n\
-level = warning\n\
-path = /var/log/carbonio/preview/\n\
-\n\
-# Image constants\n\
-[image_constants]\n\
-minimum_resolution = 80\n\
-\n\
-# Carbonio Storages configuration\n\
-[carbonio.storages]\n\
-name = slimstore\n\
-download_api = download\n\
-health_check = health/live\n\
-default_protocol = http\n\
-default_host = ${STORAGES_HOST}\n\
-default_port = ${STORAGES_PORT}\n\
-\n\
-# Carbonio Docs-Editor configuration\n\
-[carbonio.docs-editor]\n\
-default_protocol = http\n\
-default_host = ${DOCS_EDITOR_HOST}\n\
-default_port = ${DOCS_EDITOR_PORT}\n\
-service_endpoint = services/docs/editor\n\
-convert_api = cool/convert-to" > /etc/carbonio/preview/config.ini && \
-mkdir -p /var/log/carbonio/preview/ && \
-python -m gunicorn app.controller:app --config app/gunicorn.conf.py'
+ENTRYPOINT ["/usr/bin/carbonio-preview-bin"]
