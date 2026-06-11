@@ -25,8 +25,6 @@ ARG TARGETARCH
 # crossbuild-essential-arm64 pulls in the full aarch64 toolchain (gcc, binutils,
 # libc headers) in one shot — the standard Debian approach for CGO cross-compile.
 # libvips-dev:arm64 provides arm64 C headers for govips via Debian multiarch.
-# pkg-config-aarch64-linux-gnu provides aarch64-linux-gnu-pkg-config so that
-# CGO (via PKG_CONFIG env) resolves arm64 library flags correctly.
 RUN set -eux; \
     dpkg --add-architecture arm64; \
     apt-get update; \
@@ -34,7 +32,6 @@ RUN set -eux; \
         gcc \
         crossbuild-essential-arm64 \
         pkg-config \
-        pkg-config-aarch64-linux-gnu \
         libvips-dev \
         libvips-dev:arm64 \
         wget \
@@ -94,8 +91,7 @@ RUN set -eux; \
         go build -ldflags="-s -w" -o /staging/carbonio-preview-bin ./cmd/carbonio-preview/... \
         ;; \
       arm64) \
-        PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig" \
-        PKG_CONFIG=aarch64-linux-gnu-pkg-config \
+        PKG_CONFIG_LIBDIR="/usr/local/lib/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig" \
         CC=aarch64-linux-gnu-gcc \
         CGO_LDFLAGS="-Wl,-rpath,/usr/lib/carbonio-preview -L/staging/pdfium/lib" \
         GOOS=linux GOARCH=arm64 \
