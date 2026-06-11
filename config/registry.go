@@ -1,3 +1,6 @@
+// Package config provides the configuration chain and key registry.
+//
+//go:generate go run ../cmd/configdocs
 package config
 
 import (
@@ -85,6 +88,19 @@ func namespacePrefix(ns Namespace) string {
 	default:
 		return ApplicationPrefix
 	}
+}
+
+// RegisteredKeys returns a sorted snapshot of all registered keys.
+// Keys are sorted alphabetically by Key within each namespace, then by
+// namespace (networking before application).  A copy is returned so callers
+// cannot mutate the registry.
+func RegisteredKeys() []KeyEntry {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	out := make([]KeyEntry, len(registry))
+	copy(out, registry)
+	return out
 }
 
 // registeredKeys returns a snapshot of all registered keys for the given namespace.
