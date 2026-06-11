@@ -34,10 +34,12 @@ func TestSetupCLI_MissingConsulURL(t *testing.T) {
 	}
 }
 
-// TestSetupCLI_SuccessPathPrintsConfigsTxt verifies that --setup with no ini
-// (absent → all skip) exits 0 and prints configs.txt content.
+// TestSetupCLI_SuccessPathPrintsConfigsTxt verifies that --setup with an absent
+// ini exits 0 and prints configs.txt content. Uses temp paths to avoid any
+// dependency on the real /etc/carbonio/preview/config.ini.
 func TestSetupCLI_SuccessPathPrintsConfigsTxt(t *testing.T) {
 	bin := buildBinary(t)
+	dir := t.TempDir()
 
 	// A minimal Consul stub that accepts any request.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,28 +53,16 @@ func TestSetupCLI_SuccessPathPrintsConfigsTxt(t *testing.T) {
 	defer srv.Close()
 
 	cmd := exec.Command(bin, "--setup", srv.URL)
-	cmd.Env = os.Environ()
+	// Inject temp paths so the binary never touches /etc/carbonio/preview/.
+	env := append(os.Environ(),
+		"CARBONIO_PREVIEW_TEST_INI_PATH="+filepath.Join(dir, "config.ini"),
+		"CARBONIO_PREVIEW_TEST_PROPS_PATH="+filepath.Join(dir, "config.properties"),
+	)
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
-	// Exit 0 when ini is absent (no application work, no token needed).
 	if err != nil {
-		t.Logf("output: %s", out)
-		// Non-zero is acceptable here if the binary reads a real ini from the
-		// default path — in CI there is no /etc/carbonio/preview/config.ini.
-		// We just check for no panic / sensible exit.
-		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
-			// Allow exit 1 only if it is NOT a "Usage" error (that would mean
-			// a programming error in flag parsing, not a runtime condition).
-			if strings.Contains(string(out), "Usage: --setup") {
-				t.Fatalf("unexpected usage error: %s", out)
-			}
-			t.Logf("exit 1 accepted (real ini may be present at default path): %s", out)
-			return
-		}
-		t.Fatalf("unexpected error: %v\n%s", err, out)
+		t.Fatalf("expected exit 0, got: %v\n%s", err, out)
 	}
-
-	// On success, the output must contain something from configs.txt
-	// (we check for a known key that every build will have).
 	if !strings.Contains(string(out), "carbonio.service") {
 		t.Errorf("expected configs.txt content in output, got: %s", out)
 	}

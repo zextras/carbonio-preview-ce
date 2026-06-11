@@ -52,6 +52,12 @@ type Migration struct {
 	// ApplicationEntries maps old source (INI) key → function that writes to the
 	// Consul KV store.
 	ApplicationEntries map[string]EntryFunc
+
+	// DropEntries lists ini "section.key" strings whose value is discarded with no
+	// replacement.  The runner deletes the key from the ini (per-entry idempotency)
+	// and counts each removed entry inside the application j/k summary tally.
+	// Keys listed here do NOT require SETUP_CONSUL_TOKEN.
+	DropEntries []string
 }
 
 var (

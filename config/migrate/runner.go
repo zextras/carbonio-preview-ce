@@ -83,16 +83,13 @@ func (r *Runner) Run() {
 	netModified := false
 
 	for _, m := range migrations {
-		netMigrated, appMigrated, err := r.runOne(m)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  WARNING: failed to run migration %s: %v\n", m.Name, err)
-			continue
-		}
+		netMigrated, appMigrated := r.runOne(m)
 		if netMigrated > 0 {
 			netModified = true
 		}
+		totalApp := len(m.ApplicationEntries) + len(m.DropEntries)
 		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
-			m.Name, netMigrated, len(m.NetworkingEntries), appMigrated, len(m.ApplicationEntries))
+			m.Name, netMigrated, len(m.NetworkingEntries), appMigrated, totalApp)
 	}
 
 	if netModified {
@@ -108,13 +105,14 @@ func (r *Runner) Run() {
 	}
 }
 
-// runOne runs a single migration's networking and application entries.
-// It returns (netMigrated, appMigrated, error).
+// runOne runs a single migration's networking, application, and drop entries.
+// It returns (netMigrated, appMigrated).
 // Per-entry errors are logged as warnings; the entry's old key is NOT deleted.
-func (r *Runner) runOne(m Migration) (int, int, error) {
+func (r *Runner) runOne(m Migration) (int, int) {
 	netMigrated := r.runNetworkingEntries(m)
 	appMigrated := r.runApplicationEntries(m)
-	return netMigrated, appMigrated, nil
+	appMigrated += r.runDropEntries(m)
+	return netMigrated, appMigrated
 }
 
 func (r *Runner) runNetworkingEntries(m Migration) int {
@@ -152,4 +150,19 @@ func (r *Runner) runApplicationEntries(m Migration) int {
 		migrated++
 	}
 	return migrated
+}
+
+func (r *Runner) runDropEntries(m Migration) int {
+	if r.ini.isAbsent() {
+		return 0
+	}
+	dropped := 0
+	for _, oldKey := range m.DropEntries {
+		if _, ok := r.ini.get(oldKey); !ok {
+			continue
+		}
+		r.ini.remove(oldKey)
+		dropped++
+	}
+	return dropped
 }

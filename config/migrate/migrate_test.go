@@ -553,6 +553,118 @@ func TestHasApplicationWork_NoTokenNeededWhenAbsent(t *testing.T) {
 	})
 }
 
+// TestRunner_AppOnly_NoPropertiesFile verifies that a migration with ONLY
+// application entries does not create the config.properties file.
+func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
+	withCleanRegistry(t, func() {
+		dir := t.TempDir()
+		iniContent := "[carbonio.preview]\ntimeout_in_seconds = 30\n"
+		iniPath := writeFile(t, dir, "config.ini", iniContent)
+		propsPath := filepath.Join(dir, "config.properties")
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				w.WriteHeader(http.StatusNotFound)
+			case http.MethodPut, http.MethodDelete:
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, "true")
+			}
+		}))
+		defer srv.Close()
+
+		err := Register(Migration{
+			Version: 1,
+			Name:    "V1__AppOnly",
+			ApplicationEntries: map[string]EntryFunc{
+				"carbonio.preview.timeout_in_seconds": func(_, v string, dest ConfigStore) error {
+					return dest.Set("carbonio-preview/timeout-in-seconds", v)
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("register: %v", err)
+		}
+
+		runner, err := NewRunner(Paths{
+			IniPath:     iniPath,
+			PropsPath:   propsPath,
+			ConsulURL:   srv.URL,
+			ConsulToken: "tok",
+		})
+		if err != nil {
+			t.Fatalf("NewRunner: %v", err)
+		}
+		runner.Run()
+
+		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
+			t.Error("properties file must NOT be created for app-only migration")
+		}
+	})
+}
+
+// TestHasApplicationWork_FalseWhenOnlyDropEntries verifies that an ini
+// containing ONLY drop-only keys does not require SETUP_CONSUL_TOKEN.
+func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
+	withCleanRegistry(t, func() {
+		dir := t.TempDir()
+		// ini with ONLY drop-only keys — no real application KV entries.
+		iniContent := "[log]\nlevel = info\n\n[carbonio.preview]\nname = preview\n"
+		iniPath := writeFile(t, dir, "config.ini", iniContent)
+		propsPath := filepath.Join(dir, "config.properties")
+
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+
+		runner, err := NewRunner(Paths{
+			IniPath:   iniPath,
+			PropsPath: propsPath,
+			ConsulURL: "http://localhost:8500", // not reachable — must not be called
+		})
+		if err != nil {
+			t.Fatalf("NewRunner: %v", err)
+		}
+		if runner.HasApplicationWork() {
+			t.Error("HasApplicationWork must be false when ini contains only drop-only keys")
+		}
+
+		// Full run without a token must succeed and make ZERO Consul requests.
+		consulHits := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			consulHits++
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		runner2, err := NewRunner(Paths{
+			IniPath:   iniPath,
+			PropsPath: propsPath,
+			ConsulURL: srv.URL,
+			// No token — intentionally absent.
+		})
+		if err != nil {
+			t.Fatalf("NewRunner2: %v", err)
+		}
+		runner2.Run()
+
+		if consulHits != 0 {
+			t.Errorf("expected 0 Consul requests, got %d", consulHits)
+		}
+		// ini must have been renamed (all keys consumed).
+		if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
+			t.Error("expected config.ini to be renamed to .migrated")
+		}
+		if _, err := os.Stat(iniPath + ".migrated"); err != nil {
+			t.Errorf("expected config.ini.migrated to exist: %v", err)
+		}
+		// properties file must NOT have been created.
+		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
+			t.Error("properties file must not be created when no networking entries ran")
+		}
+	})
+}
+
 // ── splitSectionKey tests ─────────────────────────────────────────────────────
 
 func TestSplitSectionKey(t *testing.T) {

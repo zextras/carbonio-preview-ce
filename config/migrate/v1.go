@@ -4,11 +4,9 @@
 
 package migrate
 
-import "fmt"
-
 func init() {
 	if err := Register(V1MigrateFromPythonIni()); err != nil {
-		panic(fmt.Sprintf("migrate: register V1: %v", err))
+		panic("migrate: register V1: " + err.Error())
 	}
 }
 
@@ -33,50 +31,47 @@ func V1MigrateFromPythonIni() Migration {
 		}
 	}
 
-	drop := func(_, _ string, _ ConfigStore) error {
-		// Value intentionally discarded — key is logged as "dropped" by convention.
-		return nil
-	}
-
 	return Migration{
 		Version: 1,
 		Name:    "V1__MigrateFromPythonIni",
 
 		// ── Networking entries (INI section.key → config.properties key) ──────────
 		NetworkingEntries: map[string]EntryFunc{
-			"carbonio.preview.default_host":    rename("carbonio.service.host"),
-			"carbonio.preview.default_port":    rename("carbonio.service.port"),
-			"carbonio.storages.default_host":   rename("carbonio.storages.host"),
-			"carbonio.storages.default_port":   rename("carbonio.storages.port"),
-			"carbonio.storages.default_protocol": rename("carbonio.storages.protocol"),
-			"carbonio.docs-editor.default_host":   rename("carbonio.docs-editor.host"),
-			"carbonio.docs-editor.default_port":   rename("carbonio.docs-editor.port"),
+			"carbonio.preview.default_host":         rename("carbonio.service.host"),
+			"carbonio.preview.default_port":         rename("carbonio.service.port"),
+			"carbonio.storages.default_host":        rename("carbonio.storages.host"),
+			"carbonio.storages.default_port":        rename("carbonio.storages.port"),
+			"carbonio.storages.default_protocol":    rename("carbonio.storages.protocol"),
+			"carbonio.docs-editor.default_host":     rename("carbonio.docs-editor.host"),
+			"carbonio.docs-editor.default_port":     rename("carbonio.docs-editor.port"),
 			"carbonio.docs-editor.default_protocol": rename("carbonio.docs-editor.protocol"),
 		},
 
 		// ── Application entries (INI section.key → Consul KV raw path) ───────────
 		ApplicationEntries: map[string]EntryFunc{
-			"carbonio.preview.timeout_in_seconds":      rename("carbonio-preview/timeout-in-seconds"),
-			"carbonio.preview.docs-timeout":            rename("carbonio-preview/docs-timeout-in-seconds"),
-			"carbonio.preview.workers":                 rename("carbonio-preview/workers"),
-			"image_constants.minimum_resolution":       rename("carbonio-preview/image-minimum-resolution"),
-			"carbonio.preview.enable_document_preview": rename("carbonio-preview/enable-document-preview"),
+			"carbonio.preview.timeout_in_seconds":        rename("carbonio-preview/timeout-in-seconds"),
+			"carbonio.preview.docs-timeout":              rename("carbonio-preview/docs-timeout-in-seconds"),
+			"carbonio.preview.workers":                   rename("carbonio-preview/workers"),
+			"image_constants.minimum_resolution":         rename("carbonio-preview/image-minimum-resolution"),
+			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/enable-document-preview"),
 			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/enable-document-thumbnail"),
-			"carbonio.storages.download_api":           rename("carbonio-preview/storages/download-api"),
-			"carbonio.storages.health_check":           rename("carbonio-preview/storages/health-check"),
-			"carbonio.docs-editor.service_endpoint":    rename("carbonio-preview/docs-editor/service-endpoint"),
-			"carbonio.docs-editor.convert_api":         rename("carbonio-preview/docs-editor/convert-api"),
+			"carbonio.storages.download_api":             rename("carbonio-preview/storages/download-api"),
+			"carbonio.storages.health_check":             rename("carbonio-preview/storages/health-check"),
+			"carbonio.docs-editor.service_endpoint":      rename("carbonio-preview/docs-editor/service-endpoint"),
+			"carbonio.docs-editor.convert_api":           rename("carbonio-preview/docs-editor/convert-api"),
+		},
 
-			// ── Drop-only (no replacement) ────────────────────────────────────────
-			"carbonio.preview.name":          drop,
-			"carbonio.preview.image_name":    drop,
-			"carbonio.preview.pdf_name":      drop,
-			"carbonio.preview.document_name": drop,
-			"carbonio.preview.health_name":   drop,
-			"log.format":                     drop,
-			"log.level":                      drop,
-			"log.path":                       drop,
-			"carbonio.storages.name":         drop,
+		// ── Drop-only entries (value discarded, no Consul write) ─────────────────
+		DropEntries: []string{
+			"carbonio.preview.name",
+			"carbonio.preview.image_name",
+			"carbonio.preview.pdf_name",
+			"carbonio.preview.document_name",
+			"carbonio.preview.health_name",
+			"log.format",
+			"log.level",
+			"log.path",
+			"carbonio.storages.name",
 		},
 	}
 }

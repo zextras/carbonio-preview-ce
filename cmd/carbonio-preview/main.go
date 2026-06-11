@@ -98,6 +98,13 @@ func runSetup(args []string, setupIdx int) {
 
 	iniPath := "/etc/carbonio/preview/config.ini"
 	propsPath := "/etc/carbonio/preview/config.properties"
+	// Test hook: allow injecting temp paths without touching production logic.
+	if v := os.Getenv("CARBONIO_PREVIEW_TEST_INI_PATH"); v != "" {
+		iniPath = v
+	}
+	if v := os.Getenv("CARBONIO_PREVIEW_TEST_PROPS_PATH"); v != "" {
+		propsPath = v
+	}
 
 	runner, err := migrate.NewRunner(migrate.Paths{
 		IniPath:   iniPath,

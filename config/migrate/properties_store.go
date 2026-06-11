@@ -18,9 +18,9 @@ import (
 // The file is written only if at least one entry was actually migrated
 // (tracked by the Runner via the modified flag returned from Remove).
 type propertiesStore struct {
-	path       string
-	props      map[string]string
-	loaded     bool
+	path   string
+	props  map[string]string
+	loaded bool
 }
 
 // newPropertiesStore loads the properties file at path.
