@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/internal/configdocs"
+	"github.com/zextras/carbonio-preview-ce/configdocs"
 )
 
 // ── Drift-guard tests ─────────────────────────────────────────────────────────

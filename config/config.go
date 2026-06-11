@@ -79,6 +79,30 @@ type Config struct {
 // It is populated by Load() and safe to read after that call returns.
 var App Config
 
+// resolvedNetworking and resolvedApplication hold the two FrozenMap snapshots
+// produced by Resolve during Load(). They are the zero-value FrozenMap (Get
+// always returns "", false) until a successful Load() call.
+var (
+	resolvedNetworking  FrozenMap
+	resolvedApplication FrozenMap
+)
+
+// Networking returns a snapshot of the resolved networking-layer key→value map.
+// Valid after a successful Load(); returns a zero-value FrozenMap before that
+// (Get always returns "", false).
+// The advanced module reads its extra registered networking keys through this.
+func Networking() FrozenMap {
+	return resolvedNetworking
+}
+
+// Application returns a snapshot of the resolved application-layer key→value map.
+// Valid after a successful Load(); returns a zero-value FrozenMap before that
+// (Get always returns "", false).
+// The advanced module reads its extra registered application keys through this.
+func Application() FrozenMap {
+	return resolvedApplication
+}
+
 // Load initialises App from the extensions-equivalent chain:
 // registry defaults → config.properties / Consul KV → ENV.
 //
@@ -178,6 +202,8 @@ func Load() error {
 	c.AreDocsEnabled = c.ServiceEnableDocumentPreview || c.ServiceEnableDocumentThumbnail
 
 	App = c
+	resolvedNetworking = r.Networking
+	resolvedApplication = r.Application
 	return nil
 }
 

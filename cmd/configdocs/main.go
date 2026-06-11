@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/internal/configdocs"
+	"github.com/zextras/carbonio-preview-ce/configdocs"
 )
 
 func main() {

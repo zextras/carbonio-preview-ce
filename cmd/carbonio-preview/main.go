@@ -33,7 +33,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/config"
@@ -57,7 +56,10 @@ func main() {
 			IniPath:   "/etc/carbonio/preview/config.ini",
 			PropsPath: "/etc/carbonio/preview/config.properties",
 		}
-		runSetup(consulURL, paths)
+		if err := migrate.RunSetup(consulURL, paths, config.ConfigsTxt()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -90,46 +92,6 @@ func main() {
 	// Create and run the server.
 	srv := server.New(cfg, storageClient)
 	srv.Run()
-}
-
-// runSetup executes registered config migrations and exits.
-// It mirrors SetupAwareMain from carbonio-quarkus-extensions:
-//   - Checks SETUP_CONSUL_TOKEN is set only when application entries will
-//     actually run (ini present + contains at least one application key).
-//   - Runs migrations, then always prints config documentation.
-//   - Exits 0 on success, 1 on failure.
-//
-// paths holds the injectable file paths; main passes the production paths,
-// tests pass t.TempDir() paths directly without env-var hooks.
-func runSetup(consulURL string, paths migrate.Paths) {
-	// Read token up front so the Runner is constructed exactly once.
-	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))
-	paths.ConsulURL = consulURL
-	paths.ConsulToken = token
-
-	runner, err := migrate.NewRunner(paths)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Setup failed: %v\n", err)
-		printConfigDocumentation()
-		os.Exit(1)
-	}
-
-	// Gate on token only when application-layer work is actually needed.
-	if runner.HasApplicationWork() && token == "" {
-		fmt.Fprintln(os.Stderr, "Error: SETUP_CONSUL_TOKEN environment variable is not set.")
-		printConfigDocumentation()
-		os.Exit(1)
-	}
-
-	runner.Run()
-	printConfigDocumentation()
-}
-
-// printConfigDocumentation prints a blank line followed by the embedded
-// configs.txt content.  Mirrors SetupAwareMain.printConfigDocumentation.
-func printConfigDocumentation() {
-	fmt.Println()
-	fmt.Print(config.ConfigsTxt())
 }
 
 // findArg returns the index of name in args, or -1 if not found.

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
 )
 
@@ -33,8 +34,8 @@ func TestSetupCLI_MissingConsulURL(t *testing.T) {
 	}
 }
 
-// TestSetupSuccessPath_PrintsConfigsTxt verifies that runSetup with an absent
-// ini exits cleanly and that config documentation is printed.
+// TestSetupSuccessPath_PrintsConfigsTxt verifies that migrate.RunSetup with an
+// absent ini exits cleanly and that config documentation is printed.
 // Uses t.TempDir() paths passed directly — no subprocess, no env-var hooks.
 func TestSetupSuccessPath_PrintsConfigsTxt(t *testing.T) {
 	dir := t.TempDir()
@@ -51,43 +52,17 @@ func TestSetupSuccessPath_PrintsConfigsTxt(t *testing.T) {
 	defer srv.Close()
 
 	// Register no migrations (or rely on the empty default registry).
-	// runSetup must complete without error when ini is absent.
+	// migrate.RunSetup must complete without error when ini is absent.
 	paths := migrate.Paths{
 		IniPath:   filepath.Join(dir, "config.ini"), // does not exist → absent
 		PropsPath: filepath.Join(dir, "config.properties"),
 	}
 
-	// Capture stdout to verify printConfigDocumentation runs.
-	// We call runSetup indirectly by verifying no panic/exit occurs.
-	// Since runSetup calls os.Exit on failure, a successful call means the
-	// runner and documentation print both completed without error.
-	//
-	// To observe the output without a subprocess we redirect os.Stdout:
-	// keep it simple — just verify that the call does not panic.
-	// The subprocess test above already checks the CLI surface; here we
-	// confirm the internal path is exercised safely with injected paths.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("runSetup panicked: %v", r)
-			}
-		}()
-		// runSetup calls os.Exit on error; if the ini is absent and no
-		// migrations are registered, it must reach runner.Run() cleanly.
-		// We cannot directly call runSetup without risking os.Exit on the
-		// token check for application work, so we exercise NewRunner directly
-		// to confirm the hermetic path works.
-		runner, err := migrate.NewRunner(paths)
-		if err != nil {
-			t.Fatalf("NewRunner with absent ini should not fail: %v", err)
-		}
-		// No application work expected when ini is absent.
-		if runner.HasApplicationWork() {
-			t.Error("HasApplicationWork must be false when ini is absent")
-		}
-		// Run must complete without error.
-		runner.Run()
-	}()
+	// Call migrate.RunSetup directly with the test's Consul stub.
+	// When ini is absent there is no application work, so no token is needed.
+	if err := migrate.RunSetup(srv.URL, paths, config.ConfigsTxt()); err != nil {
+		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", err)
+	}
 }
 
 // buildBinary compiles the carbonio-preview binary into a temp dir and
