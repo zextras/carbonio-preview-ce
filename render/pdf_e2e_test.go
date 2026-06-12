@@ -75,6 +75,21 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDFRasterize: ok, %d bytes", len(rendered))
 
+	// Correctness-after-many-calls: run 20 sequential PDFSlice calls and assert
+	// each produces valid non-empty output. This verifies that closing documents
+	// via defer does not break handle reuse across repeated pool borrows.
+	const repeatN = 20
+	for i := range repeatN {
+		got, err := PDFSlice(nil, pdfData, 1, 0)
+		if err != nil {
+			t.Fatalf("PDFSlice repeat %d/%d: %v", i+1, repeatN, err)
+		}
+		if len(got) == 0 {
+			t.Fatalf("PDFSlice repeat %d/%d: empty result", i+1, repeatN)
+		}
+	}
+	t.Logf("PDFSlice x%d sequential calls: all ok (handle-close reuse verified)", repeatN)
+
 	// Kill one worker subprocess to test auto-respawn.
 	myPID := os.Getpid()
 	childPIDs := findChildPIDs(t, myPID)

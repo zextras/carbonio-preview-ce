@@ -114,6 +114,7 @@ func PDFRasterize(
 	if err != nil {
 		return nil, fmt.Errorf("pdfium OpenDocument: %w", err)
 	}
+	defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: docResp.Document}) //nolint:errcheck
 
 	renderResp, err := inst.RenderPageInDPI(&requests.RenderPageInDPI{
 		Page: requests.Page{
@@ -204,6 +205,7 @@ func PDFSlice(semaphore chan struct{}, data []byte, firstPage, lastPage int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("invalid PDF: %w", err)
 	}
+	defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: docResp.Document}) //nolint:errcheck
 
 	pageCountResp, err := inst.FPDF_GetPageCount(&requests.FPDF_GetPageCount{
 		Document: docResp.Document,
@@ -237,6 +239,7 @@ func PDFSlice(semaphore chan struct{}, data []byte, firstPage, lastPage int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("pdfium FPDF_CreateNewDocument: %w", err)
 	}
+	defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: newDocResp.Document}) //nolint:errcheck
 
 	// Build 0-indexed page list.
 	pageIndices := make([]int, 0, end-start)
