@@ -193,8 +193,9 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		// Register V1 using the real migration.
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		// Register V1 using the real migration with a temp drop-in path.
+		dropInPath := filepath.Join(dir, "log-level.conf")
+		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
 			t.Fatalf("register V1: %v", err)
 		}
 
@@ -204,6 +205,7 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 			PropsPath:   propsPath,
 			ConsulURL:   srv.URL,
 			ConsulToken: "tok123",
+			DropInPath:  dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -246,6 +248,7 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 			PropsPath:   propsPath,
 			ConsulURL:   srv.URL,
 			ConsulToken: "tok123",
+			DropInPath:  dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner second: %v", err)
@@ -480,7 +483,8 @@ func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		dropInPath := filepath.Join(dir, "log-level.conf")
+		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -489,6 +493,7 @@ func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
 			PropsPath:   propsPath,
 			ConsulURL:   srv.URL,
 			ConsulToken: "tok",
+			DropInPath:  dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -512,14 +517,16 @@ func TestHasApplicationWork_TokenRequired(t *testing.T) {
 		iniPath := writeFile(t, dir, "config.ini", "[carbonio.preview]\ntimeout_in_seconds = 30\n")
 		propsPath := filepath.Join(dir, "config.properties")
 
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		dropInPath := filepath.Join(dir, "log-level.conf")
+		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:   iniPath,
-			PropsPath: propsPath,
-			ConsulURL: "http://localhost:8500",
+			IniPath:    iniPath,
+			PropsPath:  propsPath,
+			ConsulURL:  "http://localhost:8500",
+			DropInPath: dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -535,14 +542,16 @@ func TestHasApplicationWork_NoTokenNeededWhenAbsent(t *testing.T) {
 		dir := t.TempDir()
 		propsPath := filepath.Join(dir, "config.properties")
 
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		dropInPath := filepath.Join(dir, "log-level.conf")
+		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:   filepath.Join(dir, "no.ini"),
-			PropsPath: propsPath,
-			ConsulURL: "http://localhost:8500",
+			IniPath:    filepath.Join(dir, "no.ini"),
+			PropsPath:  propsPath,
+			ConsulURL:  "http://localhost:8500",
+			DropInPath: dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -613,14 +622,16 @@ func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
 		iniPath := writeFile(t, dir, "config.ini", iniContent)
 		propsPath := filepath.Join(dir, "config.properties")
 
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		dropInPath := filepath.Join(dir, "log-level.conf")
+		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:   iniPath,
-			PropsPath: propsPath,
-			ConsulURL: "http://localhost:8500", // not reachable — must not be called
+			IniPath:    iniPath,
+			PropsPath:  propsPath,
+			ConsulURL:  "http://localhost:8500", // not reachable — must not be called
+			DropInPath: dropInPath,
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -638,9 +649,10 @@ func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
 		defer srv.Close()
 
 		runner2, err := NewRunner(Paths{
-			IniPath:   iniPath,
-			PropsPath: propsPath,
-			ConsulURL: srv.URL,
+			IniPath:    iniPath,
+			PropsPath:  propsPath,
+			ConsulURL:  srv.URL,
+			DropInPath: dropInPath,
 			// No token — intentionally absent.
 		})
 		if err != nil {
@@ -658,7 +670,8 @@ func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
 		if _, err := os.Stat(iniPath + ".migrated"); err != nil {
 			t.Errorf("expected config.ini.migrated to exist: %v", err)
 		}
-		// properties file must NOT have been created.
+		// properties file must NOT have been created (log.level writes a drop-in,
+		// not a properties entry — the dirty flag on propertiesStore stays false).
 		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
 			t.Error("properties file must not be created when no networking entries ran")
 		}

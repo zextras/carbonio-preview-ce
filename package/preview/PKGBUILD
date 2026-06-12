@@ -70,7 +70,7 @@ source=(
   "sharp-libvips-dev.tgz::https://registry.npmjs.org/@img/sharp-libvips-dev/-/sharp-libvips-dev-1.3.0.tgz"
 )
 sha256sums=(
-  '87c7b9c5e70d4689f4464e6521ec4687de5c17fbe756dd12b8767a28c49b151b'
+  '4c0bf1d5b8206349275b107f1b7d9746a0e38afa0c755f1e1baca6037faab020'
   '7282bb1c72e20dcf1121378da6339234527e63807191e1b799cfdd4424ac3fa3'
   '4cfdd83b8a892eba82259989cc339bb3a311c671e753413cf24cf482f027160b'
   '90e595d8cd5353f6a00ecfd56fd97cac7587894dfe97ac28ef5fec398b5901d9'

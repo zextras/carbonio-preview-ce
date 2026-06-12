@@ -4,7 +4,10 @@
 
 package config
 
-import "os"
+import (
+	"log/slog"
+	"os"
+)
 
 // FrozenMap is an immutable snapshot of resolved key→value pairs.
 // Callers may only read from it via Get; the underlying map is never exposed.
@@ -86,6 +89,15 @@ func resolveWith(propPath string) (Resolved, error) {
 	// Step 5 — build frozen application map.
 	appMap := buildFrozenMap(NamespaceApplication, ApplicationPrefix, kvValues)
 
+	slog.Debug("config resolver: loaded layers",
+		"consul_host", sdHost,
+		"consul_port", sdPort,
+		"file_keys", len(fileValues),
+		"kv_keys", len(kvValues),
+		"net_keys", len(netMap),
+		"app_keys", len(appMap),
+	)
+
 	return Resolved{
 		Networking:  FrozenMap{m: netMap},
 		Application: FrozenMap{m: appMap},
@@ -137,14 +149,17 @@ func buildFrozenMap(ns Namespace, prefix string, sourceValues map[string]string)
 
 		if v := os.Getenv(envVar); v != "" {
 			result[key] = v
+			slog.Debug("config: key resolved", "key", key, "source", "env")
 			continue
 		}
 		if v, ok := sourceValues[key]; ok && v != "" {
 			result[key] = v
+			slog.Debug("config: key resolved", "key", key, "source", "file/kv")
 			continue
 		}
 		if entry.Default != "" {
 			result[key] = entry.Default
+			slog.Debug("config: key resolved", "key", key, "source", "registry-default")
 		}
 		// Keys whose default is "" and that have no env/source value are
 		// intentionally absent from the map (as in extensions).

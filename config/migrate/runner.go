@@ -15,9 +15,10 @@ import (
 //   - net: networking destination (config.properties) — written if any net entry migrated
 //   - kv:  application destination (Consul KV) — written per-entry
 type Runner struct {
-	ini *iniStore
-	net *propertiesStore
-	kv  *consulKvStore
+	ini        *iniStore
+	net        *propertiesStore
+	kv         *consulKvStore
+	dropInPath string // destination for the log-level systemd drop-in
 }
 
 // HasApplicationWork returns true if at least one registered migration has an
@@ -45,6 +46,20 @@ type Paths struct {
 	PropsPath   string
 	ConsulURL   string
 	ConsulToken string
+	// DropInPath is the destination for the log-level systemd drop-in file.
+	// Defaults to DefaultDropInPath when empty.
+	DropInPath string
+}
+
+// DefaultDropInPath is the production path for the log-level systemd drop-in.
+const DefaultDropInPath = "/etc/systemd/system/carbonio-preview.service.d/log-level.conf"
+
+// effectiveDropInPath returns p.DropInPath if set, otherwise DefaultDropInPath.
+func (p Paths) effectiveDropInPath() string {
+	if p.DropInPath != "" {
+		return p.DropInPath
+	}
+	return DefaultDropInPath
 }
 
 // NewRunner builds a Runner wired to the given paths and consul URL.
@@ -58,7 +73,7 @@ func NewRunner(p Paths) (*Runner, error) {
 		return nil, err
 	}
 	kv := newConsulKvStore(p.ConsulURL, p.ConsulToken)
-	return &Runner{ini: ini, net: net, kv: kv}, nil
+	return &Runner{ini: ini, net: net, kv: kv, dropInPath: p.effectiveDropInPath()}, nil
 }
 
 // Run executes all registered migrations in version-ascending order.
@@ -81,19 +96,17 @@ func (r *Runner) Run() {
 	}
 	fmt.Printf("Config migration: %d migration(s) found.\n", len(migrations))
 
-	netModified := false
-
 	for _, m := range migrations {
 		netMigrated, appMigrated := r.runOne(m)
-		if netMigrated > 0 {
-			netModified = true
-		}
 		totalApp := len(m.ApplicationEntries) + len(m.DropEntries)
 		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
 			m.Name, netMigrated, len(m.NetworkingEntries), appMigrated, totalApp)
 	}
 
-	if netModified {
+	// Save config.properties only if at least one networking entry actually
+	// called Set() on the properties store (not just successfully ran —
+	// log.level writes a drop-in instead and must not trigger a props save).
+	if r.net.dirty {
 		if err := r.net.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "  WARNING: cannot save config.properties: %v\n", err)
 		}

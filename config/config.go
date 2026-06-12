@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
@@ -73,6 +74,11 @@ type Config struct {
 
 	// Derived feature flag
 	AreDocsEnabled bool
+
+	// LogLevel is the effective slog level, read from PREVIEW_LOG_LEVEL env var.
+	// This is a per-instance, framework-level knob (equivalent to QUARKUS_LOG_LEVEL)
+	// and is intentionally outside the extensions config chain (no registry key, no KV).
+	LogLevel slog.Level
 }
 
 // App is the package-level, process-wide configuration instance.
@@ -186,6 +192,17 @@ func Load() error {
 	if parseErr != nil {
 		return parseErr
 	}
+
+	// ── Log level (PREVIEW_LOG_LEVEL — outside the extensions chain) ─────────
+	// Read directly via os.Getenv; absent/empty → info.  Invalid → fail-fast.
+	logLevel, err := loadLogLevel()
+	if err != nil {
+		return err
+	}
+	c.LogLevel = logLevel
+	// Apply the level to the package-level slog handler immediately so all
+	// subsequent log calls (in server startup, etc.) honour the configured level.
+	logLevelVar.Set(logLevel)
 
 	// ── Process-level knobs (raw env; parent↔pdfworker IPC) ───────────────────
 	if v := os.Getenv("ROLE"); v != "" {

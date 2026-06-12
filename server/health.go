@@ -7,7 +7,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -67,7 +67,7 @@ func healthReady(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusTooManyRequests) // 429
 	if _, err := fmt.Fprint(w, config.Msg.DocsEditorUnavailable); err != nil {
-		log.Printf("healthReady write: %v", err)
+		slog.Warn("healthReady: write response", "err", err)
 	}
 }
 
@@ -105,6 +105,7 @@ func healthFull(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 
 	storageUp := isDependencyUp(storageHealthURL)
 	docsUp := isDependencyUp(docsHealthURL)
+	slog.Debug("health: dependency probe", "storage_up", storageUp, "docs_up", docsUp)
 
 	resp := healthResponse{
 		Ready: true,
@@ -116,13 +117,13 @@ func healthFull(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		log.Printf("healthFull encode: %v", err)
+		slog.Error("healthFull: marshal response", "err", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(data); werr != nil {
-		log.Printf("healthFull write: %v", werr)
+		slog.Warn("healthFull: write response", "err", werr)
 	}
 }
 

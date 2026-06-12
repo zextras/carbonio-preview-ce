@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -61,13 +62,26 @@ func (c *DirectClient) RetrieveData(
 		return nil, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
 	}
 
+	start := time.Now()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Any transport-level error (timeout, DNS, connection refused, etc.)
 		// maps to ErrUnavailable, mirroring the Python Nothing path.
+		slog.Debug("storage: request failed",
+			"method", http.MethodGet,
+			"path", req.URL.Path, // no query string — avoid logging file IDs at debug
+			"duration_ms", time.Since(start).Milliseconds(),
+			"err", err,
+		)
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
+	slog.Debug("storage: request",
+		"method", http.MethodGet,
+		"path", req.URL.Path, // no query string — avoid logging file IDs at debug
+		"status", resp.StatusCode,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 
 	switch {
 	case resp.StatusCode == http.StatusNotFound:

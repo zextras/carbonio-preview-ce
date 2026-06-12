@@ -31,7 +31,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -67,7 +67,7 @@ func main() {
 	// Failure is fatal: an unreachable Consul or a bad value means the service
 	// cannot start with a consistent configuration.
 	if err := config.Load(); err != nil {
-		log.Printf("FATAL: config.Load failed: %v", err)
+		slog.Error("FATAL: config.Load failed", "err", err)
 		os.Exit(1)
 	}
 

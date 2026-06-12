@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: 2022 Zextras <https://www.zextras.com
-# 
+#
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Run config migration (writes application keys to Consul KV).
@@ -14,6 +14,11 @@ export SETUP_CONSUL_TOKEN
   echo "carbonio-preview config migration failed; aborting setup" >&2
   exit 1
 }
+
+# Reload systemd unit files so any log-level drop-in written by --setup above
+# (at /etc/systemd/system/carbonio-preview.service.d/log-level.conf) is picked
+# up before the wrapper's later service restart.
+command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload
 
 # Register service-discover ACL policy/token, write intentions and
 # service-protocol, create systemd override, then restart the service.

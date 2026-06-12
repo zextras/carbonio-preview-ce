@@ -283,6 +283,10 @@ func registerCEKeys() {
 			Default:     "cool/convert-to",
 			Description: "Path of the docs-editor document-conversion API.",
 		},
+		// NOTE: log.level is intentionally NOT registered here.
+		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
+		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
+		// outside the extensions networking/application config chain.
 	}
 
 	for _, e := range networking {

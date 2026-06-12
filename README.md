@@ -41,6 +41,44 @@ There is no difference in quality between the two,
 by asking for a jpeg format and changing the quality parameter.
 Asking for a GIF output can only be done when the input file is a GIF, otherwise it will raise and error.
 
+## Logging
+
+The service uses Go's standard `log/slog` library with a `TextHandler` on stderr.
+
+The log level is controlled by the **`PREVIEW_LOG_LEVEL`** environment variable. This is a per-instance,
+framework-level knob (equivalent to `QUARKUS_LOG_LEVEL` in Quarkus services) — it is **not** part
+of the Carbonio networking/application config chain and does not appear in `configs.txt` or the
+registry.
+
+| Value | Effective level | Notes |
+|-------|----------------|-------|
+| `debug` | DEBUG | All messages |
+| `info` (default) | INFO | Default when variable is absent or empty |
+| `warning` / `warn` | WARN | Python `logging` alias accepted |
+| `error` | ERROR | |
+| `critical` | ERROR | Python `CRITICAL` has no slog equivalent; mapped to Error |
+
+Values are case-insensitive. An unrecognised value causes the service to fail-fast at startup.
+
+**Per-instance configuration via systemd drop-in:**
+
+```bash
+systemctl edit carbonio-preview
+```
+
+Add:
+
+```ini
+[Service]
+Environment="PREVIEW_LOG_LEVEL=debug"
+```
+
+**Automatic migration:** When upgrading from the legacy Python service, if `config.ini` contains
+a `[log] level` key, the `--setup` migration rewrites it as a systemd drop-in at
+`/etc/systemd/system/carbonio-preview.service.d/log-level.conf`. The pending-setups script
+runs `systemctl daemon-reload` immediately after so the level is active before the service
+restarts.
+
 ## APIs Documentation 📚
 
 Once the service is up and running, APIs will be found

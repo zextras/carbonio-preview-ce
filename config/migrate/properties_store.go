@@ -15,11 +15,12 @@ import (
 // propertiesStore is a ConfigStore backed by a Java-style .properties file.
 // It loads the file into memory on construction and exposes Set/Get/Remove.
 // Save() writes the full in-memory map back to disk with a header comment.
-// The file is written only if at least one entry was actually migrated
-// (tracked by the Runner via the modified flag returned from Remove).
+// The file is written only if at least one entry was actually written via Set()
+// (tracked by the dirty flag).
 type propertiesStore struct {
 	path  string
 	props map[string]string
+	dirty bool // true after at least one Set() call
 }
 
 // newPropertiesStore loads the properties file at path.
@@ -65,9 +66,10 @@ func (s *propertiesStore) load() error {
 	return nil
 }
 
-// Set implements ConfigStore.
+// Set implements ConfigStore. Sets dirty=true so the runner saves the file.
 func (s *propertiesStore) Set(key, value string) error {
 	s.props[key] = value
+	s.dirty = true
 	return nil
 }
 

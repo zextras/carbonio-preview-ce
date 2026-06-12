@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -57,7 +57,8 @@ func (s *Server) Run() {
 func (s *Server) runPDFWorker() {
 	// Init libvips.
 	if err := render.InitVips("carbonio-preview-worker"); err != nil {
-		log.Fatalf("runPDFWorker: InitVips: %v", err)
+		slog.Error("runPDFWorker: InitVips", "err", err)
+		os.Exit(1)
 	}
 	render.SetVipsConcurrency(s.cfg.VIPSConcurrency)
 
@@ -75,7 +76,8 @@ func (s *Server) runPDFWorker() {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.cfg.PDFInternalPort)
 	ln, err := listenWithReusePort(addr)
 	if err != nil {
-		log.Fatalf("runPDFWorker: listen on %s: %v", addr, err)
+		slog.Error("runPDFWorker: listen", "addr", addr, "err", err)
+		os.Exit(1)
 	}
 
 	srv := &http.Server{
@@ -84,13 +86,14 @@ func (s *Server) runPDFWorker() {
 		WriteTimeout: time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 	}
 
-	log.Printf("PDF worker listening on %s (internal)", addr)
+	slog.Info("PDF worker listening", "addr", addr, "role", "internal")
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("runPDFWorker: serve: %v", err)
+			slog.Error("runPDFWorker: serve", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -98,7 +101,7 @@ func (s *Server) runPDFWorker() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("runPDFWorker: shutdown: %v", err)
+		slog.Warn("runPDFWorker: shutdown", "err", err)
 	}
 }
 
@@ -133,12 +136,14 @@ func handleInternalPDFRender(w http.ResponseWriter, r *http.Request, sem chan st
 		return
 	}
 
+	start := time.Now()
 	out, err := render.PDFRasterize(sem, data, 0, width, height, outputFormat, quality, shape)
 	if err != nil {
-		log.Printf("handleInternalPDFRender: PDFRasterize: %v", err)
+		slog.Error("handleInternalPDFRender: PDFRasterize", "err", err)
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
+	slog.Debug("pdf worker: rendered page range", "w", width, "h", height, "fmt", outputFormat, "duration_ms", time.Since(start).Milliseconds())
 
 	actualFormat := outputFormat
 	if shape == "rounded" {
@@ -148,7 +153,7 @@ func handleInternalPDFRender(w http.ResponseWriter, r *http.Request, sem chan st
 	w.Header().Set("Content-Type", contentTypeForFormat(actualFormat))
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(out); werr != nil {
-		log.Printf("handleInternalPDFRender: write: %v", werr)
+		slog.Warn("handleInternalPDFRender: write", "err", werr)
 	}
 }
 
@@ -160,7 +165,8 @@ func handleInternalPDFRender(w http.ResponseWriter, r *http.Request, sem chan st
 func (s *Server) runMain() {
 	// Init libvips for in-process image/SVG rendering.
 	if err := render.InitVips("carbonio-preview"); err != nil {
-		log.Fatalf("runMain: InitVips: %v", err)
+		slog.Error("runMain: InitVips", "err", err)
+		os.Exit(1)
 	}
 	render.SetVipsConcurrency(s.cfg.VIPSConcurrency)
 
@@ -170,7 +176,8 @@ func (s *Server) runMain() {
 	pdfInternalAddr := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.PDFInternalPort)
 	workers, err := s.spawnPDFWorkers()
 	if err != nil {
-		log.Fatalf("runMain: spawn PDF workers: %v", err)
+		slog.Error("runMain: spawn PDF workers", "err", err)
+		os.Exit(1)
 	}
 
 	// Build relay client. High MaxIdleConnsPerHost so keep-alive connections
@@ -188,7 +195,7 @@ func (s *Server) runMain() {
 	time.Sleep(500 * time.Millisecond)
 
 	// Build the public mux.
-	mux := s.buildMux(sem, relayClient, pdfInternalAddr)
+	mux := loggingMiddleware(s.buildMux(sem, relayClient, pdfInternalAddr))
 
 	addr := fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.ServicePort)
 	srv := &http.Server{
@@ -201,22 +208,32 @@ func (s *Server) runMain() {
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
 
+	slog.Info("carbonio-preview starting",
+		"addr", addr,
+		"role", "main",
+		"workers", s.cfg.ServiceWorkers,
+		"pdf_workers", s.cfg.PDFWorkers,
+		"vips_concurrency", s.cfg.VIPSConcurrency,
+		"docs_enabled", s.cfg.AreDocsEnabled,
+		"log_level", s.cfg.LogLevel.String(),
+	)
+
 	go func() {
-		log.Printf("carbonio-preview listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("runMain: serve: %v", err)
+			slog.Error("runMain: serve", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	// Wait for termination signal.
 	sig := <-sigC
-	log.Printf("runMain: received signal %v, shutting down", sig)
+	slog.Info("runMain: received signal, shutting down", "signal", sig.String())
 
 	// Forward SIGTERM to child processes.
 	for _, w := range workers {
 		if w.Process != nil {
 			if err := w.Process.Signal(syscall.SIGTERM); err != nil {
-				log.Printf("runMain: forward SIGTERM to worker PID %d: %v", w.Process.Pid, err)
+				slog.Warn("runMain: forward SIGTERM to worker", "pid", w.Process.Pid, "err", err)
 			}
 		}
 	}
@@ -225,7 +242,7 @@ func (s *Server) runMain() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("runMain: shutdown: %v", err)
+		slog.Warn("runMain: shutdown", "err", err)
 	}
 
 	// Wait for all child processes to exit.
@@ -235,7 +252,7 @@ func (s *Server) runMain() {
 		go func(cmd *exec.Cmd) {
 			defer wg.Done()
 			if err := cmd.Wait(); err != nil {
-				log.Printf("runMain: worker exit: %v", err)
+				slog.Warn("runMain: worker exit", "err", err)
 			}
 		}(w)
 	}
@@ -268,6 +285,8 @@ func (s *Server) spawnPDFWorkers() ([]*exec.Cmd, error) {
 	// Build child env: inherit everything, then override/add worker-specific vars.
 	childEnv := buildChildEnv(s.cfg)
 
+	slog.Info("spawning PDF workers", "count", s.cfg.PDFWorkers, "internal_port", s.cfg.PDFInternalPort)
+
 	workers := make([]*exec.Cmd, 0, s.cfg.PDFWorkers)
 	for i := 0; i < s.cfg.PDFWorkers; i++ {
 		cmd := exec.Command(exe, os.Args[1:]...)
@@ -283,7 +302,7 @@ func (s *Server) spawnPDFWorkers() ([]*exec.Cmd, error) {
 			}
 			return nil, fmt.Errorf("start PDF worker %d: %w", i, err)
 		}
-		log.Printf("spawned PDF worker PID %d", cmd.Process.Pid)
+		slog.Debug("spawned PDF worker", "pid", cmd.Process.Pid, "index", i)
 		workers = append(workers, cmd)
 	}
 	return workers, nil
@@ -324,6 +343,38 @@ func buildChildEnv(cfg *config.Config) []string {
 		"PDF_WORKERS=0",
 	)
 	return env
+}
+
+// -------------------------------------------------------------------------
+// HTTP middleware
+// -------------------------------------------------------------------------
+
+// responseWriter wraps http.ResponseWriter to capture the status code.
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// loggingMiddleware wraps h and emits a slog.Debug record for every request
+// containing method, path (no query string), HTTP status, and duration_ms.
+// No secrets are logged (headers, query strings, auth tokens are not emitted).
+func loggingMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+		h.ServeHTTP(rw, r)
+		slog.Debug("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
 }
 
 // -------------------------------------------------------------------------
