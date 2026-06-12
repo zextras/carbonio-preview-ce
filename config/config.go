@@ -17,8 +17,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"runtime"
-	"strconv"
 )
 
 // Config holds every configuration value consumed by the service.
@@ -32,7 +30,6 @@ type Config struct {
 	ServicePort                    string
 	ServiceTimeoutInSeconds        int
 	ServiceDocsTimeout             int
-	ServiceWorkers                 int
 	ServiceImageName               string
 	ServiceHealthName              string
 	ServicePDFName                 string
@@ -40,27 +37,33 @@ type Config struct {
 	ServiceEnableDocumentPreview   bool
 	ServiceEnableDocumentThumbnail bool
 
-	// image_constants.*
+	// image_constants.* — hardcoded constant; not operator-configurable.
 	ImageMinimumResolution int
 
-	// carbonio.storages.*
+	// carbonio.storages.* — endpoint paths are hardcoded constants.
 	StorageDownloadAPI string
 	StorageHealthCheck string
 	StorageProtocol    string
 	StorageIP          string
 	StoragePort        string
 
-	// carbonio.docs-editor.*
+	// carbonio.docs-editor.* — endpoint paths are hardcoded constants.
 	DocumentConversionProtocol        string
 	DocumentConversionIP              string
 	DocumentConversionPort            string
 	DocumentConversionServiceEndpoint string
 	DocumentConversionConvertAPI      string
 
+	// RenderConcurrency is the maximum number of concurrent image-render operations.
+	// Controlled by PREVIEW_RENDER_CONCURRENCY env var (default: runtime.NumCPU()).
+	RenderConcurrency int
+
 	// PDFWorkers is the size of the PDFium subprocess worker pool.
+	// Controlled by PREVIEW_PDF_WORKERS env var (default: runtime.NumCPU()).
 	PDFWorkers int
 
-	// Application-layer knob
+	// VIPSConcurrency is the libvips concurrency level.
+	// Controlled by PREVIEW_VIPS_CONCURRENCY env var (default: 1).
 	VIPSConcurrency int
 
 	// Derived addresses (computed once in Load)
@@ -77,6 +80,17 @@ type Config struct {
 	// and is intentionally outside the extensions config chain (no registry key, no KV).
 	LogLevel slog.Level
 }
+
+// Hardcoded endpoint-path constants. These values were formerly stored in Consul
+// KV but are not operator-configurable in practice. Baking them in as constants
+// shrinks the KV surface and eliminates Consul round-trips for immutable data.
+const (
+	storageDownloadAPI           = "download"
+	storageHealthCheck           = "health/live"
+	documentConversionEndpoint   = "services/docs/editor"
+	documentConversionConvertAPI = "cool/convert-to"
+	imageMinimumResolution       = 80
+)
 
 // App is the package-level, process-wide configuration instance.
 // It is populated by Load() and safe to read after that call returns.
@@ -151,44 +165,30 @@ func Load() error {
 	// ── Application layer ──────────────────────────────────────────────────────
 	var parseErr error
 
-	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "timeout-in-seconds", parseErr)
-	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "docs-timeout-in-seconds", parseErr)
-	c.VIPSConcurrency, parseErr = appInt(r, "vips-concurrency", parseErr)
-	c.ImageMinimumResolution, parseErr = appPositiveInt(r, "image-minimum-resolution", parseErr)
-
-	// workers: absent → runtime.NumCPU() (registry has no default for this key)
-	if raw, ok := r.Application.Get("workers"); ok {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			return fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", "workers", raw)
-		}
-		c.ServiceWorkers = n
-	} else {
-		c.ServiceWorkers = runtime.NumCPU()
-	}
-
-	// pdf-workers: absent → runtime.NumCPU() (registry has no default for this key)
-	if raw, ok := r.Application.Get("pdf-workers"); ok {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			return fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", "pdf-workers", raw)
-		}
-		c.PDFWorkers = n
-	} else {
-		c.PDFWorkers = runtime.NumCPU()
-	}
-
 	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "enable-document-preview", parseErr)
 	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "enable-document-thumbnail", parseErr)
-
-	c.StorageDownloadAPI = appStr(r, "storages.download-api")
-	c.StorageHealthCheck = appStr(r, "storages.health-check")
-	c.DocumentConversionServiceEndpoint = appStr(r, "docs-editor.service-endpoint")
-	c.DocumentConversionConvertAPI = appStr(r, "docs-editor.convert-api")
 
 	if parseErr != nil {
 		return parseErr
 	}
+
+	// ── Hardcoded endpoint constants (not operator-configurable) ──────────────
+	c.StorageDownloadAPI = storageDownloadAPI
+	c.StorageHealthCheck = storageHealthCheck
+	c.DocumentConversionServiceEndpoint = documentConversionEndpoint
+	c.DocumentConversionConvertAPI = documentConversionConvertAPI
+	c.ImageMinimumResolution = imageMinimumResolution
+
+	// ── Per-instance env knobs (PREVIEW_* — outside the extensions chain) ─────
+	knobs, err := loadEnvKnobs()
+	if err != nil {
+		return err
+	}
+	c.ServiceTimeoutInSeconds = knobs.StoragesTimeout
+	c.ServiceDocsTimeout = knobs.DocsTimeout
+	c.RenderConcurrency = knobs.RenderConcurrency
+	c.PDFWorkers = knobs.PDFWorkers
+	c.VIPSConcurrency = knobs.VipsConcurrency
 
 	// ── Log level (PREVIEW_LOG_LEVEL — outside the extensions chain) ─────────
 	// Read directly via os.Getenv; absent/empty → info.  Invalid → fail-fast.
@@ -240,50 +240,6 @@ func Load() error {
 func netStr(r Resolved, key string) string {
 	v, _ := r.Networking.Get(key)
 	return v
-}
-
-// appStr reads an application-layer string key.
-func appStr(r Resolved, key string) string {
-	v, _ := r.Application.Get(key)
-	return v
-}
-
-// appInt reads an application-layer integer key. Returns (0, err) on parse
-// failure, chaining with any prior error so the caller can surface the first one.
-func appInt(r Resolved, key string, prior error) (int, error) {
-	if prior != nil {
-		return 0, prior
-	}
-	raw, ok := r.Application.Get(key)
-	if !ok {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("config: key %q has invalid value %q: %w", key, raw, err)
-	}
-	return n, nil
-}
-
-// appPositiveInt reads an application-layer integer key and requires the value
-// to be >= 1. Returns (0, err) on parse or range failure, chaining with any
-// prior error. Used for keys that Python validated with validate_positive_int().
-func appPositiveInt(r Resolved, key string, prior error) (int, error) {
-	if prior != nil {
-		return 0, prior
-	}
-	raw, ok := r.Application.Get(key)
-	if !ok {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("config: key %q has invalid value %q: %w", key, raw, err)
-	}
-	if n < 1 {
-		return 0, fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", key, raw)
-	}
-	return n, nil
 }
 
 // appBool reads an application-layer boolean key ("true"/"false").

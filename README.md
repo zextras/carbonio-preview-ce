@@ -79,6 +79,22 @@ a `[log] level` key, the `--setup` migration rewrites it as a systemd drop-in at
 runs `systemctl daemon-reload` immediately after so the level is active before the service
 restarts.
 
+## Runtime Tuning
+
+The following per-instance environment variables control performance characteristics.
+They are set via systemd drop-in (same mechanism as `PREVIEW_LOG_LEVEL`) and are **not**
+part of the Carbonio networking/application config chain.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PREVIEW_STORAGES_TIMEOUT_SECONDS` | `30` | HTTP timeout for carbonio-storages requests |
+| `PREVIEW_DOCS_TIMEOUT_SECONDS` | `15` | HTTP timeout for carbonio-docs-editor conversion requests |
+| `PREVIEW_RENDER_CONCURRENCY` | *CPU count* | Max concurrent image-render operations |
+| `PREVIEW_PDF_WORKERS` | *CPU count* | PDFium subprocess pool size |
+| `PREVIEW_VIPS_CONCURRENCY` | `1` | libvips threads per operation |
+
+Values must be positive integers >= 1. An invalid value causes the service to fail-fast at startup.
+
 ## APIs Documentation 📚
 
 Once the service is up and running, APIs will be found

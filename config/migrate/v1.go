@@ -65,21 +65,15 @@ func V1MigrateFromPythonIni() Migration {
 
 		// ── Application entries (INI section.key → Consul KV raw path) ───────────
 		ApplicationEntries: map[string]EntryFunc{
-			"carbonio.preview.timeout_in_seconds":        rename("carbonio-preview/timeout-in-seconds"),
-			"carbonio.preview.docs-timeout":              rename("carbonio-preview/docs-timeout-in-seconds"),
-			"carbonio.preview.workers":                   rename("carbonio-preview/workers"),
-			"image_constants.minimum_resolution":         rename("carbonio-preview/image-minimum-resolution"),
 			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/enable-document-preview"),
 			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/enable-document-thumbnail"),
-			"carbonio.storages.download_api":             rename("carbonio-preview/storages/download-api"),
-			"carbonio.storages.health_check":             rename("carbonio-preview/storages/health-check"),
-			"carbonio.docs-editor.service_endpoint":      rename("carbonio-preview/docs-editor/service-endpoint"),
-			"carbonio.docs-editor.convert_api":           rename("carbonio-preview/docs-editor/convert-api"),
 		},
 
 		// ── Drop-only entries (value discarded, no replacement) ──────────────────
 		// log.format and log.path are dropped (no Go equivalent needed).
 		// log.level is in DropInEnvEntries, not here.
+		// Timeout, concurrency, and endpoint-path keys are now hardcoded constants
+		// or env-var knobs — their ini values are intentionally discarded.
 		DropEntries: []string{
 			"carbonio.preview.name",
 			"carbonio.preview.image_name",
@@ -89,6 +83,15 @@ func V1MigrateFromPythonIni() Migration {
 			"log.format",
 			"log.path",
 			"carbonio.storages.name",
+			// newly dropped (no KV destination; value obsoleted by hardcoded constants / env vars)
+			"carbonio.preview.timeout_in_seconds",
+			"carbonio.preview.docs-timeout",
+			"carbonio.preview.workers",
+			"image_constants.minimum_resolution",
+			"carbonio.storages.download_api",
+			"carbonio.storages.health_check",
+			"carbonio.docs-editor.service_endpoint",
+			"carbonio.docs-editor.convert_api",
 		},
 	}
 }

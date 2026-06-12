@@ -85,14 +85,17 @@ func TestDefaults(t *testing.T) {
 		{"DocumentConversionIP", App.DocumentConversionIP, "127.78.0.6"},
 		{"DocumentConversionPort", App.DocumentConversionPort, "20001"},
 		{"DocumentConversionProtocol", App.DocumentConversionProtocol, "http"},
-		// application
-		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
-		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
-		{"ServiceWorkers", App.ServiceWorkers, runtime.NumCPU()},
-		{"VIPSConcurrency", App.VIPSConcurrency, 1},
-		{"ImageMinimumResolution", App.ImageMinimumResolution, 80},
+		// application (KV)
 		{"ServiceEnableDocumentPreview", App.ServiceEnableDocumentPreview, true},
 		{"ServiceEnableDocumentThumbnail", App.ServiceEnableDocumentThumbnail, false},
+		// env knobs (default values)
+		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
+		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
+		{"RenderConcurrency", App.RenderConcurrency, runtime.NumCPU()},
+		{"PDFWorkers", App.PDFWorkers, runtime.NumCPU()},
+		{"VIPSConcurrency", App.VIPSConcurrency, 1},
+		// hardcoded constants
+		{"ImageMinimumResolution", App.ImageMinimumResolution, 80},
 		{"StorageDownloadAPI", App.StorageDownloadAPI, "download"},
 		{"StorageHealthCheck", App.StorageHealthCheck, "health/live"},
 		{"DocumentConversionServiceEndpoint", App.DocumentConversionServiceEndpoint, "services/docs/editor"},
@@ -125,26 +128,27 @@ func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 	}
 }
 
-// TestWorkersFallbackToCPUCount verifies that when workers is absent from all
-// sources, ServiceWorkers is set to runtime.NumCPU().
-func TestWorkersFallbackToCPUCount(t *testing.T) {
+// TestRenderConcurrencyEnvOverride verifies that PREVIEW_RENDER_CONCURRENCY is honoured.
+func TestRenderConcurrencyEnvOverride(t *testing.T) {
+	t.Setenv("PREVIEW_RENDER_CONCURRENCY", "3")
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.ServiceWorkers != runtime.NumCPU() {
-		t.Errorf("ServiceWorkers = %d, want runtime.NumCPU() = %d", App.ServiceWorkers, runtime.NumCPU())
+	if App.RenderConcurrency != 3 {
+		t.Errorf("RenderConcurrency = %d, want 3", App.RenderConcurrency)
 	}
 }
 
-// TestWorkersExplicitValue verifies that an explicit workers value is honored.
-func TestWorkersExplicitValue(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"workers": "5"})
+// TestPDFWorkersEnvOverride verifies that PREVIEW_PDF_WORKERS is honoured.
+func TestPDFWorkersEnvOverride(t *testing.T) {
+	t.Setenv("PREVIEW_PDF_WORKERS", "5")
+	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.ServiceWorkers != 5 {
-		t.Errorf("ServiceWorkers = %d, want 5", App.ServiceWorkers)
+	if App.PDFWorkers != 5 {
+		t.Errorf("PDFWorkers = %d, want 5", App.PDFWorkers)
 	}
 }
 
@@ -240,16 +244,16 @@ func TestEnvOverridesDocsEditorHost(t *testing.T) {
 	}
 }
 
-// TestEnvOverridesApplicationKey verifies APPLICATION_CONFIG_WORKERS overrides
+// TestStoragesTimeoutEnvOverride verifies PREVIEW_STORAGES_TIMEOUT_SECONDS overrides
 // the default.
-func TestEnvOverridesApplicationKey(t *testing.T) {
-	t.Setenv("APPLICATION_CONFIG_WORKERS", "8")
+func TestStoragesTimeoutEnvOverride(t *testing.T) {
+	t.Setenv("PREVIEW_STORAGES_TIMEOUT_SECONDS", "60")
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.ServiceWorkers != 8 {
-		t.Errorf("ServiceWorkers = %d, want 8", App.ServiceWorkers)
+	if App.ServiceTimeoutInSeconds != 60 {
+		t.Errorf("ServiceTimeoutInSeconds = %d, want 60", App.ServiceTimeoutInSeconds)
 	}
 }
 
@@ -287,21 +291,21 @@ func TestPropertiesFileOverride(t *testing.T) {
 
 // ─── application KV override ─────────────────────────────────────────────────
 
-// TestConsulKVOverride verifies that a Consul KV entry overrides the registry
-// default and is reflected in the populated Config.
+// TestConsulKVOverride verifies that Consul KV entries for the remaining
+// application flags are reflected in the populated Config.
 func TestConsulKVOverride(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{
-		"timeout-in-seconds": "60",
-		"workers":            "4",
+	srv2 := buildKVServer(t, map[string]string{
+		"enable-document-preview":   "false",
+		"enable-document-thumbnail": "true",
 	})
-	if err := loadWithConsul(t, srv); err != nil {
+	if err := loadWithConsul(t, srv2); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.ServiceTimeoutInSeconds != 60 {
-		t.Errorf("ServiceTimeoutInSeconds = %d, want 60", App.ServiceTimeoutInSeconds)
+	if App.ServiceEnableDocumentPreview != false {
+		t.Errorf("ServiceEnableDocumentPreview = %v, want false", App.ServiceEnableDocumentPreview)
 	}
-	if App.ServiceWorkers != 4 {
-		t.Errorf("ServiceWorkers = %d, want 4", App.ServiceWorkers)
+	if App.ServiceEnableDocumentThumbnail != true {
+		t.Errorf("ServiceEnableDocumentThumbnail = %v, want true", App.ServiceEnableDocumentThumbnail)
 	}
 }
 
@@ -372,20 +376,18 @@ func TestAreDocsEnabled(t *testing.T) {
 
 // ─── parse-failure → error ────────────────────────────────────────────────────
 
-// TestParseFailureIntKey verifies that a non-integer value for an int key
-// causes Load() to return an error naming the key.
-func TestParseFailureIntKey(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{
-		"timeout-in-seconds": "not-a-number",
-	})
+// TestParseFailureEnvTimeout verifies that a non-integer PREVIEW_STORAGES_TIMEOUT_SECONDS
+// causes Load() to return an error naming the env var.
+func TestParseFailureEnvTimeout(t *testing.T) {
+	t.Setenv("PREVIEW_STORAGES_TIMEOUT_SECONDS", "not-a-number")
+	srv := buildKVServer(t, nil)
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad int value, got nil")
+		t.Fatal("expected error for bad timeout value, got nil")
 	}
-	const wantKey = "timeout-in-seconds"
-	if !strings.Contains(err.Error(), wantKey) {
-		t.Errorf("error %q should mention key %q", err.Error(), wantKey)
+	if !strings.Contains(err.Error(), "PREVIEW_STORAGES_TIMEOUT_SECONDS") {
+		t.Errorf("error %q should mention env var PREVIEW_STORAGES_TIMEOUT_SECONDS", err.Error())
 	}
 }
 
@@ -406,63 +408,68 @@ func TestParseFailureBoolKey(t *testing.T) {
 	}
 }
 
-// TestParseFailurePDFWorkers verifies that a bad pdf-workers value is an error.
+// TestParseFailurePDFWorkers verifies that a bad PREVIEW_PDF_WORKERS value is an error.
 func TestParseFailurePDFWorkers(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{
-		"pdf-workers": "banana",
-	})
+	t.Setenv("PREVIEW_PDF_WORKERS", "banana")
+	srv := buildKVServer(t, nil)
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad pdf-workers value, got nil")
+		t.Fatal("expected error for bad PREVIEW_PDF_WORKERS value, got nil")
 	}
-	if !strings.Contains(err.Error(), "pdf-workers") {
-		t.Errorf("error %q should mention key pdf-workers", err.Error())
+	if !strings.Contains(err.Error(), "PREVIEW_PDF_WORKERS") {
+		t.Errorf("error %q should mention PREVIEW_PDF_WORKERS", err.Error())
 	}
 }
 
-// TestParseFailureZeroTimeout verifies that timeout-in-seconds=0 is rejected
-// (must be a positive integer, matching Python validate_positive_int).
+// TestParseFailureZeroTimeout verifies that setting timeout env vars to 0
+// (not a positive integer) causes Load() to return an error naming the variable.
 func TestParseFailureZeroTimeout(t *testing.T) {
-	for _, key := range []string{"timeout-in-seconds", "docs-timeout-in-seconds", "image-minimum-resolution"} {
-		key := key
-		t.Run(key, func(t *testing.T) {
-			srv := buildKVServer(t, map[string]string{key: "0"})
+	for _, tc := range []struct{ env, name string }{
+		{"PREVIEW_STORAGES_TIMEOUT_SECONDS", "storages timeout"},
+		{"PREVIEW_DOCS_TIMEOUT_SECONDS", "docs timeout"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.env, "0")
+			srv := buildKVServer(t, nil)
 			pointConsulAt(t, srv)
 			err := Load()
 			if err == nil {
-				t.Fatalf("expected error for %s=0, got nil", key)
+				t.Fatalf("expected error for %s=0, got nil", tc.env)
 			}
-			if !strings.Contains(err.Error(), key) {
-				t.Errorf("error %q should mention key %q", err.Error(), key)
+			if !strings.Contains(err.Error(), tc.env) {
+				t.Errorf("error %q should mention env var %q", err.Error(), tc.env)
 			}
 		})
 	}
 }
 
-// TestParseFailureNegativeWorkers verifies that workers=-1 is rejected.
-func TestParseFailureNegativeWorkers(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"workers": "-1"})
+// TestParseFailureNegativeRenderConcurrency verifies that PREVIEW_RENDER_CONCURRENCY=-1 is rejected.
+func TestParseFailureNegativeRenderConcurrency(t *testing.T) {
+	t.Setenv("PREVIEW_RENDER_CONCURRENCY", "-1")
+	srv := buildKVServer(t, nil)
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for workers=-1, got nil")
+		t.Fatal("expected error for PREVIEW_RENDER_CONCURRENCY=-1, got nil")
 	}
-	if !strings.Contains(err.Error(), "workers") {
-		t.Errorf("error %q should mention key workers", err.Error())
+	if !strings.Contains(err.Error(), "PREVIEW_RENDER_CONCURRENCY") {
+		t.Errorf("error %q should mention PREVIEW_RENDER_CONCURRENCY", err.Error())
 	}
 }
 
-// TestParseFailureZeroPDFWorkers verifies that pdf-workers=0 is rejected.
+// TestParseFailureZeroPDFWorkers verifies that PREVIEW_PDF_WORKERS=0 is rejected.
 func TestParseFailureZeroPDFWorkers(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"pdf-workers": "0"})
+	t.Setenv("PREVIEW_PDF_WORKERS", "0")
+	srv := buildKVServer(t, nil)
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for pdf-workers=0, got nil")
+		t.Fatal("expected error for PREVIEW_PDF_WORKERS=0, got nil")
 	}
-	if !strings.Contains(err.Error(), "pdf-workers") {
-		t.Errorf("error %q should mention key pdf-workers", err.Error())
+	if !strings.Contains(err.Error(), "PREVIEW_PDF_WORKERS") {
+		t.Errorf("error %q should mention PREVIEW_PDF_WORKERS", err.Error())
 	}
 }
 

@@ -224,12 +224,9 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 		mustContain(t, propsContent, "carbonio.docs-editor.host=1.2.3.4")
 		mustContain(t, propsContent, "# Migrated by carbonio-preview setup")
 
-		// Consul KV: application entries must have been PUT.
-		mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "30")
-		mustKvPut(t, kvPuts, "carbonio-preview/workers", "2")
-		mustKvPut(t, kvPuts, "carbonio-preview/image-minimum-resolution", "80")
-		mustKvPut(t, kvPuts, "carbonio-preview/storages/download-api", "download")
-		mustKvPut(t, kvPuts, "carbonio-preview/docs-editor/service-endpoint", "services/docs/editor")
+		// Consul KV: only the two remaining application entries must have been PUT.
+		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-preview", "true")
+		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-thumbnail", "false")
 
 		// The INI file must have been renamed since all CE keys migrated.
 		if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
@@ -514,7 +511,7 @@ func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
 func TestHasApplicationWork_TokenRequired(t *testing.T) {
 	withCleanRegistry(t, func() {
 		dir := t.TempDir()
-		iniPath := writeFile(t, dir, "config.ini", "[carbonio.preview]\ntimeout_in_seconds = 30\n")
+		iniPath := writeFile(t, dir, "config.ini", "[carbonio.preview]\nenable_document_preview = true\n")
 		propsPath := filepath.Join(dir, "config.properties")
 
 		dropInPath := filepath.Join(dir, "log-level.conf")

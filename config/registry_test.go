@@ -51,18 +51,8 @@ func TestRegisteredCENetworkingKeys(t *testing.T) {
 func TestRegisteredCEApplicationKeys(t *testing.T) {
 	keys := registeredKeys(NamespaceApplication)
 	required := []string{
-		"timeout-in-seconds",
-		"docs-timeout-in-seconds",
-		"workers",
-		"pdf-workers",
-		"vips-concurrency",
-		"image-minimum-resolution",
 		"enable-document-preview",
 		"enable-document-thumbnail",
-		"storages.download-api",
-		"storages.health-check",
-		"docs-editor.service-endpoint",
-		"docs-editor.convert-api",
 	}
 
 	idx := make(map[string]KeyEntry, len(keys))
@@ -114,18 +104,8 @@ func TestKeyDefaults(t *testing.T) {
 	}
 
 	appChecks := []struct{ key, dflt, ifNotPresent string }{
-		{"timeout-in-seconds", "30", ""},
-		{"docs-timeout-in-seconds", "15", ""},
-		{"workers", "", "Defaults to the number of CPUs"},
-		{"pdf-workers", "", "Defaults to the number of CPUs"},
-		{"vips-concurrency", "1", ""},
-		{"image-minimum-resolution", "80", ""},
 		{"enable-document-preview", "true", ""},
 		{"enable-document-thumbnail", "false", ""},
-		{"storages.download-api", "download", ""},
-		{"storages.health-check", "health/live", ""},
-		{"docs-editor.service-endpoint", "services/docs/editor", ""},
-		{"docs-editor.convert-api", "cool/convert-to", ""},
 	}
 	for _, tc := range appChecks {
 		e, ok := appIdx[tc.key]
@@ -267,18 +247,8 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 
 	// Spot-check: known application keys that must appear in order.
 	appExpected := []string{
-		"docs-editor.convert-api",
-		"docs-editor.service-endpoint",
-		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
-		"image-minimum-resolution",
-		"pdf-workers",
-		"storages.download-api",
-		"storages.health-check",
-		"timeout-in-seconds",
-		"vips-concurrency",
-		"workers",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {

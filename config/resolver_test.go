@@ -73,13 +73,8 @@ func TestResolverDefaultsWhenAllAbsent(t *testing.T) {
 	}
 
 	appChecks := []struct{ key, want string }{
-		{"timeout-in-seconds", "30"},
-		{"docs-timeout-in-seconds", "15"},
-		{"vips-concurrency", "1"},
-		{"storages.download-api", "download"},
-		{"storages.health-check", "health/live"},
-		{"docs-editor.service-endpoint", "services/docs/editor"},
-		{"docs-editor.convert-api", "cool/convert-to"},
+		{"enable-document-preview", "true"},
+		{"enable-document-thumbnail", "false"},
 	}
 	for _, tc := range appChecks {
 		got, ok := r.Application.Get(tc.key)
@@ -126,30 +121,30 @@ func TestResolverFileBeatsDefault(t *testing.T) {
 
 // TestResolverEnvBeatsKV verifies ENV overrides Consul KV (application layer).
 func TestResolverEnvBeatsKV(t *testing.T) {
-	t.Setenv("APPLICATION_CONFIG_TIMEOUT_IN_SECONDS", "120")
-	srv := buildConsulServer(t, map[string]string{"timeout-in-seconds": "90"})
+	t.Setenv("APPLICATION_CONFIG_ENABLE_DOCUMENT_PREVIEW", "false")
+	srv := buildConsulServer(t, map[string]string{"enable-document-preview": "true"})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, _ := r.Application.Get("timeout-in-seconds")
-	if got != "120" {
-		t.Errorf("Application.Get(timeout-in-seconds) = %q, want 120 (env should beat KV)", got)
+	got, _ := r.Application.Get("enable-document-preview")
+	if got != "false" {
+		t.Errorf("Application.Get(enable-document-preview) = %q, want false (env should beat KV)", got)
 	}
 }
 
-// TestResolverKVBeatsDefault verifies Consul KV value is used (application layer).
+// TestResolverKVBeatsDefault verifies Consul KV value overrides registry default (application layer).
 func TestResolverKVBeatsDefault(t *testing.T) {
-	srv := buildConsulServer(t, map[string]string{"workers": "8"})
+	srv := buildConsulServer(t, map[string]string{"enable-document-preview": "false"})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, _ := r.Application.Get("workers")
-	if got != "8" {
-		t.Errorf("Application.Get(workers) = %q, want 8 (KV value must be present)", got)
+	got, _ := r.Application.Get("enable-document-preview")
+	if got != "false" {
+		t.Errorf("Application.Get(enable-document-preview) = %q, want false (KV value must override default)", got)
 	}
 }
 
@@ -334,15 +329,15 @@ func TestUnregisteredKVKeyBlankValueAbsent(t *testing.T) {
 // TestBlankKVValueFallsThroughToDefault verifies that a Consul KV entry whose
 // decoded value is empty string is treated as absent and the registry default wins.
 func TestBlankKVValueFallsThroughToDefault(t *testing.T) {
-	// "timeout-in-seconds" has default "30"; KV entry with empty value must not override it.
-	srv := buildConsulServer(t, map[string]string{"timeout-in-seconds": ""})
+	// "enable-document-preview" has default "true"; KV entry with empty value must not override it.
+	srv := buildConsulServer(t, map[string]string{"enable-document-preview": ""})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, ok := r.Application.Get("timeout-in-seconds")
-	if !ok || got != "30" {
-		t.Errorf("Application.Get(timeout-in-seconds) = (%q, %v), want (30, true); blank KV value must fall through to default", got, ok)
+	got, ok := r.Application.Get("enable-document-preview")
+	if !ok || got != "true" {
+		t.Errorf("Application.Get(enable-document-preview) = (%q, %v), want (true, true); blank KV value must fall through to default", got, ok)
 	}
 }

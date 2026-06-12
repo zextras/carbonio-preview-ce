@@ -82,7 +82,7 @@ func testCfg() *config.Config {
 		ServiceHealthName:                    "health",
 		ServiceTimeoutInSeconds:              30,
 		ServiceDocsTimeout:                   15,
-		ServiceWorkers:                       runtime.NumCPU(),
+		RenderConcurrency:                    runtime.NumCPU(),
 		ServiceEnableDocumentPreview:         true,
 		ServiceEnableDocumentThumbnail:       true,
 		StorageFullAddress:                   "http://127.0.0.1:20000",

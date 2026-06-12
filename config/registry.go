@@ -210,44 +210,6 @@ func registerCEKeys() {
 
 	application := []KeyEntry{
 		{
-			Key:         "timeout-in-seconds",
-			Namespace:   NamespaceApplication,
-			Default:     "30",
-			Description: "Default request timeout in seconds for preview operations.",
-		},
-		{
-			Key:         "docs-timeout-in-seconds",
-			Namespace:   NamespaceApplication,
-			Default:     "15",
-			Description: "Timeout in seconds for document-conversion preview requests.",
-		},
-		{
-			Key:          "workers",
-			Namespace:    NamespaceApplication,
-			Default:      "",
-			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "HTTP processing concurrency (goroutines); defaults to CPU count when absent.",
-		},
-		{
-			Key:          "pdf-workers",
-			Namespace:    NamespaceApplication,
-			Default:      "",
-			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Size of the PDFium worker subprocess pool; defaults to CPU count when absent.",
-		},
-		{
-			Key:         "vips-concurrency",
-			Namespace:   NamespaceApplication,
-			Default:     "1",
-			Description: "Concurrency level passed to libvips for image processing.",
-		},
-		{
-			Key:         "image-minimum-resolution",
-			Namespace:   NamespaceApplication,
-			Default:     "80",
-			Description: "Minimum accepted resolution (px) for image preview requests.",
-		},
-		{
 			Key:         "enable-document-preview",
 			Namespace:   NamespaceApplication,
 			Default:     "true",
@@ -259,34 +221,14 @@ func registerCEKeys() {
 			Default:     "false",
 			Description: "Whether document thumbnail generation is enabled.",
 		},
-		{
-			Key:         "storages.download-api",
-			Namespace:   NamespaceApplication,
-			Default:     "download",
-			Description: "Path segment of the carbonio-storages download endpoint.",
-		},
-		{
-			Key:         "storages.health-check",
-			Namespace:   NamespaceApplication,
-			Default:     "health/live",
-			Description: "Path segment of the carbonio-storages health-check endpoint.",
-		},
-		{
-			Key:         "docs-editor.service-endpoint",
-			Namespace:   NamespaceApplication,
-			Default:     "services/docs/editor",
-			Description: "Base path of the docs-editor service endpoint.",
-		},
-		{
-			Key:         "docs-editor.convert-api",
-			Namespace:   NamespaceApplication,
-			Default:     "cool/convert-to",
-			Description: "Path of the docs-editor document-conversion API.",
-		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
 		// outside the extensions networking/application config chain.
+		//
+		// NOTE: timeout, concurrency, and endpoint-path knobs are also NOT registered
+		// here. They are hardcoded constants (endpoint paths) or controlled by
+		// PREVIEW_* environment variables (timeouts and concurrency).
 	}
 
 	for _, e := range networking {

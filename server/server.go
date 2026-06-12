@@ -64,7 +64,7 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
-	sem := render.BuildSemaphore(s.cfg.ServiceWorkers)
+	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
 
 	// Build the public mux.
 	mux := loggingMiddleware(s.buildMux(sem))
@@ -82,9 +82,11 @@ func (s *Server) Run() {
 
 	slog.Info("carbonio-preview starting",
 		"addr", addr,
-		"workers", s.cfg.ServiceWorkers,
+		"render_concurrency", s.cfg.RenderConcurrency,
 		"pdf_workers", s.cfg.PDFWorkers,
 		"vips_concurrency", s.cfg.VIPSConcurrency,
+		"storages_timeout", s.cfg.ServiceTimeoutInSeconds,
+		"docs_timeout", s.cfg.ServiceDocsTimeout,
 		"docs_enabled", s.cfg.AreDocsEnabled,
 		"log_level", s.cfg.LogLevel.String(),
 	)
