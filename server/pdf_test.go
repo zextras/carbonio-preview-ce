@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -21,7 +22,7 @@ const fakePDFBytes = "%PDF-1.4 fake"
 // stubPDFSlice replaces pdfSliceFunc for the duration of a test.
 func stubPDFSlice(returnData []byte, returnErr error) (restore func()) {
 	prev := pdfSliceFunc
-	pdfSliceFunc = func(_ []byte, _, _ int) ([]byte, error) {
+	pdfSliceFunc = func(_ chan struct{}, _ []byte, _, _ int) ([]byte, error) {
 		return returnData, returnErr
 	}
 	return func() { pdfSliceFunc = prev }
@@ -288,4 +289,73 @@ func TestPDFGetPreview_UnmatchedPath(t *testing.T) {
 	rec := doRequest(mux, http.MethodGet, path)
 
 	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+// TestPDFGetPreview_PoolUnavailable_503 verifies that ErrRenderUnavailable from
+// PDFSlice → HTTP 503 with the standard detail message.
+// This is a deliberate divergence from the old Python service (which had no
+// pool-timeout concept); we return 503 to distinguish transient capacity
+// problems from permanent document-level errors (400).
+func TestPDFGetPreview_PoolUnavailable_503(t *testing.T) {
+	store := &mockStore{blob: []byte(fakePDFBytes)}
+	restoreSlice := stubPDFSlice(nil, render.ErrRenderUnavailable)
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestPDFPostPreview_PoolUnavailable_503 verifies POST / → 503 on pool exhaustion.
+func TestPDFPostPreview_PoolUnavailable_503(t *testing.T) {
+	restoreSlice := stubPDFSlice(nil, render.ErrRenderUnavailable)
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestPDFGetThumbnail_PoolUnavailable_503 verifies that ErrRenderUnavailable
+// from PDFRasterize → HTTP 503 on the thumbnail endpoint.
+func TestPDFGetThumbnail_PoolUnavailable_503(t *testing.T) {
+	store := &mockStore{blob: []byte(fakePDFBytes)}
+	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
+	defer restoreRaster()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/100x200/thumbnail/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestPDFPostThumbnail_PoolUnavailable_503 verifies POST thumbnail → 503 on pool exhaustion.
+func TestPDFPostThumbnail_PoolUnavailable_503(t *testing.T) {
+	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
+	defer restoreRaster()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/100x200/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
 }

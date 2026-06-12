@@ -3,8 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package server implements the HTTP server for carbonio-preview-ce.
-// It registers all four router groups (image, pdf, document, health) and
-// handles hybrid process management (main vs PDF worker roles).
+// It registers all four router groups (image, pdf, document, health).
+// The process model is a single Go binary with an embedded PDFium subprocess
+// pool: libvips runs in-process via CGO, while PDFium rendering is delegated
+// to a pool of carbonio-preview-pdfium-worker subprocesses managed by
+// go-pdfium's multi_threaded backend.
 package server
 
 import (

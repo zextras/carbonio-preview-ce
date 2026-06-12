@@ -38,12 +38,15 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	t.Logf("Built pdfium-worker at %s", workerBin)
 
 	// Init pool with 2 workers.
-	if err := PDFInit(2, workerBin); err != nil {
+	const poolSize = 2
+	if err := PDFInit(poolSize, workerBin); err != nil {
 		t.Fatalf("PDFInit: %v", err)
 	}
+	// Close the pool before clearing the pointer so PDFClose can flush the pool
+	// without racing on a nil reference.
 	defer func() {
-		globalPdfPool = nil
 		PDFClose()
+		globalPdfPool = nil
 	}()
 
 	pdfData := testPDFFixture
@@ -52,8 +55,8 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDF fixture: %d bytes", len(pdfData))
 
-	// Exercise PDFSlice.
-	sliced, err := PDFSlice(pdfData, 1, 0)
+	// Exercise PDFSlice (nil semaphore = no gating in test).
+	sliced, err := PDFSlice(nil, pdfData, 1, 0)
 	if err != nil {
 		t.Fatalf("PDFSlice: %v", err)
 	}
@@ -87,18 +90,53 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 		t.Logf("kill %d: %v (may have already exited)", victim, err)
 	}
 
-	// Give pool a moment to detect the death and respawn.
-	time.Sleep(500 * time.Millisecond)
+	// go-pdfium's multi_threaded pool respawns lazily: when BorrowObject is
+	// called, ValidateObject detects the dead plugin (Exited()==true), destroys
+	// the invalid object, and MakeObject starts a fresh subprocess. Respawns
+	// are NOT proactive; each BorrowObject triggers at most one create cycle.
+	// We force concurrent borrows equal to poolSize so ALL slots are exercised.
+	type sliceResult struct {
+		data []byte
+		err  error
+	}
+	resultsCh := make(chan sliceResult, poolSize)
+	for i := 0; i < poolSize; i++ {
+		go func() {
+			data, err := PDFSlice(nil, pdfData, 1, 0)
+			resultsCh <- sliceResult{data, err}
+		}()
+	}
+	for i := 0; i < poolSize; i++ {
+		res := <-resultsCh
+		if res.err != nil {
+			t.Fatalf("PDFSlice (post-kill concurrent borrow %d): %v", i, res.err)
+		}
+		if len(res.data) == 0 {
+			t.Fatalf("PDFSlice (post-kill concurrent borrow %d): empty result", i)
+		}
+	}
+	t.Logf("PDFSlice after worker kill: all %d concurrent borrows succeeded", poolSize)
 
-	// Subsequent call must still succeed (pool respawns the worker).
-	sliced2, err := PDFSlice(pdfData, 1, 0)
-	if err != nil {
-		t.Fatalf("PDFSlice after worker kill: %v", err)
+	// Poll until the live worker count is back to poolSize. Each concurrent
+	// BorrowObject above spawns a fresh subprocess for any invalid slot, so
+	// after both complete the pool holds poolSize healthy workers.
+	const respawnTimeout = 10 * time.Second
+	const pollInterval = 200 * time.Millisecond
+	deadline := time.Now().Add(respawnTimeout)
+	for {
+		current := findChildPIDs(t, myPID)
+		if len(current) >= poolSize {
+			t.Logf("Respawn confirmed: %d/%d workers alive after kill (PIDs: %v)",
+				len(current), poolSize, current)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Pool did not respawn within %v: only %d/%d workers alive",
+				respawnTimeout, len(current), poolSize)
+		}
+		time.Sleep(pollInterval)
 	}
-	if len(sliced2) == 0 {
-		t.Fatal("PDFSlice after worker kill returned empty bytes")
-	}
-	t.Logf("PDFSlice after respawn: ok, %d bytes — respawn verified", len(sliced2))
+	t.Logf("Pool fully restored to %d workers — respawn verified", poolSize)
 }
 
 // findChildPIDs returns PIDs of direct children of parentPID by scanning /proc.

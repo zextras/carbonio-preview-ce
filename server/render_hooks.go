@@ -32,8 +32,8 @@ var imageThumbnailFunc = func(
 }
 
 // pdfSliceFunc is the seam for render.PDFSlice.
-var pdfSliceFunc = func(data []byte, firstPage, lastPage int) ([]byte, error) {
-	return render.PDFSlice(data, firstPage, lastPage)
+var pdfSliceFunc = func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error) {
+	return render.PDFSlice(sem, data, firstPage, lastPage)
 }
 
 // pdfRasterizeFunc is the seam for render.PDFRasterize.

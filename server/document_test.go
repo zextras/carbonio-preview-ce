@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -423,4 +424,59 @@ func TestDocGetPreview_UnmatchedPath(t *testing.T) {
 	rec := doRequest(mux, http.MethodGet, path)
 
 	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+// TestDocGetPreview_PoolUnavailable_503 verifies that ErrRenderUnavailable from
+// PDFSlice → HTTP 503 on the document preview endpoint.
+func TestDocGetPreview_PoolUnavailable_503(t *testing.T) {
+	store := &mockStore{blob: []byte("docx-bytes")}
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreSlice := stubPDFSlice(nil, render.ErrRenderUnavailable)
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestDocPostPreview_PoolUnavailable_503 verifies POST document preview → 503 on pool exhaustion.
+func TestDocPostPreview_PoolUnavailable_503(t *testing.T) {
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreSlice := stubPDFSlice(nil, render.ErrRenderUnavailable)
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.docx", []byte("docx-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestDocGetThumbnail_PoolUnavailable_503 verifies that ErrRenderUnavailable from
+// PDFRasterize → HTTP 503 on the document thumbnail endpoint.
+func TestDocGetThumbnail_PoolUnavailable_503(t *testing.T) {
+	store := &mockStore{blob: []byte("docx-bytes")}
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
+	defer restoreRaster()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
 }

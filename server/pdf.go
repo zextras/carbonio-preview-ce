@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -58,7 +59,7 @@ func routePDF(
 		switch len(parts) {
 		case 2:
 			// GET /{id}/{version}/
-			pdfGetPreview(w, r, parts[0], parts[1], cfg, store)
+			pdfGetPreview(w, r, parts[0], parts[1], cfg, store, sem)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] == "thumbnail" {
@@ -74,7 +75,7 @@ func routePDF(
 		switch len(parts) {
 		case 0:
 			// POST /
-			pdfPostPreview(w, r, cfg)
+			pdfPostPreview(w, r, cfg, sem)
 		case 2:
 			// POST /{area}/thumbnail/
 			if parts[1] == "thumbnail" {
@@ -98,6 +99,7 @@ func pdfGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
+	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
@@ -130,9 +132,14 @@ func pdfGetPreview(
 		return
 	}
 
-	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(sem, data, firstPage, lastPage)
 	if err != nil {
 		slog.Error("pdfGetPreview: PDFSlice", "err", err)
+		// Pool capacity/timeout errors → 503; genuine document errors → 400.
+		if errors.Is(err, render.ErrRenderUnavailable) {
+			errDetail(w, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			return
+		}
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -207,6 +214,7 @@ func pdfPostPreview(
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg *config.Config,
+	sem chan struct{},
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
@@ -220,9 +228,14 @@ func pdfPostPreview(
 		return
 	}
 
-	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
+	sliced, err := pdfSliceFunc(sem, data, firstPage, lastPage)
 	if err != nil {
 		slog.Error("pdfPostPreview: PDFSlice", "err", err)
+		// Pool capacity/timeout errors → 503; genuine document errors → 400.
+		if errors.Is(err, render.ErrRenderUnavailable) {
+			errDetail(w, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			return
+		}
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -284,6 +297,11 @@ func renderPDFThumbnail(
 	out, err := pdfRasterizeFunc(sem, data, 0, width, height, outputFormat, quality, shape)
 	if err != nil {
 		slog.Error("renderPDFThumbnail: PDFRasterize", "err", err)
+		// Pool capacity/timeout errors → 503; genuine document/page errors → 400.
+		if errors.Is(err, render.ErrRenderUnavailable) {
+			errDetail(w, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			return
+		}
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}

@@ -496,6 +496,9 @@
           },
           "502": {
             "description": "Storage is currently unavailable."
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure). Deliberate divergence from the original Python service, which had no pool-timeout concept."
           }
         }
       }
@@ -561,6 +564,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -657,6 +663,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -769,6 +778,9 @@
           },
           "502": {
             "description": "Storage is currently unavailable."
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -863,6 +875,9 @@
           },
           "502": {
             "description": "Storage is currently unavailable."
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -938,6 +953,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -1044,6 +1062,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }
@@ -1166,6 +1187,9 @@
           },
           "502": {
             "description": "Storage is currently unavailable."
+          },
+          "503": {
+            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
           }
         }
       }

@@ -6,6 +6,7 @@ package render
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,16 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/single_threaded"
 )
+
+// ErrRenderUnavailable is returned when the PDFium subprocess pool cannot
+// provide a worker — e.g. all workers are busy (pool exhaustion), the startup
+// timeout has elapsed, or a worker failed to start.
+//
+// NOTE: this is a deliberate divergence from the old Python service, which had
+// no pool-timeout concept. Callers should map this to HTTP 503 (Service
+// Unavailable) to distinguish transient capacity problems from permanent
+// document-level errors (HTTP 400).
+var ErrRenderUnavailable = errors.New("PDF rendering temporarily unavailable")
 
 // globalPdfPool is the PDFium instance pool. Initialised by PDFInit or
 // PDFInitSingleThreadedForTests. Must not be used before initialisation.
@@ -61,22 +72,39 @@ func PDFInitSingleThreadedForTests() {
 //     vips_image_new_from_memory — no PNG encode/decode round-trip.
 //  3. libvips applies COVER resize + center-crop and encodes the result.
 //
+// Concurrency model:
+//   - semaphore (N_http / workers) gates handler-level processing; pass nil
+//     to skip gating (not recommended in production).
+//   - The PDFium subprocess pool (N_pdf / pdf-workers) is the second gate:
+//     GetInstance blocks until a subprocess worker is free or the timeout
+//     fires. The http gate sits in front so the pool is never flooded.
+//
 // outputFormat: "jpeg" or "png".
 // quality: "lowest", "low", "medium", "high", "highest".
 // shape: "rounded" or "rectangular" (rounded forces PNG output).
+// Returns ErrRenderUnavailable when the pool cannot supply a worker (timeout,
+// exhaustion, or worker start failure) — callers should map this to HTTP 503.
 func PDFRasterize(
 	semaphore chan struct{},
 	data []byte,
 	page, width, height int,
 	outputFormat, quality, shape string,
 ) ([]byte, error) {
+	// N_http gate: bound handler concurrency before touching the subprocess pool.
+	if semaphore != nil {
+		semaphore <- struct{}{}
+		defer func() { <-semaphore }()
+	}
+
 	if globalPdfPool == nil {
 		return nil, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
 
 	inst, err := globalPdfPool.GetInstance(30 * time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("pdfium GetInstance: %w", err)
+		// Pool exhaustion / timeout / worker start failure → transient, not a
+		// document error; signal caller to return HTTP 503.
+		return nil, fmt.Errorf("%w: %w", ErrRenderUnavailable, err)
 	}
 	defer inst.Close()
 
@@ -138,8 +166,22 @@ func PDFRasterize(
 // sliced PDF bytes. firstPage and lastPage are 1-indexed (matching the Python
 // service spec). lastPage == 0 means "last page of the document".
 //
+// Concurrency model:
+//   - semaphore (N_http / workers) gates handler-level processing; pass nil
+//     to skip gating (not recommended in production).
+//   - The PDFium subprocess pool (N_pdf / pdf-workers) is the second gate.
+//     The http gate sits in front so the pool is never flooded.
+//
 // Invalid PDFs: returns (nil, error). Callers should map this to HTTP 400.
-func PDFSlice(data []byte, firstPage, lastPage int) ([]byte, error) {
+// Pool unavailability: returns (nil, ErrRenderUnavailable). Callers should
+// map this to HTTP 503.
+func PDFSlice(semaphore chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error) {
+	// N_http gate: bound handler concurrency before touching the subprocess pool.
+	if semaphore != nil {
+		semaphore <- struct{}{}
+		defer func() { <-semaphore }()
+	}
+
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty PDF data")
 	}
@@ -150,7 +192,9 @@ func PDFSlice(data []byte, firstPage, lastPage int) ([]byte, error) {
 
 	inst, err := globalPdfPool.GetInstance(30 * time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("pdfium GetInstance: %w", err)
+		// Pool exhaustion / timeout / worker start failure → transient, not a
+		// document error; signal caller to return HTTP 503.
+		return nil, fmt.Errorf("%w: %w", ErrRenderUnavailable, err)
 	}
 	defer inst.Close()
 

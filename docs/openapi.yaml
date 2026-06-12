@@ -386,6 +386,11 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure). This status is a deliberate divergence from the
+            original Python service, which had no pool-timeout concept.
   /preview/pdf/:
     post:
       tags:
@@ -440,6 +445,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   '/preview/pdf/{area}/thumbnail/':
     post:
       tags:
@@ -508,6 +517,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   '/preview/pdf/{id}/{version}/{area}/thumbnail/':
     get:
       tags:
@@ -589,6 +602,10 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   '/preview/document/{id}/{version}/':
     get:
       tags:
@@ -669,6 +686,10 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   /preview/document/:
     post:
       tags:
@@ -730,6 +751,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   '/preview/document/{area}/thumbnail/':
     post:
       tags:
@@ -805,6 +830,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   '/preview/document/{id}/{version}/{area}/thumbnail/':
     get:
       tags:
@@ -893,6 +922,10 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+        '503':
+          description: >-
+            PDF rendering temporarily unavailable (pool exhaustion or worker
+            start failure).
   /health/:
     get:
       tags:
