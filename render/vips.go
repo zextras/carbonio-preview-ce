@@ -50,16 +50,20 @@ static int cover_crop(
 // scale_fit_pad: Scale-to-fit (no crop) + centre-embed on a transparent canvas.
 // Matches the Python resize_with_paddings behaviour:
 //   - scale down so the image fits within width×height preserving aspect ratio
-//     (VIPS_INTERESTING_NONE → no cropping, VIPS_SIZE_DOWN → never upscale
-//      beyond the source; change to VIPS_SIZE_BOTH if upscale is desired).
+//     (VIPS_INTERESTING_NONE → no cropping, VIPS_SIZE_BOTH allows up- and
+//      down-scaling to match Python's behaviour).
 //   - embed the scaled image centred on a width×height RGBA canvas whose
 //     background is fully transparent (r=0,g=0,b=0,a=0) — identical to the
 //     Python _add_borders_to_image which uses Image.new("RGBA",…,(0,0,0,0)).
-// Output is always PNG (caller must ensure fmt != 1 for transparent padding).
+// fmt == 1 → JPEG output: the transparent canvas is flattened to black before
+//   encoding (matches Python jpeg_preview which calls img.convert("RGB") on the
+//   RGBA result, mapping transparent pixels to black).
+// fmt != 1 → PNG output: transparency is preserved.
 // Returns 0 on success, -1 on error. Caller must g_free(*out_buf).
 static int scale_fit_pad(
         const void *in_buf, size_t in_len,
         int width, int height,
+        int fmt, int jpeg_quality,
         void **out_buf, size_t *out_len)
 {
     // Thumbnail with VIPS_INTERESTING_NONE: scale to fit, never crop.
@@ -106,8 +110,22 @@ static int scale_fit_pad(
     g_object_unref(thumb);
     if (rc != 0) return -1;
 
-    rc = vips_pngsave_buffer(embedded, out_buf, out_len,
-            "compression", 6, "strip", TRUE, NULL);
+    if (fmt == 1) {
+        // JPEG: flatten the RGBA canvas to RGB (transparent → black),
+        // matching Python's img.convert("RGB") before img.save(..., format="JPEG").
+        VipsImage *flat = NULL;
+        if (embedded->Bands == 4 || embedded->Bands == 2) {
+            rc = vips_flatten(embedded, &flat, NULL);
+            g_object_unref(embedded);
+            if (rc != 0) return -1;
+            embedded = flat;
+        }
+        rc = vips_jpegsave_buffer(embedded, out_buf, out_len,
+                "Q", jpeg_quality, "strip", TRUE, NULL);
+    } else {
+        rc = vips_pngsave_buffer(embedded, out_buf, out_len,
+                "compression", 6, "strip", TRUE, NULL);
+    }
     g_object_unref(embedded);
     return rc;
 }
@@ -537,21 +555,29 @@ func coverCropVipsRGBA(rgba *image.RGBA, dstW, dstH int, fmtStr string, jpegQual
 	return out, nil
 }
 
-// scaleFitPadVips: scale-to-fit inside width×height with transparent padding.
+// scaleFitPadVips: scale-to-fit inside width×height with transparent padding,
+// then encode to the requested format.
 // Matches the Python resize_with_paddings behaviour: scale so the image fits
 // entirely within the target box (no cropping), then centre-embed it on a
 // width×height RGBA canvas with a fully transparent (0,0,0,0) background.
-// Always returns PNG (transparency requires alpha channel).
-func scaleFitPadVips(buf []byte, w, h int) ([]byte, error) {
+// fmtStr == "jpeg": the transparent canvas is flattened to RGB (black background)
+// before JPEG encoding, matching Python's img.convert("RGB") before save.
+// Any other fmtStr: returns PNG with transparency preserved.
+func scaleFitPadVips(buf []byte, w, h int, fmtStr string, jpegQuality int) ([]byte, error) {
 	if len(buf) == 0 {
 		return nil, fmt.Errorf("empty input buffer")
 	}
+	fmtCode := C.int(0) // PNG
+	if fmtStr == "jpeg" {
+		fmtCode = C.int(1)
+	}
+	quality := C.int(jpegQuality)
 	inPtr := unsafe.Pointer(&buf[0])
 	inLen := C.size_t(len(buf))
 	var outPtr unsafe.Pointer
 	var outLen C.size_t
 
-	rc := C.scale_fit_pad(inPtr, inLen, C.int(w), C.int(h), &outPtr, &outLen)
+	rc := C.scale_fit_pad(inPtr, inLen, C.int(w), C.int(h), fmtCode, quality, &outPtr, &outLen)
 	if rc != 0 {
 		errStr := C.vips_error_buffer()
 		C.vips_error_clear()
@@ -691,10 +717,13 @@ func ImageThumbnail(
 	var out []byte
 
 	if cropMode == "none" {
-		// Preview with crop=false: scale-to-fit with transparent padding.
+		// Preview with crop=false: scale-to-fit with transparent padding then
+		// encode to the requested format.
 		// Matches Python resize_with_paddings: image fits entirely within the
-		// target box, padded with transparent (0,0,0,0) pixels. Always PNG.
-		out, err = scaleFitPadVips(data, width, height)
+		// target box, padded with (0,0,0,0) pixels, then:
+		//   - jpeg: flatten RGBA→RGB (transparent→black) and JPEG-encode
+		//   - png/gif: keep alpha, PNG-encode
+		out, err = scaleFitPadVips(data, width, height, fmtStr, jpegQuality)
 	} else {
 		// Default: cover-crop from centre (thumbnail path and crop=true preview).
 		// Uses VIPS_INTERESTING_CENTRE — fills the box, may clip edges.
