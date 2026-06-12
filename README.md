@@ -87,11 +87,17 @@ part of the Carbonio networking/application config chain.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PREVIEW_STORAGES_TIMEOUT_SECONDS` | `30` | HTTP timeout for carbonio-storages requests |
-| `PREVIEW_DOCS_TIMEOUT_SECONDS` | `15` | HTTP timeout for carbonio-docs-editor conversion requests |
 | `PREVIEW_RENDER_CONCURRENCY` | *CPU count* | Max concurrent image-render operations |
 | `PREVIEW_PDF_WORKERS` | *CPU count* | PDFium subprocess pool size |
 | `PREVIEW_VIPS_CONCURRENCY` | `1` | libvips threads per operation |
+
+The two downstream timeouts are **Consul KV** keys (not env vars), configurable
+fleet-wide but intentionally omitted from the generated config docs:
+
+| Consul KV key | Default | Description |
+|---------------|---------|-------------|
+| `carbonio-preview/timeout-in-seconds` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
+| `carbonio-preview/docs-timeout-in-seconds` | `15` | Timeout (s) for carbonio-docs-editor (Collabora) conversion |
 
 Values must be positive integers >= 1. An invalid value causes the service to fail-fast at startup.
 
