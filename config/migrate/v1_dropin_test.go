@@ -17,7 +17,7 @@ import (
 // ── V1 log.level → systemd drop-in migration tests ────────────────────────────
 
 // TestV1LogLevel_WriteDropIn verifies that a V1 migration with [log] level=debug
-// in the ini writes a correctly-formatted drop-in file.
+// in the ini writes a correctly-formatted drop-in file to Paths.DropInPath.
 func TestV1LogLevel_WriteDropIn(t *testing.T) {
 	withCleanRegistry(t, func() {
 		dir := t.TempDir()
@@ -34,7 +34,7 @@ func TestV1LogLevel_WriteDropIn(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -90,7 +90,7 @@ func TestV1LogLevel_IdempotentSecondRun(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -130,7 +130,7 @@ func TestV1LogLevel_AbsentIniNoDropIn(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -148,6 +148,54 @@ func TestV1LogLevel_AbsentIniNoDropIn(t *testing.T) {
 		// Drop-in must NOT have been created.
 		if _, err := os.Stat(dropInPath); !os.IsNotExist(err) {
 			t.Error("drop-in must not be created when ini has no log.level key")
+		}
+	})
+}
+
+// TestV1LogLevel_DropInHonorsPathsDropInPath verifies that the drop-in is written
+// to Paths.DropInPath (injected), NOT to DefaultDropInPath.
+func TestV1LogLevel_DropInHonorsPathsDropInPath(t *testing.T) {
+	withCleanRegistry(t, func() {
+		dir := t.TempDir()
+		dropInPath := filepath.Join(dir, "subdir", "log-level.conf") // subdir does not pre-exist
+
+		iniContent := "[log]\nlevel = warn\n"
+		iniPath := writeFile(t, dir, "config.ini", iniContent)
+		propsPath := filepath.Join(dir, "config.properties")
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "true")
+		}))
+		defer srv.Close()
+
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+
+		runner, err := NewRunner(Paths{
+			IniPath:    iniPath,
+			PropsPath:  propsPath,
+			ConsulURL:  srv.URL,
+			DropInPath: dropInPath,
+		})
+		if err != nil {
+			t.Fatalf("NewRunner: %v", err)
+		}
+		runner.Run()
+
+		// Drop-in must be at the injected path (not DefaultDropInPath).
+		data, err := os.ReadFile(dropInPath)
+		if err != nil {
+			t.Fatalf("drop-in not created at injected path %s: %v", dropInPath, err)
+		}
+		if !strings.Contains(string(data), `Environment="PREVIEW_LOG_LEVEL=warn"`) {
+			t.Errorf("unexpected drop-in content: %q", string(data))
+		}
+
+		// DefaultDropInPath must NOT have been touched.
+		if _, err := os.Stat(DefaultDropInPath); !os.IsNotExist(err) {
+			t.Errorf("DefaultDropInPath %s must not be written by tests", DefaultDropInPath)
 		}
 	})
 }

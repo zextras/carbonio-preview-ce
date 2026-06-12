@@ -7,6 +7,7 @@ package migrate
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Runner executes all registered migrations in version-ascending order.
@@ -98,9 +99,10 @@ func (r *Runner) Run() {
 
 	for _, m := range migrations {
 		netMigrated, appMigrated := r.runOne(m)
+		totalNet := len(m.NetworkingEntries) + len(m.DropInEnvEntries)
 		totalApp := len(m.ApplicationEntries) + len(m.DropEntries)
 		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
-			m.Name, netMigrated, len(m.NetworkingEntries), appMigrated, totalApp)
+			m.Name, netMigrated, totalNet, appMigrated, totalApp)
 	}
 
 	// Save config.properties only if at least one networking entry actually
@@ -119,11 +121,12 @@ func (r *Runner) Run() {
 	}
 }
 
-// runOne runs a single migration's networking, application, and drop entries.
-// It returns (netMigrated, appMigrated).
+// runOne runs a single migration's networking, application, drop, and drop-in
+// entries.  It returns (netMigrated, appMigrated).
 // Per-entry errors are logged as warnings; the entry's old key is NOT deleted.
 func (r *Runner) runOne(m Migration) (int, int) {
 	netMigrated := r.runNetworkingEntries(m)
+	netMigrated += r.runDropInEnvEntries(m)
 	appMigrated := r.runApplicationEntries(m)
 	appMigrated += r.runDropEntries(m)
 	return netMigrated, appMigrated
@@ -167,6 +170,90 @@ func (r *Runner) runApplicationEntries(m Migration) int {
 		migrated++
 	}
 	return migrated
+}
+
+// runDropInEnvEntries processes Migration.DropInEnvEntries.
+//
+// For each old ini key present in the store, it collects the (envVar, value)
+// pairs and writes them all into a single systemd drop-in file atomically
+// (tmp+rename, 0644, MkdirAll parent) at the effective drop-in path
+// (r.dropInPath).  Successfully written keys are removed from the ini and
+// counted toward the networking tally.
+//
+// If the file write fails, no ini keys are removed (retryable on next run).
+// If no entries are present, the function is a no-op.
+func (r *Runner) runDropInEnvEntries(m Migration) int {
+	if r.ini.isAbsent() || len(m.DropInEnvEntries) == 0 {
+		return 0
+	}
+
+	// Collect entries present in the ini.
+	type pair struct {
+		oldKey string
+		envVar string
+		value  string
+	}
+	var found []pair
+	for oldKey, envVar := range m.DropInEnvEntries {
+		val, ok := r.ini.get(oldKey)
+		if !ok {
+			continue
+		}
+		found = append(found, pair{oldKey: oldKey, envVar: envVar, value: val})
+	}
+	if len(found) == 0 {
+		return 0
+	}
+
+	// Build drop-in content (one Environment line per entry).
+	content := "[Service]\n"
+	for _, p := range found {
+		content += fmt.Sprintf("Environment=\"%s=%s\"\n", p.envVar, p.value)
+	}
+
+	dest := r.dropInPath
+
+	// Ensure parent directory exists.
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create dir %s: %v\n", m.Name, filepath.Dir(dest), err)
+		return 0
+	}
+
+	// Write atomically via temp file + rename.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "drop-in-*.conf.tmp")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create temp: %v\n", m.Name, err)
+		return 0
+	}
+	tmpName := tmp.Name()
+
+	if _, err := fmt.Fprint(tmp, content); err != nil {
+		tmp.Close()        //nolint:errcheck
+		os.Remove(tmpName) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: write temp: %v\n", m.Name, err)
+		return 0
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: close temp: %v\n", m.Name, err)
+		return 0
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		os.Remove(tmpName) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: chmod temp: %v\n", m.Name, err)
+		return 0
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		os.Remove(tmpName) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: rename to %s: %v\n", m.Name, dest, err)
+		return 0
+	}
+
+	// Success: remove all written keys from the ini.
+	for _, p := range found {
+		r.ini.remove(p.oldKey)
+	}
+	return len(found)
 }
 
 func (r *Runner) runDropEntries(m Migration) int {

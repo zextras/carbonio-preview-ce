@@ -195,7 +195,7 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 
 		// Register V1 using the real migration with a temp drop-in path.
 		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register V1: %v", err)
 		}
 
@@ -484,7 +484,7 @@ func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
 		defer srv.Close()
 
 		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -518,7 +518,7 @@ func TestHasApplicationWork_TokenRequired(t *testing.T) {
 		propsPath := filepath.Join(dir, "config.properties")
 
 		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -543,7 +543,7 @@ func TestHasApplicationWork_NoTokenNeededWhenAbsent(t *testing.T) {
 		propsPath := filepath.Join(dir, "config.properties")
 
 		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
@@ -623,7 +623,7 @@ func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
 		propsPath := filepath.Join(dir, "config.properties")
 
 		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni(dropInPath)); err != nil {
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 

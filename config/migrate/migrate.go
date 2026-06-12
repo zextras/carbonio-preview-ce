@@ -58,6 +58,19 @@ type Migration struct {
 	// and counts each removed entry inside the application j/k summary tally.
 	// Keys listed here do NOT require SETUP_CONSUL_TOKEN.
 	DropEntries []string
+
+	// DropInEnvEntries maps old ini key → systemd Environment variable name.
+	// For each entry present in the ini, the runner writes a systemd drop-in file
+	// atomically (tmp+rename, 0644) to the effective drop-in path
+	// (Paths.DropInPath if non-empty, otherwise DefaultDropInPath).
+	// The entry is removed from the ini on success and counted inside the
+	// networking tally (networking n/m).
+	//
+	// Limitation: all entries share a single drop-in file.  If multiple entries
+	// are present they are written together in one pass; partial failures leave
+	// the drop-in absent and the successful keys still pending in the ini for
+	// retry.
+	DropInEnvEntries map[string]string
 }
 
 var (

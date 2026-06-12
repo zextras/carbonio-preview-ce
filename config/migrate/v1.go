@@ -4,34 +4,25 @@
 
 package migrate
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-)
-
 func init() {
-	if err := Register(V1MigrateFromPythonIni(DefaultDropInPath)); err != nil {
+	if err := Register(V1MigrateFromPythonIni()); err != nil {
 		panic("migrate: register V1: " + err.Error())
 	}
 }
 
 // V1MigrateFromPythonIni returns the CE V1 migration that reads entries from
 // the legacy Python config.ini and writes them into config.properties
-// (networking) and Consul KV (application).
-//
-// dropInPath is the destination for the log-level systemd drop-in file
-// (typically DefaultDropInPath in production; a temp-dir path in tests).
+// (networking), Consul KV (application), and a systemd drop-in file
+// (DropInEnvEntries).
 //
 // Drop-only entries (keys whose value is discarded with no replacement) are
-// handled by a no-op function that logs "dropped" and returns nil so the runner
-// still deletes the old key.
+// listed in DropEntries; the runner deletes the old key and counts it in the
+// application tally.
 //
-// log.level is special: it is NOT a DropEntry. Its value is written atomically
-// to a systemd drop-in file as Environment="PREVIEW_LOG_LEVEL=<value>". The
-// entry is placed in NetworkingEntries with a custom func that ignores the
-// properties store and writes the drop-in directly (idempotent: re-running when
-// the key is absent is a no-op because iniStore.get returns false).
+// log.level is handled via DropInEnvEntries: the runner writes a systemd
+// drop-in file atomically to the effective drop-in path (Paths.DropInPath if
+// non-empty, otherwise DefaultDropInPath).  The entry is counted in the
+// networking tally (networking n/9).
 //
 // log.format and log.path remain DropEntries (values discarded, no replacement).
 //
@@ -41,52 +32,11 @@ func init() {
 //
 // Exported so that the ADVANCED module can call it directly (or re-use its
 // entry maps to build V1+V2).
-func V1MigrateFromPythonIni(dropInPath string) Migration {
+func V1MigrateFromPythonIni() Migration {
 	rename := func(newKey string) EntryFunc {
 		return func(_, oldValue string, dest ConfigStore) error {
 			return dest.Set(newKey, oldValue)
 		}
-	}
-
-	// writeLogLevelDropIn is the entry function for log.level.
-	// It ignores the dest ConfigStore entirely and writes a systemd drop-in file
-	// atomically (tmp+rename, 0644) so the log level survives package upgrades.
-	// The drop-in is picked up by systemctl daemon-reload (triggered by the
-	// pending-setups script after --setup returns).
-	writeLogLevelDropIn := func(_, oldValue string, _ ConfigStore) error {
-		content := fmt.Sprintf("[Service]\nEnvironment=\"PREVIEW_LOG_LEVEL=%s\"\n", oldValue)
-
-		// Ensure parent directory exists.
-		if err := os.MkdirAll(filepath.Dir(dropInPath), 0o755); err != nil {
-			return fmt.Errorf("migrate: create drop-in dir for %s: %w", dropInPath, err)
-		}
-
-		// Write atomically via temp file + rename.
-		dir := filepath.Dir(dropInPath)
-		tmp, err := os.CreateTemp(dir, "log-level-*.conf.tmp")
-		if err != nil {
-			return fmt.Errorf("migrate: create temp for drop-in %s: %w", dropInPath, err)
-		}
-		tmpName := tmp.Name()
-
-		if _, err := fmt.Fprint(tmp, content); err != nil {
-			tmp.Close()        //nolint:errcheck
-			os.Remove(tmpName) //nolint:errcheck
-			return fmt.Errorf("migrate: write temp drop-in %s: %w", tmpName, err)
-		}
-		if err := tmp.Close(); err != nil {
-			os.Remove(tmpName) //nolint:errcheck
-			return fmt.Errorf("migrate: close temp drop-in %s: %w", tmpName, err)
-		}
-		if err := os.Chmod(tmpName, 0o644); err != nil {
-			os.Remove(tmpName) //nolint:errcheck
-			return fmt.Errorf("migrate: chmod temp drop-in %s: %w", tmpName, err)
-		}
-		if err := os.Rename(tmpName, dropInPath); err != nil {
-			os.Remove(tmpName) //nolint:errcheck
-			return fmt.Errorf("migrate: rename temp drop-in to %s: %w", dropInPath, err)
-		}
-		return nil
 	}
 
 	return Migration{
@@ -94,9 +44,6 @@ func V1MigrateFromPythonIni(dropInPath string) Migration {
 		Name:    "V1__MigrateFromPythonIni",
 
 		// ── Networking entries (INI section.key → config.properties key) ──────────
-		// log.level is placed here because: its entry func ignores the properties
-		// store and writes a systemd drop-in instead; the runner counts it in the
-		// networking tally, keeping the application tally unaffected.
 		NetworkingEntries: map[string]EntryFunc{
 			"carbonio.preview.default_host":         rename("carbonio.service.host"),
 			"carbonio.preview.default_port":         rename("carbonio.service.port"),
@@ -106,8 +53,14 @@ func V1MigrateFromPythonIni(dropInPath string) Migration {
 			"carbonio.docs-editor.default_host":     rename("carbonio.docs-editor.host"),
 			"carbonio.docs-editor.default_port":     rename("carbonio.docs-editor.port"),
 			"carbonio.docs-editor.default_protocol": rename("carbonio.docs-editor.protocol"),
-			// log.level → systemd drop-in (does NOT write to config.properties)
-			"log.level": writeLogLevelDropIn,
+		},
+
+		// ── Drop-in env entries (INI key → systemd Environment variable name) ────
+		// The runner writes a single drop-in file to the effective Paths.DropInPath
+		// (or DefaultDropInPath) atomically (tmp+rename, 0644, MkdirAll parent).
+		// These entries are counted in the networking tally (networking n/9).
+		DropInEnvEntries: map[string]string{
+			"log.level": "PREVIEW_LOG_LEVEL",
 		},
 
 		// ── Application entries (INI section.key → Consul KV raw path) ───────────
@@ -126,7 +79,7 @@ func V1MigrateFromPythonIni(dropInPath string) Migration {
 
 		// ── Drop-only entries (value discarded, no replacement) ──────────────────
 		// log.format and log.path are dropped (no Go equivalent needed).
-		// log.level is NOT here — it moved to NetworkingEntries (drop-in writer).
+		// log.level is in DropInEnvEntries, not here.
 		DropEntries: []string{
 			"carbonio.preview.name",
 			"carbonio.preview.image_name",
