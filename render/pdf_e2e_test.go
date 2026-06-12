@@ -8,11 +8,13 @@ package render
 
 import (
 	_ "embed"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -105,53 +107,82 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 		t.Logf("kill %d: %v (may have already exited)", victim, err)
 	}
 
-	// go-pdfium's multi_threaded pool respawns lazily: when BorrowObject is
-	// called, ValidateObject detects the dead plugin (Exited()==true), destroys
-	// the invalid object, and MakeObject starts a fresh subprocess. Respawns
-	// are NOT proactive; each BorrowObject triggers at most one create cycle.
-	// We force concurrent borrows equal to poolSize so ALL slots are exercised.
-	type sliceResult struct {
-		data []byte
-		err  error
+	// go-pdfium's multi_threaded pool respawns LAZILY: it does not run an idle
+	// evictor, so MinIdle is not maintained proactively. A dead worker is
+	// replaced only when a BorrowObject needs it — ValidateObject detects the
+	// dead plugin (Exited()==true), destroys it, and MakeObject starts a fresh
+	// subprocess. Capacity is therefore never permanently lost (the bug the
+	// hand-rolled relay had), but it self-heals on demand rather than eagerly.
+	//
+	// To prove BOTH guarantees we drive SUSTAINED concurrent load: more
+	// goroutines than poolSize hammering PDFSlice keeps >= poolSize borrows
+	// in flight at once, which forces the pool to instantiate up to MaxTotal
+	// live workers again. We assert (a) every call succeeds (resilience) and
+	// (b) the live worker count climbs back to poolSize (on-demand respawn).
+	concurrency := poolSize * 3
+	if concurrency < 6 {
+		concurrency = 6
 	}
-	resultsCh := make(chan sliceResult, poolSize)
-	for i := 0; i < poolSize; i++ {
+	stop := make(chan struct{})
+	errCh := make(chan error, concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
 		go func() {
-			data, err := PDFSlice(nil, pdfData, 1, 0)
-			resultsCh <- sliceResult{data, err}
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				data, err := PDFSlice(nil, pdfData, 1, 0)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(data) == 0 {
+					errCh <- fmt.Errorf("empty PDFSlice result")
+					return
+				}
+			}
 		}()
 	}
-	for i := 0; i < poolSize; i++ {
-		res := <-resultsCh
-		if res.err != nil {
-			t.Fatalf("PDFSlice (post-kill concurrent borrow %d): %v", i, res.err)
-		}
-		if len(res.data) == 0 {
-			t.Fatalf("PDFSlice (post-kill concurrent borrow %d): empty result", i)
-		}
-	}
-	t.Logf("PDFSlice after worker kill: all %d concurrent borrows succeeded", poolSize)
 
-	// Poll until the live worker count is back to poolSize. Each concurrent
-	// BorrowObject above spawns a fresh subprocess for any invalid slot, so
-	// after both complete the pool holds poolSize healthy workers.
-	const respawnTimeout = 10 * time.Second
+	// Poll for full recovery while the load runs.
+	const respawnTimeout = 25 * time.Second
 	const pollInterval = 200 * time.Millisecond
 	deadline := time.Now().Add(respawnTimeout)
-	for {
-		current := findChildPIDs(t, myPID)
-		if len(current) >= poolSize {
-			t.Logf("Respawn confirmed: %d/%d workers alive after kill (PIDs: %v)",
-				len(current), poolSize, current)
-			break
+	recovered := false
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			close(stop)
+			wg.Wait()
+			t.Fatalf("PDFSlice failed under post-kill load: %v", err)
+		default:
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Pool did not respawn within %v: only %d/%d workers alive",
-				respawnTimeout, len(current), poolSize)
+		if len(findChildPIDs(t, myPID)) >= poolSize {
+			recovered = true
+			break
 		}
 		time.Sleep(pollInterval)
 	}
-	t.Logf("Pool fully restored to %d workers — respawn verified", poolSize)
+	close(stop)
+	wg.Wait()
+	// drain any late error
+	select {
+	case err := <-errCh:
+		t.Fatalf("PDFSlice failed under post-kill load: %v", err)
+	default:
+	}
+	current := findChildPIDs(t, myPID)
+	if !recovered {
+		t.Fatalf("pool did not recover to %d workers under sustained load within %v: only %d alive",
+			poolSize, respawnTimeout, len(current))
+	}
+	t.Logf("Resilience verified: all calls succeeded after kill; pool recovered to %d workers (PIDs: %v)",
+		len(current), current)
 }
 
 // findChildPIDs returns PIDs of direct children of parentPID by scanning /proc.

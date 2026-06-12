@@ -26,6 +26,15 @@ import (
 // document-level errors (HTTP 400).
 var ErrRenderUnavailable = errors.New("PDF rendering temporarily unavailable")
 
+// pdfRasterDPI is the resolution at which PDF pages are rasterized before
+// thumbnailing/encoding. 72 DPI matches the old Python service, which rendered
+// via pypdfium2 with the implicit scale=1 (PDF user units are 1/72 inch, so
+// scale=1 == 72 DPI → e.g. 595×842 px for an A4 page). Keeping this aligned
+// guarantees output dimensions (and therefore file sizes) comparable to Python.
+// (Both stacks wrap the same PDFium C library, so at equal DPI + JPEG quality
+// the encoded results are near-identical.)
+const pdfRasterDPI = 72
+
 // globalPdfPool is the PDFium instance pool. Initialised by PDFInit or
 // PDFInitSingleThreadedForTests. Must not be used before initialisation.
 var globalPdfPool pdfium.Pool
@@ -67,7 +76,7 @@ func PDFInitSingleThreadedForTests() {
 // image and returns the encoded bytes.
 //
 // The pipeline:
-//  1. PDFium renders the page at 150 DPI → *image.RGBA (no disk I/O).
+//  1. PDFium renders the page at pdfRasterDPI (72, Python parity) → *image.RGBA (no disk I/O).
 //  2. The raw RGBA pixels are fed directly into libvips via
 //     vips_image_new_from_memory — no PNG encode/decode round-trip.
 //  3. libvips applies COVER resize + center-crop and encodes the result.
@@ -123,7 +132,7 @@ func PDFRasterize(
 				Index:    page,
 			},
 		},
-		DPI: 150, // ~1240×1754 px for an A4 page
+		DPI: pdfRasterDPI, // matches Python (pypdfium2 scale=1 → 72 DPI); ~595×842 px for A4
 	})
 	if err != nil {
 		return nil, fmt.Errorf("pdfium RenderPageInDPI page %d: %w", page, err)
