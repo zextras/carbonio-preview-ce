@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -66,7 +65,7 @@ func (s *Server) runPDFWorker() {
 	render.PDFWorkerInit()
 	defer render.PDFWorkerClose()
 
-	sem := render.BuildSemaphore(runtime.NumCPU())
+	sem := render.BuildSemaphore(s.cfg.ServiceWorkers)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(internalPDFRenderPath, func(w http.ResponseWriter, r *http.Request) {
