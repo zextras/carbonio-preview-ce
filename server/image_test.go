@@ -1,8 +1,13 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime/multipart"
@@ -99,6 +104,58 @@ func doRequest(mux *http.ServeMux, method, path string) *httptest.ResponseRecord
 	return rec
 }
 
+// assertValidationError verifies 422 + application/json + array-detail body
+// containing the expected param name.
+func assertValidationError(t *testing.T, rec *httptest.ResponseRecorder, paramName string) {
+	t.Helper()
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status: got %d, want 422", rec.Code)
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type: got %q, want application/json", ct)
+	}
+	var body validationErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("JSON unmarshal: %v (body: %q)", err, rec.Body.String())
+	}
+	if len(body.Detail) == 0 {
+		t.Fatal("expected non-empty detail array")
+	}
+	if paramName != "" {
+		found := false
+		for _, d := range body.Detail {
+			if len(d.Loc) >= 2 && d.Loc[1] == paramName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected param %q in detail loc, got %v", paramName, body.Detail)
+		}
+	}
+}
+
+// assertStringDetail verifies the expected HTTP status + application/json +
+// {"detail":"<msg>"} body shape.
+func assertStringDetail(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantSubstr string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Errorf("status: got %d, want %d (body: %q)", rec.Code, wantStatus, rec.Body.String())
+	}
+	ct := rec.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type: got %q, want application/json", ct)
+	}
+	var body stringDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("JSON unmarshal: %v (body: %q)", err, rec.Body.String())
+	}
+	if wantSubstr != "" && !strings.Contains(body.Detail, wantSubstr) {
+		t.Errorf("detail %q does not contain %q", body.Detail, wantSubstr)
+	}
+}
+
 // TestImageGetPreview_Success verifies that a successful GET preview returns
 // 200 with the correct Content-Type.
 func TestImageGetPreview_Success(t *testing.T) {
@@ -147,7 +204,7 @@ func TestImageGetPreview_OutputFormatPNG(t *testing.T) {
 }
 
 // TestImageGetPreview_Storage404 verifies that storage ErrNotFound → 404
-// with the exact ITEM_NOT_FOUND message body.
+// with JSON body {"detail":"<ItemNotFound>"}.
 func TestImageGetPreview_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 	restore := stubImageThumbnail("", "", "", "", nil, nil)
@@ -160,17 +217,12 @@ func TestImageGetPreview_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.ItemNotFound) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.ItemNotFound)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestImageGetPreview_StorageUnavailable verifies that storage ErrUnavailable
-// → 502 with the STORAGE_UNAVAILABLE_STRING body.
-func TestImageGetPreview_StorageUnavailable(t *testing.T) {
+// TestImageGetPreview_StorageError verifies that non-404 storage errors → 422
+// with {"detail":"<GenericErrorStorage>"}.
+func TestImageGetPreview_StorageError(t *testing.T) {
 	store := &mockStore{err: storage.ErrUnavailable}
 	restore := stubImageThumbnail("", "", "", "", nil, nil)
 	defer restore()
@@ -182,16 +234,11 @@ func TestImageGetPreview_StorageUnavailable(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.StorageUnavailable) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.StorageUnavailable)
-	}
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
 // TestImageGetPreview_InvalidArea verifies that a malformed area segment
-// returns 400 with the HEIGHT_OR_WIDTH_NOT_INSERTED error.
+// returns 422 (validation error) with the area param in loc.
 func TestImageGetPreview_InvalidArea(t *testing.T) {
 	tests := []struct {
 		name string
@@ -201,7 +248,6 @@ func TestImageGetPreview_InvalidArea(t *testing.T) {
 		{"alpha", "axb"},
 		{"only-width", "100x"},
 		{"negative-syntax", "-1x100"},
-		// x-first (width is missing, height only style)
 		{"x-only", "x200"},
 	}
 
@@ -215,15 +261,13 @@ func TestImageGetPreview_InvalidArea(t *testing.T) {
 			path := fmt.Sprintf("/preview/image/%s/1/%s/?service_type=files", validUUID, tt.area)
 			rec := doRequest(mux, http.MethodGet, path)
 
-			// Should be 400 (bad area → either INPUT_ERROR or HEIGHT_OR_WIDTH error)
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("area %q: status %d, want 400", tt.area, rec.Code)
-			}
+			assertValidationError(t, rec, "area")
 		})
 	}
 }
 
-// TestImageGetPreview_InvalidUUID verifies that a malformed UUID → 400.
+// TestImageGetPreview_InvalidUUID verifies that a malformed UUID → 422
+// with the "id" param in loc.
 func TestImageGetPreview_InvalidUUID(t *testing.T) {
 	tests := []struct {
 		name string
@@ -244,17 +288,18 @@ func TestImageGetPreview_InvalidUUID(t *testing.T) {
 			path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", tt.id)
 			rec := doRequest(mux, http.MethodGet, path)
 
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("id %q: status %d, want 400", tt.id, rec.Code)
-			}
-			if !strings.Contains(rec.Body.String(), config.Msg.IDNotValid) {
-				t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.IDNotValid)
+			assertValidationError(t, rec, "id")
+			// message text must still match
+			var body validationErrorBody
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if len(body.Detail) > 0 && !strings.Contains(body.Detail[0].Msg, config.Msg.IDNotValid) {
+				t.Errorf("msg %q does not contain %q", body.Detail[0].Msg, config.Msg.IDNotValid)
 			}
 		})
 	}
 }
 
-// TestImageGetPreview_MissingServiceType verifies that missing service_type → 400.
+// TestImageGetPreview_MissingServiceType verifies that missing service_type → 422.
 func TestImageGetPreview_MissingServiceType(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -264,12 +309,10 @@ func TestImageGetPreview_MissingServiceType(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "service_type")
 }
 
-// TestImageGetPreview_InvalidServiceType verifies that an unknown service_type → 400.
+// TestImageGetPreview_InvalidServiceType verifies that an unknown service_type → 422.
 func TestImageGetPreview_InvalidServiceType(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -279,9 +322,7 @@ func TestImageGetPreview_InvalidServiceType(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=unknown", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "service_type")
 }
 
 // TestImageGetThumbnail_Success verifies the happy path for GET thumbnail.
@@ -333,7 +374,7 @@ func TestImageGetThumbnail_ShapeRounded(t *testing.T) {
 	}
 }
 
-// TestImageGetThumbnail_InvalidShape verifies that an unknown shape value → 400.
+// TestImageGetThumbnail_InvalidShape verifies that an unknown shape value → 422.
 func TestImageGetThumbnail_InvalidShape(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -343,9 +384,7 @@ func TestImageGetThumbnail_InvalidShape(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files&shape=hexagonal", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "shape")
 }
 
 // TestImageGetPreview_QualityValues tests all accepted quality values return 200.
@@ -370,7 +409,7 @@ func TestImageGetPreview_QualityValues(t *testing.T) {
 	}
 }
 
-// TestImageGetPreview_InvalidQuality verifies unknown quality → 400.
+// TestImageGetPreview_InvalidQuality verifies unknown quality → 422.
 func TestImageGetPreview_InvalidQuality(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -380,9 +419,7 @@ func TestImageGetPreview_InvalidQuality(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files&quality=extreme", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "quality")
 }
 
 // TestImageGetPreview_CropTrue verifies that crop=true is accepted (200).
@@ -447,7 +484,7 @@ func TestImagePostThumbnail_Success(t *testing.T) {
 }
 
 // TestImagePostPreview_NoFile verifies that POST without a multipart "file" field
-// returns 400 with the FileNotValid error.
+// returns 422 (body param validation) with the FileNotValid message.
 func TestImagePostPreview_NoFile(t *testing.T) {
 	cfg := testCfg()
 	mux := http.NewServeMux()
@@ -458,15 +495,16 @@ func TestImagePostPreview_NoFile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.FileNotValid) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.FileNotValid)
+	// Missing file → 422 (body param), loc = ["body","file"]
+	assertValidationError(t, rec, "file")
+	var body validationErrorBody
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.Detail) > 0 && !strings.Contains(body.Detail[0].Msg, config.Msg.FileNotValid) {
+		t.Errorf("msg %q does not contain %q", body.Detail[0].Msg, config.Msg.FileNotValid)
 	}
 }
 
-// TestImageGetThumbnail_Storage404 verifies 404 pass-through on thumbnail GET.
+// TestImageGetThumbnail_Storage404 verifies 404 JSON body on thumbnail GET.
 func TestImageGetThumbnail_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 
@@ -477,16 +515,11 @@ func TestImageGetThumbnail_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.ItemNotFound) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.ItemNotFound)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestImageGetThumbnail_StorageUnavailable verifies 502 when storage is down.
-func TestImageGetThumbnail_StorageUnavailable(t *testing.T) {
+// TestImageGetThumbnail_StorageError verifies 422 JSON body when storage is down.
+func TestImageGetThumbnail_StorageError(t *testing.T) {
 	store := &mockStore{err: storage.ErrUnavailable}
 
 	cfg := testCfg()
@@ -496,15 +529,11 @@ func TestImageGetThumbnail_StorageUnavailable(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=chats", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.StorageUnavailable) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.StorageUnavailable)
-	}
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
-// TestImageGetPreview_RenderError verifies that a render failure → 500.
+// TestImageGetPreview_RenderError verifies that a render failure → 400
+// with {"detail":"Format not supported."} (FastAPI HTTPException(400) shape).
 func TestImageGetPreview_RenderError(t *testing.T) {
 	store := &mockStore{blob: []byte("img")}
 	restore := stubImageThumbnail("", "", "", "", nil, errors.New("vips exploded"))
@@ -517,12 +546,10 @@ func TestImageGetPreview_RenderError(t *testing.T) {
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("status: got %d, want 500", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
 }
 
-// TestImageGetPreview_InvalidVersion verifies that version=-1 → 400.
+// TestImageGetPreview_InvalidVersion verifies that version=-1 → 422.
 func TestImageGetPreview_InvalidVersion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -540,9 +567,7 @@ func TestImageGetPreview_InvalidVersion(t *testing.T) {
 
 			path := fmt.Sprintf("/preview/image/%s/%s/100x200/?service_type=files", validUUID, tt.version)
 			rec := doRequest(mux, http.MethodGet, path)
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("version=%s: status %d, want 400", tt.version, rec.Code)
-			}
+			assertValidationError(t, rec, "version")
 		})
 	}
 }
@@ -576,6 +601,32 @@ func TestImageMethodNotAllowed(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status: got %d, want 405", rec.Code)
 	}
+}
+
+// TestImageGetPreview_UnmatchedPath verifies that an unrecognised path segment
+// returns 404 with {"detail":"Not Found"}.
+func TestImageGetPreview_UnmatchedPath(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, &mockStore{}, nil)
+
+	// 5-segment GET path has no matching route.
+	path := fmt.Sprintf("/preview/image/%s/1/100x200/extra/junk/", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+// TestImagePostPreview_UnmatchedPath verifies that a POST to a deep path → 404.
+func TestImagePostPreview_UnmatchedPath(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, &mockStore{}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x200/extra/", strings.NewReader(""))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
 }
 
 // ---- helpers ----

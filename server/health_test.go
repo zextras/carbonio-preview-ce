@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -106,20 +110,28 @@ func TestHealthReady_DocsDown(t *testing.T) {
 }
 
 // TestHealthFull_JSONStructure verifies GET /health/ returns 200 with the
-// correct JSON structure: {ready: bool, dependencies: [{name, healthy}, ...]}.
+// exact old-Python JSON shape:
+//
+//	{
+//	  "ready": true,
+//	  "dependencies": [
+//	    {"name":"carbonio-storages","ready":true,"live":true,"type":"OPTIONAL"},
+//	    ...
+//	  ]
+//	}
 func TestHealthFull_JSONStructure(t *testing.T) {
 	// Start fake storage and docs-editor servers.
-	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	storageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer storage.Close()
+	defer storageSrv.Close()
 
 	docs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer docs.Close()
 
-	cfg := healthCfgWithDeps(storage.URL, docs.URL+"/")
+	cfg := healthCfgWithDeps(storageSrv.URL, docs.URL+"/")
 	mux := buildHealthMux(cfg)
 
 	rec := doRequest(mux, http.MethodGet, "/health/")
@@ -133,13 +145,7 @@ func TestHealthFull_JSONStructure(t *testing.T) {
 		t.Errorf("Content-Type: got %q, want application/json", ct)
 	}
 
-	var resp struct {
-		Ready        bool `json:"ready"`
-		Dependencies []struct {
-			Name    string `json:"name"`
-			Healthy bool   `json:"healthy"`
-		} `json:"dependencies"`
-	}
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("JSON unmarshal: %v (body: %q)", err, rec.Body.String())
 	}
@@ -147,23 +153,47 @@ func TestHealthFull_JSONStructure(t *testing.T) {
 		t.Errorf("expected 2 dependencies, got %d", len(resp.Dependencies))
 	}
 
-	names := map[string]bool{}
+	byName := map[string]healthDependency{}
 	for _, dep := range resp.Dependencies {
-		names[dep.Name] = dep.Healthy
+		byName[dep.Name] = dep
 	}
 
-	if !names["carbonio-storages"] {
-		t.Error("carbonio-storages should be healthy")
+	// carbonio-storages
+	storage, ok := byName["carbonio-storages"]
+	if !ok {
+		t.Error("missing dependency 'carbonio-storages'")
+	} else {
+		if !storage.Ready {
+			t.Error("carbonio-storages: ready should be true")
+		}
+		if !storage.Live {
+			t.Error("carbonio-storages: live should be true")
+		}
+		if storage.Type != "OPTIONAL" {
+			t.Errorf("carbonio-storages: type got %q, want OPTIONAL", storage.Type)
+		}
 	}
-	if !names["carbonio-docs-editor"] {
-		t.Error("carbonio-docs-editor should be healthy")
+
+	// carbonio-docs-editor
+	docs2, ok := byName["carbonio-docs-editor"]
+	if !ok {
+		t.Error("missing dependency 'carbonio-docs-editor'")
+	} else {
+		if !docs2.Ready {
+			t.Error("carbonio-docs-editor: ready should be true")
+		}
+		if !docs2.Live {
+			t.Error("carbonio-docs-editor: live should be true")
+		}
+		if docs2.Type != "OPTIONAL" {
+			t.Errorf("carbonio-docs-editor: type got %q, want OPTIONAL", docs2.Type)
+		}
 	}
 }
 
 // TestHealthFull_StorageDown verifies that /health/ marks storage as
-// unhealthy when storage is unreachable.
+// unhealthy (ready=false, live=false) when storage is unreachable.
 func TestHealthFull_StorageDown(t *testing.T) {
-	// Immediately close storage server.
 	storageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	storageSrv.Close()
 
@@ -181,19 +211,19 @@ func TestHealthFull_StorageDown(t *testing.T) {
 		t.Errorf("status: got %d, want 200 (health endpoint always returns 200)", rec.Code)
 	}
 
-	var resp struct {
-		Dependencies []struct {
-			Name    string `json:"name"`
-			Healthy bool   `json:"healthy"`
-		} `json:"dependencies"`
-	}
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("JSON unmarshal: %v", err)
 	}
 
 	for _, dep := range resp.Dependencies {
-		if dep.Name == "carbonio-storages" && dep.Healthy {
-			t.Error("carbonio-storages should be unhealthy when server is down")
+		if dep.Name == "carbonio-storages" {
+			if dep.Ready {
+				t.Error("carbonio-storages should be ready=false when server is down")
+			}
+			if dep.Live {
+				t.Error("carbonio-storages should be live=false when server is down")
+			}
 		}
 	}
 }
@@ -217,8 +247,6 @@ func TestHealthFull_AlwaysHTTP200(t *testing.T) {
 // TestHealthFull_ExactJSONDependencyNames verifies the JSON response uses the
 // exact dependency names expected by monitoring agents.
 func TestHealthFull_ExactJSONDependencyNames(t *testing.T) {
-	// Use non-reachable addresses for both deps so we test the response
-	// structure even in failure mode.
 	c := testCfg()
 	c.StorageFullAddress = "http://127.0.0.1:1"
 	c.DocumentConversionFullServiceAddress = "http://127.0.0.1:1/"
@@ -226,12 +254,7 @@ func TestHealthFull_ExactJSONDependencyNames(t *testing.T) {
 
 	rec := doRequest(mux, http.MethodGet, "/health/")
 
-	var resp struct {
-		Dependencies []struct {
-			Name    string `json:"name"`
-			Healthy bool   `json:"healthy"`
-		} `json:"dependencies"`
-	}
+	var resp healthResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("JSON unmarshal: %v", err)
 	}
@@ -239,6 +262,9 @@ func TestHealthFull_ExactJSONDependencyNames(t *testing.T) {
 	found := map[string]bool{}
 	for _, dep := range resp.Dependencies {
 		found[dep.Name] = true
+		if dep.Type != "OPTIONAL" {
+			t.Errorf("dep %q: type got %q, want OPTIONAL", dep.Name, dep.Type)
+		}
 	}
 
 	if !found["carbonio-storages"] {
@@ -249,7 +275,7 @@ func TestHealthFull_ExactJSONDependencyNames(t *testing.T) {
 	}
 }
 
-// TestHealthFull_SubPathReturns404 verifies that /health/unknown/ returns 404
+// TestHealthFull_SubPathReturns404 verifies that /health/unknown/ returns 404 JSON
 // (the handler only responds to exactly /health/).
 func TestHealthFull_SubPathReturns404(t *testing.T) {
 	c := testCfg()
@@ -259,5 +285,28 @@ func TestHealthFull_SubPathReturns404(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", rec.Code)
+	}
+	// Body must be JSON {"detail":"Not Found"}
+	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+// TestHealthFull_DependencyTypeField verifies that "type":"OPTIONAL" is present
+// in all dependency objects (new field vs old schema).
+func TestHealthFull_DependencyTypeField(t *testing.T) {
+	c := testCfg()
+	c.StorageFullAddress = "http://127.0.0.1:1"
+	c.DocumentConversionFullServiceAddress = "http://127.0.0.1:1/"
+	mux := buildHealthMux(c)
+
+	rec := doRequest(mux, http.MethodGet, "/health/")
+
+	var resp healthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("JSON unmarshal: %v", err)
+	}
+	for _, dep := range resp.Dependencies {
+		if dep.Type != "OPTIONAL" {
+			t.Errorf("dep %q: type=%q, want OPTIONAL", dep.Name, dep.Type)
+		}
 	}
 }

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -60,17 +64,20 @@ func healthReady(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests) // 429
-	if _, err := fmt.Fprint(w, config.Msg.DocsEditorUnavailable); err != nil {
+	if _, err := fmt.Fprintf(w, `{"detail":%q}`, config.Msg.DocsEditorUnavailable); err != nil {
 		log.Printf("healthReady write: %v", err)
 	}
 }
 
 // healthDependency is the JSON object for a single dependency in /health/.
+// Shape mirrors the old FastAPI implementation (health.py:50-66).
 type healthDependency struct {
-	Name    string `json:"name"`
-	Healthy bool   `json:"healthy"`
+	Name  string `json:"name"`
+	Ready bool   `json:"ready"`
+	Live  bool   `json:"live"`
+	Type  string `json:"type"`
 }
 
 // healthResponse is the JSON body for GET /health/.
@@ -89,7 +96,7 @@ func healthFull(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 
 	// Only respond to the exact /health/ path, not sub-paths.
 	if r.URL.Path != "/"+cfg.ServiceHealthName+"/" {
-		http.NotFound(w, r)
+		writeJSON(w, http.StatusNotFound, stringDetailBody{Detail: "Not Found"})
 		return
 	}
 
@@ -102,15 +109,20 @@ func healthFull(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 	resp := healthResponse{
 		Ready: true,
 		Dependencies: []healthDependency{
-			{Name: "carbonio-storages", Healthy: storageUp},
-			{Name: "carbonio-docs-editor", Healthy: docsUp},
+			{Name: "carbonio-storages", Ready: storageUp, Live: storageUp, Type: "OPTIONAL"},
+			{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"},
 		},
 	}
 
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("healthFull encode: %v", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("healthFull encode: %v", err)
+	if _, werr := w.Write(data); werr != nil {
+		log.Printf("healthFull write: %v", werr)
 	}
 }
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -68,9 +72,9 @@ func routePDF(
 				pdfGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem, relayClient, pdfInternalAddr)
 				return
 			}
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		default:
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		}
 
 	case http.MethodPost:
@@ -84,9 +88,9 @@ func routePDF(
 				pdfPostThumbnail(w, r, parts[0], cfg, sem, relayClient, pdfInternalAddr)
 				return
 			}
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		default:
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		}
 
 	default:
@@ -104,32 +108,32 @@ func pdfGetPreview(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errDetail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
@@ -160,47 +164,47 @@ func pdfGetThumbnail(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
@@ -215,13 +219,13 @@ func pdfPostPreview(
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errDetail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
@@ -251,28 +255,28 @@ func pdfPostThumbnail(
 ) {
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
@@ -338,7 +342,7 @@ func relayPDFRender(
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, relayURL, bytes.NewReader(data))
 	if err != nil {
 		log.Printf("relayPDFRender: build request: %v", err)
-		errInternal(w, "relay failed")
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 	req.Header.Set("Content-Type", "application/pdf")
@@ -346,7 +350,7 @@ func relayPDFRender(
 	resp, err := relayClient.Do(req)
 	if err != nil {
 		log.Printf("relayPDFRender: relay request failed: %v", err)
-		errInternal(w, "relay failed")
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 	defer resp.Body.Close()

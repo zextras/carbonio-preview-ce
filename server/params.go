@@ -1,9 +1,14 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package server implements the HTTP server for carbonio-preview-ce.
 // It registers all four router groups (image, pdf, document, health) and
 // handles hybrid process management (main vs PDF worker roles).
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,8 +25,102 @@ import (
 // separated by "x", e.g. "100x200" or "0x0".
 var areaRegex = regexp.MustCompile(`^[0-9]+x[0-9]+$`)
 
+// ---------------------------------------------------------------------------
+// JSON error shapes (FastAPI-compatible)
+// ---------------------------------------------------------------------------
+
+// validationDetail is a single entry in the FastAPI validation error array.
+type validationDetail struct {
+	Loc  []string `json:"loc"`
+	Msg  string   `json:"msg"`
+	Type string   `json:"type"`
+}
+
+// validationErrorBody is the FastAPI HTTPValidationError body:
+//
+//	{"detail":[{"loc":["query","<param>"],"msg":"...","type":"value_error"}]}
+type validationErrorBody struct {
+	Detail []validationDetail `json:"detail"`
+}
+
+// stringDetailBody is the FastAPI HTTPException body used for non-validation
+// errors (storage, page-combination, render failures, not-found …):
+//
+//	{"detail":"<message>"}
+type stringDetailBody struct {
+	Detail string `json:"detail"`
+}
+
+// writeJSON serialises v to w with Content-Type application/json and the given
+// status code.  If encoding fails it falls back to a plain-text 500.
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("writeJSON marshal: %v", err)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "internal server error") //nolint:errcheck
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if _, werr := w.Write(data); werr != nil {
+		log.Printf("writeJSON write: %v", werr)
+	}
+}
+
+// errValidation writes 422 + FastAPI array-detail JSON for a single param.
+//
+//	loc[0] = "path" | "query" | "body"
+//	loc[1] = param name
+func errValidation(w http.ResponseWriter, locKind, paramName, msg string) {
+	body := validationErrorBody{
+		Detail: []validationDetail{
+			{
+				Loc:  []string{locKind, paramName},
+				Msg:  msg,
+				Type: "value_error",
+			},
+		},
+	}
+	writeJSON(w, http.StatusUnprocessableEntity, body)
+}
+
+// errDetail writes 422 + FastAPI string-detail JSON.
+// Used for page-combination failures and storage failures.
+func errDetail(w http.ResponseWriter, statusCode int, msg string) {
+	writeJSON(w, statusCode, stringDetailBody{Detail: msg})
+}
+
+// errNotFound writes 404 + {"detail":"<msg>"}.
+func errNotFound(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusNotFound, stringDetailBody{Detail: msg})
+}
+
+// errBadRequest writes 400 + {"detail":"<msg>"}.
+// Used for render failures (FastAPI returns 400 with HTTPException).
+func errBadRequest(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusBadRequest, stringDetailBody{Detail: msg})
+}
+
+// contentTypeForFormat returns the Content-Type for the given image format string.
+func contentTypeForFormat(fmt string) string {
+	switch fmt {
+	case "png":
+		return "image/png"
+	case "gif":
+		return "image/gif"
+	default:
+		return "image/jpeg"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Parameter parsers
+// ---------------------------------------------------------------------------
+
 // parseArea parses the area path segment (e.g. "100x200") into width and height.
-// Returns 400 + error message on invalid format.
+// Returns a validation error (422) on invalid format.
 func parseArea(area string) (width, height int, err error) {
 	if !areaRegex.MatchString(area) {
 		return 0, 0, fmt.Errorf("%s", config.Msg.HeightOrWidthNotInserted)
@@ -195,52 +294,4 @@ func parseLangTag(r *http.Request) string {
 // CE's DirectClient ignores it; Advanced's PowerStore uses it for routing.
 func ownerID(r *http.Request) string {
 	return r.Header.Get("fileownerid")
-}
-
-// errBadRequest writes a 400 response with the given message body.
-func errBadRequest(w http.ResponseWriter, msg string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusBadRequest)
-	if _, err := fmt.Fprint(w, msg); err != nil {
-		log.Printf("errBadRequest write: %v", err)
-	}
-}
-
-// errNotFound writes a 404 response with the item-not-found message.
-func errNotFound(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusNotFound)
-	if _, err := fmt.Fprint(w, config.Msg.ItemNotFound); err != nil {
-		log.Printf("errNotFound write: %v", err)
-	}
-}
-
-// errStorageUnavailable writes a 502 response with the storage-unavailable message.
-func errStorageUnavailable(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusBadGateway)
-	if _, err := fmt.Fprint(w, config.Msg.StorageUnavailable); err != nil {
-		log.Printf("errStorageUnavailable write: %v", err)
-	}
-}
-
-// errInternal writes a 500 response with a brief message.
-func errInternal(w http.ResponseWriter, msg string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusInternalServerError)
-	if _, err := fmt.Fprint(w, msg); err != nil {
-		log.Printf("errInternal write: %v", err)
-	}
-}
-
-// contentTypeForFormat returns the Content-Type for the given image format string.
-func contentTypeForFormat(fmt string) string {
-	switch fmt {
-	case "png":
-		return "image/png"
-	case "gif":
-		return "image/gif"
-	default:
-		return "image/jpeg"
-	}
 }

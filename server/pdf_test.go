@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -63,7 +67,7 @@ func TestPDFGetPreview_Success(t *testing.T) {
 	}
 }
 
-// TestPDFGetPreview_Storage404 verifies 404 pass-through.
+// TestPDFGetPreview_Storage404 verifies 404 JSON body.
 func TestPDFGetPreview_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 
@@ -73,16 +77,11 @@ func TestPDFGetPreview_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.ItemNotFound) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.ItemNotFound)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestPDFGetPreview_StorageUnavailable verifies 502 when storage is down.
-func TestPDFGetPreview_StorageUnavailable(t *testing.T) {
+// TestPDFGetPreview_StorageError verifies non-404 storage error → 422 JSON.
+func TestPDFGetPreview_StorageError(t *testing.T) {
 	store := &mockStore{err: storage.ErrUnavailable}
 
 	cfg := testCfg()
@@ -91,15 +90,10 @@ func TestPDFGetPreview_StorageUnavailable(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.StorageUnavailable) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.StorageUnavailable)
-	}
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
-// TestPDFGetPreview_InvalidUUID verifies that a bad UUID returns 400.
+// TestPDFGetPreview_InvalidUUID verifies that a bad UUID returns 422.
 func TestPDFGetPreview_InvalidUUID(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -108,9 +102,7 @@ func TestPDFGetPreview_InvalidUUID(t *testing.T) {
 	path := "/preview/pdf/not-a-uuid/1/?service_type=files"
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "id")
 }
 
 // TestPDFGetPreview_PageRange verifies that first_page and last_page are
@@ -131,8 +123,8 @@ func TestPDFGetPreview_PageRange(t *testing.T) {
 	}
 }
 
-// TestPDFGetPreview_InvalidPageRange verifies first_page > last_page → 400
-// with the NumberOfPagesNotValid message.
+// TestPDFGetPreview_InvalidPageRange verifies first_page > last_page → 422
+// with string-detail body containing NumberOfPagesNotValid.
 func TestPDFGetPreview_InvalidPageRange(t *testing.T) {
 	store := &mockStore{blob: []byte(fakePDFBytes)}
 	cfg := testCfg()
@@ -141,15 +133,11 @@ func TestPDFGetPreview_InvalidPageRange(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files&first_page=5&last_page=2", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.NumberOfPagesNotValid) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.NumberOfPagesNotValid)
-	}
+	// pages validation → 422 + string-detail (not array-detail)
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.NumberOfPagesNotValid)
 }
 
-// TestPDFGetPreview_FirstPageZero verifies that first_page=0 → 400 (must be >= 1).
+// TestPDFGetPreview_FirstPageZero verifies that first_page=0 → 422 (must be >= 1).
 func TestPDFGetPreview_FirstPageZero(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -158,9 +146,7 @@ func TestPDFGetPreview_FirstPageZero(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files&first_page=0", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.NumberOfPagesNotValid)
 }
 
 // TestPDFGetPreview_LastPageZeroMeansAll verifies last_page=0 is accepted
@@ -202,7 +188,7 @@ func TestPDFGetThumbnail_Success(t *testing.T) {
 	}
 }
 
-// TestPDFGetThumbnail_Storage404 verifies 404 pass-through on thumbnail.
+// TestPDFGetThumbnail_Storage404 verifies 404 JSON body on thumbnail.
 func TestPDFGetThumbnail_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 
@@ -212,12 +198,10 @@ func TestPDFGetThumbnail_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestPDFGetThumbnail_InvalidArea verifies bad area → 400.
+// TestPDFGetThumbnail_InvalidArea verifies bad area → 422 with loc["path","area"].
 func TestPDFGetThumbnail_InvalidArea(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -226,9 +210,7 @@ func TestPDFGetThumbnail_InvalidArea(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/badarea/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "area")
 }
 
 // TestPDFPostPreview_Success verifies POST / returns 200 + application/pdf.
@@ -253,7 +235,8 @@ func TestPDFPostPreview_Success(t *testing.T) {
 	}
 }
 
-// TestPDFPostPreview_NoFile verifies that POST without a file field → 400.
+// TestPDFPostPreview_NoFile verifies that POST without a file field → 422
+// (body param validation).
 func TestPDFPostPreview_NoFile(t *testing.T) {
 	cfg := testCfg()
 	mux := buildPDFMux(cfg, nil)
@@ -263,12 +246,7 @@ func TestPDFPostPreview_NoFile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.FileNotValid) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.FileNotValid)
-	}
+	assertValidationError(t, rec, "file")
 }
 
 // TestPDFPostThumbnail_Success verifies POST /{area}/thumbnail/ returns 200.
@@ -290,7 +268,7 @@ func TestPDFPostThumbnail_Success(t *testing.T) {
 	}
 }
 
-// TestPDFGetPreview_MissingServiceType verifies missing service_type → 400.
+// TestPDFGetPreview_MissingServiceType verifies missing service_type → 422.
 func TestPDFGetPreview_MissingServiceType(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -299,9 +277,7 @@ func TestPDFGetPreview_MissingServiceType(t *testing.T) {
 	path := fmt.Sprintf("/preview/pdf/%s/1/", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "service_type")
 }
 
 // TestPDFGetPreview_RelayPath verifies that when a relayClient and
@@ -335,4 +311,16 @@ func TestPDFGetPreview_RelayPath(t *testing.T) {
 	if rec.Body.String() != "worker-jpeg" {
 		t.Errorf("body: got %q, want worker-jpeg", rec.Body.String())
 	}
+}
+
+// TestPDFGetPreview_UnmatchedPath verifies unrecognised paths → 404 JSON.
+func TestPDFGetPreview_UnmatchedPath(t *testing.T) {
+	store := &mockStore{}
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/extra/", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
 }

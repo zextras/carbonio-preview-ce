@@ -254,6 +254,7 @@ func (s *Server) buildMux(
 	registerPDFRoutes(mux, s.cfg, s.store, sem, relayClient, pdfInternalAddr)
 	registerDocumentRoutes(mux, s.cfg, s.store, sem, relayClient, pdfInternalAddr)
 	registerHealthRoutes(mux, s.cfg)
+	registerDocRoutes(mux)
 	return mux
 }
 
@@ -375,9 +376,4 @@ func readBody(r *http.Request) ([]byte, error) {
 		}
 	}
 	return data, nil
-}
-
-// formatInt formats an integer to its decimal string representation.
-func formatInt(n int) string {
-	return strconv.Itoa(n)
 }

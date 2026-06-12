@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -62,7 +66,6 @@ func docThumbnailDisabledCfg() *config.Config {
 
 // TestDocGetPreview_DisabledByFlag verifies that GET /{id}/{version}/ returns
 // 400 with DOCUMENT_PREVIEW_NOT_ENABLED_ERROR when the flag is false.
-// This is the API identity gate (§5.1 of the spec).
 func TestDocGetPreview_DisabledByFlag(t *testing.T) {
 	store := &mockStore{}
 	cfg := docPreviewDisabledCfg()
@@ -71,12 +74,7 @@ func TestDocGetPreview_DisabledByFlag(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.DocumentPreviewDisabled) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.DocumentPreviewDisabled)
-	}
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.DocumentPreviewDisabled)
 }
 
 // TestDocPostPreview_DisabledByFlag verifies that POST / returns 400 when
@@ -91,12 +89,7 @@ func TestDocPostPreview_DisabledByFlag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.DocumentPreviewDisabled) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.DocumentPreviewDisabled)
-	}
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.DocumentPreviewDisabled)
 }
 
 // TestDocGetThumbnail_DisabledByFlag verifies that GET /{id}/{version}/{area}/thumbnail/
@@ -109,12 +102,7 @@ func TestDocGetThumbnail_DisabledByFlag(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.DocumentThumbnailDisabled) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.DocumentThumbnailDisabled)
-	}
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.DocumentThumbnailDisabled)
 }
 
 // TestDocPostThumbnail_DisabledByFlag verifies that POST /{area}/thumbnail/
@@ -129,12 +117,7 @@ func TestDocPostThumbnail_DisabledByFlag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.DocumentThumbnailDisabled) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.DocumentThumbnailDisabled)
-	}
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.DocumentThumbnailDisabled)
 }
 
 // TestDocGetPreview_BothDisabled verifies both disabled → 400 on each endpoint.
@@ -163,12 +146,7 @@ func TestDocGetPreview_BothDisabled(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := doRequest(mux, http.MethodGet, tt.path)
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("status: got %d, want 400", rec.Code)
-			}
-			if !strings.Contains(rec.Body.String(), tt.want) {
-				t.Errorf("body %q does not contain %q", rec.Body.String(), tt.want)
-			}
+			assertStringDetail(t, rec, http.StatusBadRequest, tt.want)
 		})
 	}
 }
@@ -196,7 +174,7 @@ func TestDocGetPreview_HappyPath(t *testing.T) {
 	}
 }
 
-// TestDocGetPreview_Storage404 verifies that storage ErrNotFound → 404.
+// TestDocGetPreview_Storage404 verifies that storage ErrNotFound → 404 JSON.
 func TestDocGetPreview_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 	cfg := testCfg()
@@ -205,13 +183,11 @@ func TestDocGetPreview_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestDocGetPreview_StorageUnavailable verifies that storage ErrUnavailable → 502.
-func TestDocGetPreview_StorageUnavailable(t *testing.T) {
+// TestDocGetPreview_StorageError verifies that non-404 storage error → 422 JSON.
+func TestDocGetPreview_StorageError(t *testing.T) {
 	store := &mockStore{err: storage.ErrUnavailable}
 	cfg := testCfg()
 	mux := buildDocMux(cfg, store)
@@ -219,12 +195,10 @@ func TestDocGetPreview_StorageUnavailable(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
-// TestDocGetPreview_CollaboraFailure verifies that a Collabora conversion error → 502.
+// TestDocGetPreview_CollaboraFailure verifies that a Collabora conversion error → 502 JSON.
 func TestDocGetPreview_CollaboraFailure(t *testing.T) {
 	store := &mockStore{blob: []byte("docx-bytes")}
 	restoreCollab := stubCollaboraConvert(nil, fmt.Errorf("collabora unavailable"))
@@ -236,12 +210,10 @@ func TestDocGetPreview_CollaboraFailure(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status: got %d, want 502", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusBadGateway, config.Msg.StorageUnavailable)
 }
 
-// TestDocGetPreview_InvalidUUID verifies bad UUID → 400.
+// TestDocGetPreview_InvalidUUID verifies bad UUID → 422 validation.
 func TestDocGetPreview_InvalidUUID(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -250,9 +222,7 @@ func TestDocGetPreview_InvalidUUID(t *testing.T) {
 	path := "/preview/document/not-a-uuid/1/?service_type=files"
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "id")
 }
 
 // TestDocGetPreview_LangTag verifies that lang_tag is accepted and the
@@ -315,7 +285,7 @@ func TestDocPostPreview_HappyPath(t *testing.T) {
 	}
 }
 
-// TestDocPostPreview_NoFile verifies POST without a file field → 400.
+// TestDocPostPreview_NoFile verifies POST without a file field → 422 (body param).
 func TestDocPostPreview_NoFile(t *testing.T) {
 	cfg := testCfg()
 	mux := buildDocMux(cfg, nil)
@@ -325,9 +295,7 @@ func TestDocPostPreview_NoFile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "file")
 }
 
 // TestDocGetThumbnail_HappyPath verifies GET /{id}/{version}/{area}/thumbnail/
@@ -353,7 +321,7 @@ func TestDocGetThumbnail_HappyPath(t *testing.T) {
 	}
 }
 
-// TestDocGetThumbnail_Storage404 verifies 404 pass-through.
+// TestDocGetThumbnail_Storage404 verifies 404 JSON body.
 func TestDocGetThumbnail_Storage404(t *testing.T) {
 	store := &mockStore{err: storage.ErrNotFound}
 	cfg := testCfg()
@@ -362,12 +330,10 @@ func TestDocGetThumbnail_Storage404(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
-	}
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
-// TestDocGetThumbnail_InvalidArea verifies bad area → 400.
+// TestDocGetThumbnail_InvalidArea verifies bad area → 422.
 func TestDocGetThumbnail_InvalidArea(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
@@ -376,9 +342,7 @@ func TestDocGetThumbnail_InvalidArea(t *testing.T) {
 	path := fmt.Sprintf("/preview/document/%s/1/badarea/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", rec.Code)
-	}
+	assertValidationError(t, rec, "area")
 }
 
 // TestDocGetPreview_PageRangeValidation tests page range edge cases for document endpoints.
@@ -390,8 +354,9 @@ func TestDocGetPreview_PageRangeValidation(t *testing.T) {
 	}{
 		{"valid first=1 last=0", "first_page=1&last_page=0", http.StatusOK},
 		{"valid first=2 last=5", "first_page=2&last_page=5", http.StatusOK},
-		{"invalid first=0", "first_page=0", http.StatusBadRequest},
-		{"invalid first>last", "first_page=5&last_page=3", http.StatusBadRequest},
+		// page errors → 422 string-detail
+		{"invalid first=0", "first_page=0", http.StatusUnprocessableEntity},
+		{"invalid first>last", "first_page=5&last_page=3", http.StatusUnprocessableEntity},
 	}
 
 	for _, tt := range tests {
@@ -408,7 +373,7 @@ func TestDocGetPreview_PageRangeValidation(t *testing.T) {
 			path := fmt.Sprintf("/preview/document/%s/1/?service_type=files&%s", validUUID, tt.query)
 			rec := doRequest(mux, http.MethodGet, path)
 			if rec.Code != tt.wantStatus {
-				t.Errorf("query=%q: status %d, want %d", tt.query, rec.Code, tt.wantStatus)
+				t.Errorf("query=%q: status %d, want %d (body: %q)", tt.query, rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
 	}
@@ -447,4 +412,16 @@ func TestDocPostThumbnail_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status: got %d, want 200", rec.Code)
 	}
+}
+
+// TestDocGetPreview_UnmatchedPath verifies that unrecognised paths → 404 JSON.
+func TestDocGetPreview_UnmatchedPath(t *testing.T) {
+	cfg := testCfg()
+	store := &mockStore{}
+	mux := buildDocMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/document/%s/1/extra/path/", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
 }

@@ -1,0 +1,1477 @@
+{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "preview",
+    "description": "\nPreview service. \ud83d\ude80 \n\nYou can preview the following type of files:\n\n* **images(png/jpeg/gif/svg)**\n* **pdf**\n* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**\n\nYou will be able to:\n\n* **Preview images**.\n* **Generate smart thumbnails**.\n\nThe main difference between thumbnail and preview\n functionality is that preview tends to be more faithful\nwhile thumbnail tends to elaborate on it, cropping\n it by default and rounding the image if asked.\nPreview should always output the file in its original format,\n while thumbnail will convert it to an image.\nThere is no difference in quality between png and jpeg,\n the difference in quality can be achieved only\nby asking for a jpeg format and changing the quality parameter.\n Asking for a GIF output can only be done when the input file is a GIF, otherwise it will raise and error.\n",
+    "version": "latest"
+  },
+  "paths": {
+    "/preview/image/{id}/{version}/{area}/thumbnail/": {
+      "get": {
+        "tags": [
+          "image"
+        ],
+        "summary": "Get Thumbnail",
+        "description": "Creates and returns a thumbnail of the image fetched by id and version\nwith the given size, quality, format and shape.\nIt will automatically crop the picture.\n- **id**: UUID of the image\n- **version**: version of the image\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\n- **service_type**: Service that owns the resource\n (service that first uploaded the data to storage)\n",
+        "operationId": "get_thumbnail_preview_image__id___version___area__thumbnail__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/preview/image/{area}/thumbnail/": {
+      "post": {
+        "tags": [
+          "image"
+        ],
+        "summary": "Post Thumbnail",
+        "description": "Creates and returns a thumbnail of the given image\nwith the given size, quality, format and shape.\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\nThis option will lose information, leaving it False will scale and\nhave borders to fill the requested size.\n- **file**: file uploaded with FormData.\n",
+        "operationId": "post_thumbnail_preview_image__area__thumbnail__post",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_thumbnail_preview_image__area__thumbnail__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/image/{area}/": {
+      "post": {
+        "tags": [
+          "image"
+        ],
+        "summary": "Post Preview",
+        "description": "Creates and returns a preview of the given image\nwith the given size, quality and format\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **crop**: True will crop the picture starting from the borders.\nThis option will lose information, leaving it False will scale and\nhave borders to fill the requested size.\n- **file**: file uploaded with FormData.\n",
+        "operationId": "post_preview_preview_image__area___post",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Crop",
+              "type": "boolean",
+              "default": false
+            },
+            "name": "crop",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_preview_preview_image__area___post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/image/{id}/{version}/{area}/": {
+      "get": {
+        "tags": [
+          "image"
+        ],
+        "summary": "Get Preview",
+        "description": "Creates and returns a preview of the image fetched by id and version\nwith the given size, quality and format\n- **id**: UUID of the image\n- **version**: version of the image\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **crop**: True will crop the picture starting from the borders.\nThis option will lose information, leaving it False will scale and\nhave borders to fill the requested size.\n- **service_type**: Service that owns the resource\n(service that first uploaded the data to storage)\n",
+        "operationId": "get_preview_preview_image__id___version___area___get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Crop",
+              "type": "boolean",
+              "default": false
+            },
+            "name": "crop",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/preview/pdf/{id}/{version}/": {
+      "get": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Get Preview",
+        "description": "Create and returns a preview of the given file,\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **id**: UUID of the pdf.\n- **version**: version of the pdf.\n- **first_page**: integer value of first page to preview (n>=1)\n- **last_page**: integer value of last page to preview  (0 = last of the pdf)\n- **service_type**: Service that owns the resource\n(service that first uploaded the data to storage)\n",
+        "operationId": "get_preview_preview_pdf__id___version___get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "First Page",
+              "type": "integer",
+              "default": 1
+            },
+            "name": "first_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Last Page",
+              "type": "integer",
+              "default": 0
+            },
+            "name": "last_page",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/preview/pdf/": {
+      "post": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Post Preview",
+        "description": "Create and returns a preview of the given file,\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **file**: file uploaded with FormData.\n- **first_page**: integer value of first page to preview (n>=1)\n- **last_page**: integer value of last page to preview  (0 = last of the pdf)\n",
+        "operationId": "post_preview_preview_pdf__post",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "First Page",
+              "type": "integer",
+              "default": 1
+            },
+            "name": "first_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Last Page",
+              "type": "integer",
+              "default": 0
+            },
+            "name": "last_page",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_preview_preview_pdf__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/pdf/{area}/thumbnail/": {
+      "post": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Post Thumbnail",
+        "description": "Create and returns the thumbnail of the given file,\nthe image rendered will be the first page.\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\n- **file**: file uploaded with FormData.\n",
+        "operationId": "post_thumbnail_preview_pdf__area__thumbnail__post",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_thumbnail_preview_pdf__area__thumbnail__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/pdf/{id}/{version}/{area}/thumbnail/": {
+      "get": {
+        "tags": [
+          "pdf"
+        ],
+        "summary": "Get Thumbnail",
+        "description": "Create and returns a thumbnail of the file fetched by id and version\nthe image will be rendered from the first page.\n- **id**: UUID of the pdf.\n- **version**: version of the file.\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\n- **service_type**: Service that owns the resource\n (service that first uploaded the data to storage)\n",
+        "operationId": "get_thumbnail_preview_pdf__id___version___area__thumbnail__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/preview/document/{id}/{version}/": {
+      "get": {
+        "tags": [
+          "document"
+        ],
+        "summary": "Get Preview",
+        "description": "Create and returns a pdf preview of the given file,\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **id**: UUID of the file.\n- **version**: version of the file.\n- **first_page**: integer value of first page to preview (n>=1)\n- **last_page**: integer value of last page to preview  (0 = last of the file)\n- **service_type**: Service that owns the resource\n(service that first uploaded the data to storage)\n",
+        "operationId": "get_preview_preview_document__id___version___get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "First Page",
+              "type": "integer",
+              "default": 1
+            },
+            "name": "first_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Last Page",
+              "type": "integer",
+              "default": 0
+            },
+            "name": "last_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Lang Tag",
+              "type": "string",
+              "default": "en-US"
+            },
+            "name": "lang_tag",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/preview/document/": {
+      "post": {
+        "tags": [
+          "document"
+        ],
+        "summary": "Post Preview",
+        "description": "Create and returns a pdf preview of the given file,\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **file**: file uploaded with FormData.\n- **first_page**: integer value of first page to preview (n>=1)\n- **last_page**: integer value of last page to preview  (0 = last of the pdf)\n",
+        "operationId": "post_preview_preview_document__post",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "First Page",
+              "type": "integer",
+              "default": 1
+            },
+            "name": "first_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Last Page",
+              "type": "integer",
+              "default": 0
+            },
+            "name": "last_page",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Lang Tag",
+              "type": "string",
+              "default": "en-US"
+            },
+            "name": "lang_tag",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_preview_preview_document__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/document/{area}/thumbnail/": {
+      "post": {
+        "tags": [
+          "document"
+        ],
+        "summary": "Post Thumbnail",
+        "description": "Create and returns the thumbnail of the given file,\nthe image rendered will be the first page.\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\n- **file**: file uploaded with FormData.\n",
+        "operationId": "post_thumbnail_preview_document__area__thumbnail__post",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Lang Tag",
+              "type": "string",
+              "default": "en-US"
+            },
+            "name": "lang_tag",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_thumbnail_preview_document__area__thumbnail__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Some values in the query were not correct."
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/preview/document/{id}/{version}/{area}/thumbnail/": {
+      "get": {
+        "tags": [
+          "document"
+        ],
+        "summary": "Get Thumbnail",
+        "description": "Create and returns a thumbnail of the file fetched by id and version\nthe image will be rendered from the first page.\n- **id**: UUID of the file.\n- **version**: version of the file.\n- **quality**: quality of the output image\n(the higher you go the slower the process)\n- **output_format**: format of the output image\n- **area**: width of the output image (>=0) x\nheight of the output image (>=0), width x height => 100x200.\nThe first is width, the latter height, the order is important!\n- **shape**: Rounded and Rectangular are currently supported.\n- **service_type**: Service that owns the resource\n (service that first uploaded the data to storage)\n",
+        "operationId": "get_thumbnail_preview_document__id___version___area__thumbnail__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            },
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            },
+            "name": "version",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "title": "Area",
+              "type": "string"
+            },
+            "name": "area",
+            "in": "path"
+          },
+          {
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceTypeEnum"
+            },
+            "name": "service_type",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
+                }
+              ],
+              "default": "rectangular"
+            },
+            "name": "shape",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageQualityEnum"
+                }
+              ],
+              "default": "medium"
+            },
+            "name": "quality",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ImageTypeEnum"
+                }
+              ],
+              "default": "jpeg"
+            },
+            "name": "output_format",
+            "in": "query"
+          },
+          {
+            "required": false,
+            "schema": {
+              "title": "Lang Tag",
+              "type": "string",
+              "default": "en-US"
+            },
+            "name": "lang_tag",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Requested item was not found in the storage."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/health/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "description": "Checks if the service and all of its dependencies are\nworking and returns a descriptive json\n",
+        "operationId": "health_health__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Carbonio-docs-editor is currently unavailable, document preview service is currently offline."
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/health/ready/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Ready",
+        "description": "Checks if the service is up and essential dependencies are running correctly\n",
+        "operationId": "health_ready_health_ready__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "429": {
+            "description": "Carbonio-docs-editor is currently unavailable, document preview service is currently offline."
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    },
+    "/health/live/": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health Live",
+        "description": "Checks if the service is up\n",
+        "operationId": "health_live_health_live__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "429": {
+            "description": "Carbonio-docs-editor is currently unavailable, document preview service is currently offline."
+          },
+          "502": {
+            "description": "Storage is currently unavailable."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_post_preview_preview_document__post": {
+        "title": "Body_post_preview_preview_document__post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "Body_post_preview_preview_image__area___post": {
+        "title": "Body_post_preview_preview_image__area___post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "Body_post_preview_preview_pdf__post": {
+        "title": "Body_post_preview_preview_pdf__post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "Body_post_thumbnail_preview_document__area__thumbnail__post": {
+        "title": "Body_post_thumbnail_preview_document__area__thumbnail__post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "Body_post_thumbnail_preview_image__area__thumbnail__post": {
+        "title": "Body_post_thumbnail_preview_image__area__thumbnail__post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "Body_post_thumbnail_preview_pdf__area__thumbnail__post": {
+        "title": "Body_post_thumbnail_preview_pdf__area__thumbnail__post",
+        "required": [
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string",
+            "format": "binary"
+          }
+        }
+      },
+      "HTTPValidationError": {
+        "title": "HTTPValidationError",
+        "type": "object",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            }
+          }
+        }
+      },
+      "ImageBorderShapeEnum": {
+        "title": "ImageBorderShapeEnum",
+        "enum": [
+          "rounded",
+          "rectangular"
+        ],
+        "type": "string",
+        "description": "\n    Class representing all the image type accepted values"
+      },
+      "ImageQualityEnum": {
+        "title": "ImageQualityEnum",
+        "enum": [
+          "lowest",
+          "low",
+          "medium",
+          "high",
+          "highest"
+        ],
+        "type": "string",
+        "description": "\n    Class representing all the image quality accepted values"
+      },
+      "ImageTypeEnum": {
+        "title": "ImageTypeEnum",
+        "enum": [
+          "jpeg",
+          "png",
+          "gif"
+        ],
+        "type": "string",
+        "description": "\n    Class representing all the image type accepted values"
+      },
+      "ServiceTypeEnum": {
+        "title": "ServiceTypeEnum",
+        "enum": [
+          "files",
+          "chats"
+        ],
+        "type": "string",
+        "description": "\n    Class representing all the service type accepted values"
+      },
+      "ValidationError": {
+        "title": "ValidationError",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "loc": {
+            "title": "Location",
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        }
+      },
+      "HealthDependency": {
+        "title": "HealthDependency",
+        "type": "object",
+        "required": [
+          "name",
+          "ready",
+          "live",
+          "type"
+        ],
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "live": {
+            "title": "Live",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        }
+      },
+      "HealthResponse": {
+        "title": "HealthResponse",
+        "type": "object",
+        "required": [
+          "ready",
+          "dependencies"
+        ],
+        "properties": {
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "dependencies": {
+            "title": "Dependencies",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthDependency"
+            }
+          }
+        }
+      }
+    }
+  }
+}

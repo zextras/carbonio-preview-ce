@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -67,7 +70,7 @@ func routeDocument(
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] != "thumbnail" {
-				errBadRequest(w, config.Msg.InputError)
+				errNotFound(w, "Not Found")
 				return
 			}
 			if !cfg.ServiceEnableDocumentThumbnail {
@@ -76,7 +79,7 @@ func routeDocument(
 			}
 			docGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem, relayClient, pdfInternalAddr)
 		default:
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		}
 
 	case http.MethodPost:
@@ -91,7 +94,7 @@ func routeDocument(
 		case 2:
 			// POST /{area}/thumbnail/
 			if parts[1] != "thumbnail" {
-				errBadRequest(w, config.Msg.InputError)
+				errNotFound(w, "Not Found")
 				return
 			}
 			if !cfg.ServiceEnableDocumentThumbnail {
@@ -100,7 +103,7 @@ func routeDocument(
 			}
 			docPostThumbnail(w, r, parts[0], cfg, sem, relayClient, pdfInternalAddr)
 		default:
-			errBadRequest(w, config.Msg.InputError)
+			errNotFound(w, "Not Found")
 		}
 
 	default:
@@ -119,22 +122,22 @@ func docGetPreview(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errDetail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	langTag := parseLangTag(r)
@@ -142,19 +145,17 @@ func docGetPreview(
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
 		log.Printf("docGetPreview convert error: %v", err)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(w, config.Msg.StorageUnavailable)
+		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 
@@ -185,37 +186,37 @@ func docGetThumbnail(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 	langTag := parseLangTag(r)
@@ -223,19 +224,17 @@ func docGetThumbnail(
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
 		log.Printf("docGetThumbnail convert error: %v", err)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(w, config.Msg.StorageUnavailable)
+		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 
@@ -250,23 +249,21 @@ func docPostPreview(
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errDetail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	langTag := parseLangTag(r)
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
 		log.Printf("docPostPreview convert error: %v", err)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(w, config.Msg.StorageUnavailable)
+		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 
@@ -296,38 +293,36 @@ func docPostThumbnail(
 ) {
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 	langTag := parseLangTag(r)
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
 		log.Printf("docPostThumbnail convert error: %v", err)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(w, config.Msg.StorageUnavailable)
+		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 

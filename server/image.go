@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 import (
@@ -63,7 +67,7 @@ func routeImage(
 			imageGetPreview(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
 			return
 		}
-		errBadRequest(w, config.Msg.InputError)
+		errNotFound(w, "Not Found")
 
 	case http.MethodPost:
 		// Expected: {area}  OR  {area}/thumbnail
@@ -75,7 +79,7 @@ func routeImage(
 			imagePostPreview(w, r, parts[0], cfg, sem)
 			return
 		}
-		errBadRequest(w, config.Msg.InputError)
+		errNotFound(w, "Not Found")
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -93,55 +97,51 @@ func imageGetPreview(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	crop, err := parseCrop(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "crop", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
 	// For preview, crop=true means cover crop (center), crop=false means scale-to-fit.
-	// cropMode="none" triggers the scale_fit_pad C path in render.ImageThumbnail:
-	// vips_thumbnail_buffer with VIPS_INTERESTING_NONE scales to fit inside the box
-	// without cropping, then vips_embed centres it on a transparent canvas.
-	// This matches the Python resize_with_paddings behaviour.
 	cropMode := "center"
 	if !crop {
 		cropMode = "none"
@@ -150,7 +150,7 @@ func imageGetPreview(
 	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
 	if err != nil {
 		log.Printf("imageGetPreview render error: %v", err)
-		errInternal(w, "render failed")
+		errBadRequest(w, config.Msg.FormatNotSupported)
 		return
 	}
 
@@ -172,47 +172,47 @@ func imageGetThumbnail(
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "id", err.Error())
 		return
 	}
 	version, err := parseVersion(rawVersion)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "version", err.Error())
 		return
 	}
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	serviceType, err := parseServiceType(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "service_type", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			errNotFound(w)
+			errNotFound(w, config.Msg.ItemNotFound)
 			return
 		}
-		errStorageUnavailable(w)
+		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
 
@@ -220,7 +220,7 @@ func imageGetThumbnail(
 	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, shape, "center")
 	if err != nil {
 		log.Printf("imageGetThumbnail render error: %v", err)
-		errInternal(w, "render failed")
+		errBadRequest(w, config.Msg.FormatNotSupported)
 		return
 	}
 
@@ -241,28 +241,28 @@ func imagePostPreview(
 ) {
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	crop, err := parseCrop(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "crop", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
@@ -274,7 +274,7 @@ func imagePostPreview(
 	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
 	if err != nil {
 		log.Printf("imagePostPreview render error: %v", err)
-		errInternal(w, "render failed")
+		errBadRequest(w, config.Msg.FormatNotSupported)
 		return
 	}
 
@@ -295,28 +295,28 @@ func imagePostThumbnail(
 ) {
 	width, height, err := parseArea(rawArea)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "path", "area", err.Error())
 		return
 	}
 	shape, err := parseShape(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "shape", err.Error())
 		return
 	}
 	quality, err := parseQuality(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "quality", err.Error())
 		return
 	}
 	outputFormat, err := parseOutputFormat(r)
 	if err != nil {
-		errBadRequest(w, err.Error())
+		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
 
 	data, err := readMultipartFile(r)
 	if err != nil {
-		errBadRequest(w, config.Msg.FileNotValid)
+		errValidation(w, "body", "file", config.Msg.FileNotValid)
 		return
 	}
 
@@ -324,7 +324,7 @@ func imagePostThumbnail(
 	out, err := imageThumbnailFunc(sem, data, width, height, outputFormat, quality, shape, "center")
 	if err != nil {
 		log.Printf("imagePostThumbnail render error: %v", err)
-		errInternal(w, "render failed")
+		errBadRequest(w, config.Msg.FormatNotSupported)
 		return
 	}
 
