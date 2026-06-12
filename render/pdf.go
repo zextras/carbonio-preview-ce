@@ -1,36 +1,55 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package render
 
 import (
 	"bytes"
 	"fmt"
-	"sync"
 	"time"
 
 	pdfium "github.com/klippa-app/go-pdfium"
+	"github.com/klippa-app/go-pdfium/multi_threaded"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/single_threaded"
 )
 
-// cgoMu serialises all PDFium CGO calls within a single process.
-// PDFium is NOT thread-safe. Concurrency is achieved by running N processes
-// behind SO_REUSEPORT (gunicorn model), not by concurrent goroutines.
-var cgoMu sync.Mutex
-
-// globalPdfPool is the PDFium instance pool. Initialised by PDFWorkerInit.
+// globalPdfPool is the PDFium instance pool. Initialised by PDFInit or
+// PDFInitSingleThreadedForTests. Must not be used before initialisation.
 var globalPdfPool pdfium.Pool
 
-// PDFWorkerInit initialises the in-process single_threaded PDFium backend.
-// Must be called once in each process that will render PDF pages.
-// Uses the CGO backend (links against libpdfium.so).
-func PDFWorkerInit() {
-	globalPdfPool = single_threaded.Init(single_threaded.Config{})
+// PDFInit initialises the multi_threaded PDFium subprocess pool.
+// poolSize controls MinIdle/MaxIdle/MaxTotal (all set to the same value).
+// workerBin is the absolute path to the carbonio-preview-pdfium-worker binary.
+//
+// Call PDFClose on graceful shutdown.
+func PDFInit(poolSize int, workerBin string) error {
+	pool := multi_threaded.Init(multi_threaded.Config{
+		MinIdle:  poolSize,
+		MaxIdle:  poolSize,
+		MaxTotal: poolSize,
+		Command: multi_threaded.Command{
+			BinPath:      workerBin,
+			StartTimeout: 30 * time.Second,
+		},
+	})
+	globalPdfPool = pool
+	return nil
 }
 
-// PDFWorkerClose shuts down the PDFium pool. Call on graceful shutdown.
-func PDFWorkerClose() {
+// PDFClose shuts down the PDFium pool. Call on graceful shutdown.
+func PDFClose() {
 	if globalPdfPool != nil {
 		globalPdfPool.Close() //nolint:errcheck
 	}
+}
+
+// PDFInitSingleThreadedForTests initialises the in-process single_threaded PDFium
+// backend. For use in unit tests only — do NOT call in production code.
+// Uses the CGO backend (links against libpdfium.so).
+func PDFInitSingleThreadedForTests() {
+	globalPdfPool = single_threaded.Init(single_threaded.Config{})
 }
 
 // PDFRasterize renders page `page` (0-indexed) of a PDF document to an encoded
@@ -42,8 +61,6 @@ func PDFWorkerClose() {
 //     vips_image_new_from_memory — no PNG encode/decode round-trip.
 //  3. libvips applies COVER resize + center-crop and encodes the result.
 //
-// This is the 4-5x speedup fix over the old path that serialised through PNG.
-//
 // outputFormat: "jpeg" or "png".
 // quality: "lowest", "low", "medium", "high", "highest".
 // shape: "rounded" or "rectangular" (rounded forces PNG output).
@@ -54,13 +71,8 @@ func PDFRasterize(
 	outputFormat, quality, shape string,
 ) ([]byte, error) {
 	if globalPdfPool == nil {
-		return nil, fmt.Errorf("PDFium pool not initialised: call PDFWorkerInit first")
+		return nil, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
-
-	// Serialise all PDFium calls. PDFium is not thread-safe; the in-process
-	// single_threaded backend must only be called from one goroutine at a time.
-	cgoMu.Lock()
-	defer cgoMu.Unlock()
 
 	inst, err := globalPdfPool.GetInstance(30 * time.Second)
 	if err != nil {
@@ -133,11 +145,8 @@ func PDFSlice(data []byte, firstPage, lastPage int) ([]byte, error) {
 	}
 
 	if globalPdfPool == nil {
-		return nil, fmt.Errorf("PDFium pool not initialised: call PDFWorkerInit first")
+		return nil, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
-
-	cgoMu.Lock()
-	defer cgoMu.Unlock()
 
 	inst, err := globalPdfPool.GetInstance(30 * time.Second)
 	if err != nil {

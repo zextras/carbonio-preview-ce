@@ -5,10 +5,7 @@
 // Command carbonio-preview is the entry point for the carbonio-preview-ce service.
 //
 // It wires together the config, storage, and server packages and starts the HTTP
-// server. The binary can run in two roles, controlled by the ROLE environment variable:
-//
-//   - ROLE=pdfworker  — PDF rendering worker (internal port, SO_REUSEPORT)
-//   - (default)       — main process (public port, spawns PDF workers, relays PDF requests)
+// server.
 //
 // Configuration is loaded from the extensions-equivalent chain:
 //   - Registry defaults
@@ -16,7 +13,10 @@
 //   - Consul KV carbonio-preview/?recurse       (application layer)
 //   - Environment variables: NETWORKING_CONFIG_* / APPLICATION_CONFIG_*
 //
-// Process-level variables (not part of the chain): ROLE, PDF_INTERNAL_PORT.
+// Process-level variables (not part of the chain):
+//
+//   - PREVIEW_LOG_LEVEL:             log verbosity (default: info)
+//   - PREVIEW_PDFIUM_WORKER_PATH:    override path to the pdfium-worker binary
 //
 // Setup mode:
 //

@@ -33,10 +33,9 @@ func stubCollaboraConvert(returnData []byte, returnErr error) (restore func()) {
 }
 
 // buildDocMux registers document routes on a fresh mux.
-// If relayClient / pdfInternalAddr are empty, PDF rasterisation uses pdfRasterizeFunc.
 func buildDocMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerDocumentRoutes(mux, cfg, store, nil, nil, "")
+	registerDocumentRoutes(mux, cfg, store, nil)
 	return mux
 }
 
@@ -157,7 +156,7 @@ func TestDocGetPreview_HappyPath(t *testing.T) {
 	store := &mockStore{blob: []byte("docx-bytes")}
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -242,7 +241,7 @@ func TestDocGetPreview_LangTag(t *testing.T) {
 			store := &mockStore{blob: []byte("doc")}
 			restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 			defer restoreCollab()
-			restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
+			restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
 			defer restoreSlice()
 
 			cfg := testCfg()
@@ -265,7 +264,7 @@ func TestDocGetPreview_LangTag(t *testing.T) {
 func TestDocPostPreview_HappyPath(t *testing.T) {
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -364,7 +363,7 @@ func TestDocGetPreview_PageRangeValidation(t *testing.T) {
 			store := &mockStore{blob: []byte("doc")}
 			restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 			defer restoreCollab()
-			restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
+			restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
 			defer restoreSlice()
 
 			cfg := testCfg()

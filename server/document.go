@@ -21,13 +21,11 @@ func registerDocumentRoutes(
 	cfg *config.Config,
 	store storage.Client,
 	sem chan struct{},
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	base := "/" + cfg.ServiceName + "/" + cfg.ServiceDocumentName
 
 	mux.HandleFunc(base+"/", func(w http.ResponseWriter, r *http.Request) {
-		routeDocument(w, r, base, cfg, store, sem, relayClient, pdfInternalAddr)
+		routeDocument(w, r, base, cfg, store, sem)
 	})
 }
 
@@ -46,8 +44,6 @@ func routeDocument(
 	cfg *config.Config,
 	store storage.Client,
 	sem chan struct{},
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	tail := strings.TrimPrefix(r.URL.Path, base)
 	tail = strings.TrimPrefix(tail, "/")
@@ -66,7 +62,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentPreviewDisabled)
 				return
 			}
-			docGetPreview(w, r, parts[0], parts[1], cfg, store, relayClient, pdfInternalAddr)
+			docGetPreview(w, r, parts[0], parts[1], cfg, store)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] != "thumbnail" {
@@ -77,7 +73,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentThumbnailDisabled)
 				return
 			}
-			docGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem, relayClient, pdfInternalAddr)
+			docGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
 		default:
 			errNotFound(w, "Not Found")
 		}
@@ -90,7 +86,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentPreviewDisabled)
 				return
 			}
-			docPostPreview(w, r, cfg, relayClient, pdfInternalAddr)
+			docPostPreview(w, r, cfg)
 		case 2:
 			// POST /{area}/thumbnail/
 			if parts[1] != "thumbnail" {
@@ -101,7 +97,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentThumbnailDisabled)
 				return
 			}
-			docPostThumbnail(w, r, parts[0], cfg, sem, relayClient, pdfInternalAddr)
+			docPostThumbnail(w, r, parts[0], cfg, sem)
 		default:
 			errNotFound(w, "Not Found")
 		}
@@ -119,8 +115,6 @@ func docGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
@@ -161,9 +155,9 @@ func docGetPreview(
 		return
 	}
 
-	sliced, err := pdfSliceRelayFunc(r.Context(), pdfBytes, firstPage, lastPage, relayClient, pdfInternalAddr)
+	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
 	if err != nil {
-		slog.Error("docGetPreview: relayPDFSlice", "err", err)
+		slog.Error("docGetPreview: PDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -183,8 +177,6 @@ func docGetThumbnail(
 	cfg *config.Config,
 	store storage.Client,
 	sem chan struct{},
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
@@ -240,7 +232,7 @@ func docGetThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem, relayClient, pdfInternalAddr)
+	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem)
 }
 
 // docPostPreview handles POST /
@@ -248,8 +240,6 @@ func docPostPreview(
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg *config.Config,
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
@@ -271,9 +261,9 @@ func docPostPreview(
 		return
 	}
 
-	sliced, err := pdfSliceRelayFunc(r.Context(), pdfBytes, firstPage, lastPage, relayClient, pdfInternalAddr)
+	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
 	if err != nil {
-		slog.Error("docPostPreview: relayPDFSlice", "err", err)
+		slog.Error("docPostPreview: PDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -292,8 +282,6 @@ func docPostThumbnail(
 	rawArea string,
 	cfg *config.Config,
 	sem chan struct{},
-	relayClient *http.Client,
-	pdfInternalAddr string,
 ) {
 	width, height, err := parseArea(rawArea)
 	if err != nil {
@@ -330,7 +318,7 @@ func docPostThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem, relayClient, pdfInternalAddr)
+	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem)
 }
 
 // convertDocToPDF calls CollaboraConvert to turn the document bytes into PDF.

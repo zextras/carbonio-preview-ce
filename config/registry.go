@@ -233,7 +233,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "",
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Number of workers dedicated to PDF rendering; defaults to CPU count when absent.",
+			Description:  "Size of the PDFium worker subprocess pool; defaults to CPU count when absent.",
 		},
 		{
 			Key:         "vips-concurrency",

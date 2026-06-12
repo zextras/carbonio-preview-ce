@@ -17,7 +17,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
 	"strconv"
 )
@@ -58,10 +57,8 @@ type Config struct {
 	DocumentConversionServiceEndpoint string
 	DocumentConversionConvertAPI      string
 
-	// Process-level knobs (raw env only — parent↔pdfworker IPC)
-	PDFWorkers      int
-	PDFInternalPort int
-	Role            string
+	// PDFWorkers is the size of the PDFium subprocess worker pool.
+	PDFWorkers int
 
 	// Application-layer knob
 	VIPSConcurrency int
@@ -203,18 +200,6 @@ func Load() error {
 	// Apply the level to the package-level slog handler immediately so all
 	// subsequent log calls (in server startup, etc.) honour the configured level.
 	logLevelVar.Set(logLevel)
-
-	// ── Process-level knobs (raw env; parent↔pdfworker IPC) ───────────────────
-	if v := os.Getenv("ROLE"); v != "" {
-		c.Role = v
-	}
-
-	c.PDFInternalPort = 10104 // default
-	if v := os.Getenv("PDF_INTERNAL_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			c.PDFInternalPort = n
-		}
-	}
 
 	// ── Derived addresses ──────────────────────────────────────────────────────
 	c.StorageFullAddress = fmt.Sprintf(

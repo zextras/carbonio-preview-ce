@@ -78,6 +78,10 @@ RUN go build \
       -ldflags="-s -w" \
       -o /staging/carbonio-preview-bin \
       ./cmd/carbonio-preview/...
+RUN go build \
+      -ldflags="-s -w" \
+      -o /staging/carbonio-preview-pdfium-worker \
+      ./cmd/pdfium-worker/...
 
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
@@ -94,8 +98,9 @@ RUN apt-get update && \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the compiled binary.
+# Copy the compiled binaries.
 COPY --from=builder /staging/carbonio-preview-bin /usr/bin/carbonio-preview-bin
+COPY --from=builder /staging/carbonio-preview-pdfium-worker /usr/bin/carbonio-preview-pdfium-worker
 
 # Copy libpdfium.so to the rpath directory.
 COPY --from=builder /staging/pdfium/lib/libpdfium.so \

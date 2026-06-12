@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package server
 
 // This file provides injectable function variables that wrap the render
@@ -12,7 +16,6 @@ package server
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/render"
@@ -31,18 +34,6 @@ var imageThumbnailFunc = func(
 // pdfSliceFunc is the seam for render.PDFSlice.
 var pdfSliceFunc = func(data []byte, firstPage, lastPage int) ([]byte, error) {
 	return render.PDFSlice(data, firstPage, lastPage)
-}
-
-// pdfSliceRelayFunc is the seam for relay-based PDF slicing in the main process.
-// Production code relays to the worker pool; tests stub it without a live worker.
-var pdfSliceRelayFunc = func(
-	ctx context.Context,
-	data []byte,
-	firstPage, lastPage int,
-	relayClient *http.Client,
-	pdfInternalAddr string,
-) ([]byte, error) {
-	return relayPDFSlice(ctx, data, firstPage, lastPage, relayClient, pdfInternalAddr)
 }
 
 // pdfRasterizeFunc is the seam for render.PDFRasterize.

@@ -157,6 +157,7 @@ EOF
   cd "${srcdir}"
   go mod download
   go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-bin" ./cmd/carbonio-preview/...
+  go build -ldflags="-s -w" -o "${srcdir}/carbonio-preview-pdfium-worker" ./cmd/pdfium-worker/...
   cp "${srcdir}/pdfium/lib/libpdfium.so" "${srcdir}/libpdfium.so"
   cp "${VIPS_PLAT}/lib/libvips-cpp.so.8.18.3" "${srcdir}/libvips-cpp.so.8.18.3"
 }
@@ -186,6 +187,8 @@ package() {
     "${pkgdir}/usr/bin/carbonio-preview"
   install -Dm755 "${srcdir}/carbonio-preview-bin" \
     "${pkgdir}/usr/bin/carbonio-preview-bin"
+  install -Dm755 "${srcdir}/carbonio-preview-pdfium-worker" \
+    "${pkgdir}/usr/bin/carbonio-preview-pdfium-worker"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
   install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
@@ -214,6 +217,8 @@ package__rocky_8() {
     "${pkgdir}/usr/bin/carbonio-preview"
   install -Dm755 "${srcdir}/carbonio-preview-bin" \
     "${pkgdir}/usr/bin/carbonio-preview-bin"
+  install -Dm755 "${srcdir}/carbonio-preview-pdfium-worker" \
+    "${pkgdir}/usr/bin/carbonio-preview-pdfium-worker"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
   install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
@@ -242,6 +247,8 @@ package__ubuntu_jammy() {
     "${pkgdir}/usr/bin/carbonio-preview"
   install -Dm755 "${srcdir}/carbonio-preview-bin" \
     "${pkgdir}/usr/bin/carbonio-preview-bin"
+  install -Dm755 "${srcdir}/carbonio-preview-pdfium-worker" \
+    "${pkgdir}/usr/bin/carbonio-preview-pdfium-worker"
   install -Dm755 "${srcdir}/libpdfium.so" \
     "${pkgdir}/usr/lib/carbonio-preview/libpdfium.so"
   install -Dm755 "${srcdir}/libvips-cpp.so.8.18.3" \
