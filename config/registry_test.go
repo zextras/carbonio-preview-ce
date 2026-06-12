@@ -116,7 +116,7 @@ func TestKeyDefaults(t *testing.T) {
 	appChecks := []struct{ key, dflt, ifNotPresent string }{
 		{"timeout-in-seconds", "30", ""},
 		{"docs-timeout-in-seconds", "15", ""},
-		{"workers", "2", ""},
+		{"workers", "", "Defaults to the number of CPUs"},
 		{"pdf-workers", "", "Defaults to the number of CPUs"},
 		{"vips-concurrency", "1", ""},
 		{"image-minimum-resolution", "80", ""},

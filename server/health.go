@@ -64,9 +64,9 @@ func healthReady(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusTooManyRequests) // 429
-	if _, err := fmt.Fprintf(w, `{"detail":%q}`, config.Msg.DocsEditorUnavailable); err != nil {
+	if _, err := fmt.Fprint(w, config.Msg.DocsEditorUnavailable); err != nil {
 		log.Printf("healthReady write: %v", err)
 	}
 }

@@ -74,7 +74,7 @@ func TestResolverDefaultsWhenAllAbsent(t *testing.T) {
 
 	appChecks := []struct{ key, want string }{
 		{"timeout-in-seconds", "30"},
-		{"workers", "2"},
+		{"docs-timeout-in-seconds", "15"},
 		{"vips-concurrency", "1"},
 		{"storages.download-api", "download"},
 		{"storages.health-check", "health/live"},
@@ -139,7 +139,7 @@ func TestResolverEnvBeatsKV(t *testing.T) {
 	}
 }
 
-// TestResolverKVBeatsDefault verifies Consul KV overrides default (application).
+// TestResolverKVBeatsDefault verifies Consul KV value is used (application layer).
 func TestResolverKVBeatsDefault(t *testing.T) {
 	srv := buildConsulServer(t, map[string]string{"workers": "8"})
 	r, err := resolveWithConsulServer(t, "", srv)
@@ -149,7 +149,7 @@ func TestResolverKVBeatsDefault(t *testing.T) {
 
 	got, _ := r.Application.Get("workers")
 	if got != "8" {
-		t.Errorf("Application.Get(workers) = %q, want 8 (KV should beat default)", got)
+		t.Errorf("Application.Get(workers) = %q, want 8 (KV value must be present)", got)
 	}
 }
 
@@ -334,15 +334,15 @@ func TestUnregisteredKVKeyBlankValueAbsent(t *testing.T) {
 // TestBlankKVValueFallsThroughToDefault verifies that a Consul KV entry whose
 // decoded value is empty string is treated as absent and the registry default wins.
 func TestBlankKVValueFallsThroughToDefault(t *testing.T) {
-	// "workers" has default "2"; KV entry with empty value must not override it.
-	srv := buildConsulServer(t, map[string]string{"workers": ""})
+	// "timeout-in-seconds" has default "30"; KV entry with empty value must not override it.
+	srv := buildConsulServer(t, map[string]string{"timeout-in-seconds": ""})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, ok := r.Application.Get("workers")
-	if !ok || got != "2" {
-		t.Errorf("Application.Get(workers) = (%q, %v), want (2, true); blank KV value must fall through to default", got, ok)
+	got, ok := r.Application.Get("timeout-in-seconds")
+	if !ok || got != "30" {
+		t.Errorf("Application.Get(timeout-in-seconds) = (%q, %v), want (30, true); blank KV value must fall through to default", got, ok)
 	}
 }

@@ -9,7 +9,6 @@ Requires=network-online.target
 After=network-online.target
 PartOf=carbonio.target
 
-
 [Service]
 Type=simple
 ExecStart= /usr/bin/carbonio-preview-bin

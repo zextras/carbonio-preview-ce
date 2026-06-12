@@ -222,10 +222,11 @@ func registerCEKeys() {
 			Description: "Timeout in seconds for document-conversion preview requests.",
 		},
 		{
-			Key:         "workers",
-			Namespace:   NamespaceApplication,
-			Default:     "2",
-			Description: "Number of worker goroutines processing preview requests.",
+			Key:          "workers",
+			Namespace:    NamespaceApplication,
+			Default:      "",
+			IfNotPresent: "Defaults to the number of CPUs",
+			Description:  "HTTP processing concurrency (goroutines); defaults to CPU count when absent.",
 		},
 		{
 			Key:          "pdf-workers",

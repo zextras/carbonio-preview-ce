@@ -13,6 +13,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -81,6 +82,7 @@ func testCfg() *config.Config {
 		ServiceHealthName:                    "health",
 		ServiceTimeoutInSeconds:              30,
 		ServiceDocsTimeout:                   15,
+		ServiceWorkers:                       runtime.NumCPU(),
 		ServiceEnableDocumentPreview:         true,
 		ServiceEnableDocumentThumbnail:       true,
 		StorageFullAddress:                   "http://127.0.0.1:20000",

@@ -148,16 +148,26 @@ func Load() error {
 	// ── Application layer ──────────────────────────────────────────────────────
 	var parseErr error
 
-	c.ServiceTimeoutInSeconds, parseErr = appInt(r, "timeout-in-seconds", parseErr)
-	c.ServiceDocsTimeout, parseErr = appInt(r, "docs-timeout-in-seconds", parseErr)
-	c.ServiceWorkers, parseErr = appInt(r, "workers", parseErr)
+	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "timeout-in-seconds", parseErr)
+	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "docs-timeout-in-seconds", parseErr)
 	c.VIPSConcurrency, parseErr = appInt(r, "vips-concurrency", parseErr)
-	c.ImageMinimumResolution, parseErr = appInt(r, "image-minimum-resolution", parseErr)
+	c.ImageMinimumResolution, parseErr = appPositiveInt(r, "image-minimum-resolution", parseErr)
+
+	// workers: absent → runtime.NumCPU() (registry has no default for this key)
+	if raw, ok := r.Application.Get("workers"); ok {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", "workers", raw)
+		}
+		c.ServiceWorkers = n
+	} else {
+		c.ServiceWorkers = runtime.NumCPU()
+	}
 
 	// pdf-workers: absent → runtime.NumCPU() (registry has no default for this key)
 	if raw, ok := r.Application.Get("pdf-workers"); ok {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
+		if err != nil || n < 1 {
 			return fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", "pdf-workers", raw)
 		}
 		c.PDFWorkers = n
@@ -249,6 +259,27 @@ func appInt(r Resolved, key string, prior error) (int, error) {
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, fmt.Errorf("config: key %q has invalid value %q: %w", key, raw, err)
+	}
+	return n, nil
+}
+
+// appPositiveInt reads an application-layer integer key and requires the value
+// to be >= 1. Returns (0, err) on parse or range failure, chaining with any
+// prior error. Used for keys that Python validated with validate_positive_int().
+func appPositiveInt(r Resolved, key string, prior error) (int, error) {
+	if prior != nil {
+		return 0, prior
+	}
+	raw, ok := r.Application.Get(key)
+	if !ok {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: key %q has invalid value %q: %w", key, raw, err)
+	}
+	if n < 1 {
+		return 0, fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", key, raw)
 	}
 	return n, nil
 }

@@ -165,7 +165,7 @@ func (s *Server) runMain() {
 	}
 	render.SetVipsConcurrency(s.cfg.VIPSConcurrency)
 
-	sem := render.BuildSemaphore(runtime.NumCPU())
+	sem := render.BuildSemaphore(s.cfg.ServiceWorkers)
 
 	// Spawn PDF worker pool.
 	pdfInternalAddr := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.PDFInternalPort)

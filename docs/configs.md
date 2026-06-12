@@ -40,5 +40,5 @@ Overridable by Consul KV
 | `carbonio-preview/storages/health-check` | `health/live` |  |
 | `carbonio-preview/timeout-in-seconds` | `30` |  |
 | `carbonio-preview/vips-concurrency` | `1` |  |
-| `carbonio-preview/workers` | `2` |  |
+| `carbonio-preview/workers` | *(not set)* | Defaults to the number of CPUs |
 

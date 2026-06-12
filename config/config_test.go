@@ -88,7 +88,7 @@ func TestDefaults(t *testing.T) {
 		// application
 		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
 		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
-		{"ServiceWorkers", App.ServiceWorkers, 2},
+		{"ServiceWorkers", App.ServiceWorkers, runtime.NumCPU()},
 		{"VIPSConcurrency", App.VIPSConcurrency, 1},
 		{"ImageMinimumResolution", App.ImageMinimumResolution, 80},
 		{"ServiceEnableDocumentPreview", App.ServiceEnableDocumentPreview, true},
@@ -122,6 +122,29 @@ func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 	}
 	if App.PDFWorkers != runtime.NumCPU() {
 		t.Errorf("PDFWorkers = %d, want runtime.NumCPU() = %d", App.PDFWorkers, runtime.NumCPU())
+	}
+}
+
+// TestWorkersFallbackToCPUCount verifies that when workers is absent from all
+// sources, ServiceWorkers is set to runtime.NumCPU().
+func TestWorkersFallbackToCPUCount(t *testing.T) {
+	srv := buildKVServer(t, nil)
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.ServiceWorkers != runtime.NumCPU() {
+		t.Errorf("ServiceWorkers = %d, want runtime.NumCPU() = %d", App.ServiceWorkers, runtime.NumCPU())
+	}
+}
+
+// TestWorkersExplicitValue verifies that an explicit workers value is honored.
+func TestWorkersExplicitValue(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"workers": "5"})
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.ServiceWorkers != 5 {
+		t.Errorf("ServiceWorkers = %d, want 5", App.ServiceWorkers)
 	}
 }
 
@@ -392,6 +415,51 @@ func TestParseFailurePDFWorkers(t *testing.T) {
 	err := Load()
 	if err == nil {
 		t.Fatal("expected error for bad pdf-workers value, got nil")
+	}
+	if !strings.Contains(err.Error(), "pdf-workers") {
+		t.Errorf("error %q should mention key pdf-workers", err.Error())
+	}
+}
+
+// TestParseFailureZeroTimeout verifies that timeout-in-seconds=0 is rejected
+// (must be a positive integer, matching Python validate_positive_int).
+func TestParseFailureZeroTimeout(t *testing.T) {
+	for _, key := range []string{"timeout-in-seconds", "docs-timeout-in-seconds", "image-minimum-resolution"} {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			srv := buildKVServer(t, map[string]string{key: "0"})
+			pointConsulAt(t, srv)
+			err := Load()
+			if err == nil {
+				t.Fatalf("expected error for %s=0, got nil", key)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error %q should mention key %q", err.Error(), key)
+			}
+		})
+	}
+}
+
+// TestParseFailureNegativeWorkers verifies that workers=-1 is rejected.
+func TestParseFailureNegativeWorkers(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"workers": "-1"})
+	pointConsulAt(t, srv)
+	err := Load()
+	if err == nil {
+		t.Fatal("expected error for workers=-1, got nil")
+	}
+	if !strings.Contains(err.Error(), "workers") {
+		t.Errorf("error %q should mention key workers", err.Error())
+	}
+}
+
+// TestParseFailureZeroPDFWorkers verifies that pdf-workers=0 is rejected.
+func TestParseFailureZeroPDFWorkers(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"pdf-workers": "0"})
+	pointConsulAt(t, srv)
+	err := Load()
+	if err == nil {
+		t.Fatal("expected error for pdf-workers=0, got nil")
 	}
 	if !strings.Contains(err.Error(), "pdf-workers") {
 		t.Errorf("error %q should mention key pdf-workers", err.Error())
