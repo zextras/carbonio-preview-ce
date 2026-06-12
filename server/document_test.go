@@ -157,7 +157,7 @@ func TestDocGetPreview_HappyPath(t *testing.T) {
 	store := &mockStore{blob: []byte("docx-bytes")}
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -242,7 +242,7 @@ func TestDocGetPreview_LangTag(t *testing.T) {
 			store := &mockStore{blob: []byte("doc")}
 			restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 			defer restoreCollab()
-			restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+			restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 			defer restoreSlice()
 
 			cfg := testCfg()
@@ -265,7 +265,7 @@ func TestDocGetPreview_LangTag(t *testing.T) {
 func TestDocPostPreview_HappyPath(t *testing.T) {
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -364,7 +364,7 @@ func TestDocGetPreview_PageRangeValidation(t *testing.T) {
 			store := &mockStore{blob: []byte("doc")}
 			restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 			defer restoreCollab()
-			restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+			restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 			defer restoreSlice()
 
 			cfg := testCfg()

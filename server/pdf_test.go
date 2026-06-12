@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,21 @@ func stubPDFSlice(returnData []byte, returnErr error) (restore func()) {
 		return returnData, returnErr
 	}
 	return func() { pdfSliceFunc = prev }
+}
+
+// stubPDFSliceRelay replaces pdfSliceRelayFunc for the duration of a test.
+func stubPDFSliceRelay(returnData []byte, returnErr error) (restore func()) {
+	prev := pdfSliceRelayFunc
+	pdfSliceRelayFunc = func(
+		_ context.Context,
+		_ []byte,
+		_, _ int,
+		_ *http.Client,
+		_ string,
+	) ([]byte, error) {
+		return returnData, returnErr
+	}
+	return func() { pdfSliceRelayFunc = prev }
 }
 
 // stubPDFRasterize replaces pdfRasterizeFunc for the duration of a test.
@@ -50,7 +66,7 @@ func buildPDFMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 // TestPDFGetPreview_Success verifies GET /{id}/{version}/ returns 200 + application/pdf.
 func TestPDFGetPreview_Success(t *testing.T) {
 	store := &mockStore{blob: []byte(fakePDFBytes)}
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -109,7 +125,7 @@ func TestPDFGetPreview_InvalidUUID(t *testing.T) {
 // accepted as query params and the response is still 200.
 func TestPDFGetPreview_PageRange(t *testing.T) {
 	store := &mockStore{blob: []byte(fakePDFBytes)}
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -153,7 +169,7 @@ func TestPDFGetPreview_FirstPageZero(t *testing.T) {
 // (means "all pages" per spec).
 func TestPDFGetPreview_LastPageZeroMeansAll(t *testing.T) {
 	store := &mockStore{blob: []byte(fakePDFBytes)}
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -215,7 +231,7 @@ func TestPDFGetThumbnail_InvalidArea(t *testing.T) {
 
 // TestPDFPostPreview_Success verifies POST / returns 200 + application/pdf.
 func TestPDFPostPreview_Success(t *testing.T) {
-	restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+	restoreSlice := stubPDFSliceRelay([]byte(fakePDFBytes), nil)
 	defer restoreSlice()
 
 	cfg := testCfg()
@@ -323,4 +339,141 @@ func TestPDFGetPreview_UnmatchedPath(t *testing.T) {
 	rec := doRequest(mux, http.MethodGet, path)
 
 	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+// TestPDFPostPreview_RelaySlice verifies that POST /preview/pdf/ relays slicing to
+// a fake worker and returns 200 + application/pdf when the worker succeeds.
+func TestPDFPostPreview_RelaySlice(t *testing.T) {
+	slicedPDF := []byte("%PDF-1.4 sliced")
+
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != internalPDFSlicePath {
+			t.Errorf("worker: unexpected path %q", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("worker: unexpected method %q", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.WriteHeader(http.StatusOK)
+		w.Write(slicedPDF) //nolint:errcheck
+	}))
+	defer worker.Close()
+
+	relayClient := &http.Client{}
+	cfg := testCfg()
+
+	mux := http.NewServeMux()
+	registerPDFRoutes(mux, cfg, nil, nil, relayClient, worker.URL)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200 (body: %q)", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Content-Type") != "application/pdf" {
+		t.Errorf("Content-Type: got %q, want application/pdf", rec.Header().Get("Content-Type"))
+	}
+	if string(rec.Body.Bytes()) != string(slicedPDF) {
+		t.Errorf("body: got %q, want %q", rec.Body.String(), slicedPDF)
+	}
+}
+
+// TestPDFGetPreview_RelaySlice verifies that GET /preview/pdf/{id}/{version}/
+// relays slicing to the worker and returns 200.
+func TestPDFGetPreview_RelaySlice(t *testing.T) {
+	slicedPDF := []byte("%PDF-1.4 sliced-get")
+	store := &mockStore{blob: []byte(fakePDFBytes)}
+
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != internalPDFSlicePath {
+			t.Errorf("worker: unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.WriteHeader(http.StatusOK)
+		w.Write(slicedPDF) //nolint:errcheck
+	}))
+	defer worker.Close()
+
+	relayClient := &http.Client{}
+	cfg := testCfg()
+
+	mux := http.NewServeMux()
+	registerPDFRoutes(mux, cfg, store, nil, relayClient, worker.URL)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200 (body: %q)", rec.Code, rec.Body.String())
+	}
+	if string(rec.Body.Bytes()) != string(slicedPDF) {
+		t.Errorf("body: got %q, want %q", rec.Body.String(), slicedPDF)
+	}
+}
+
+// TestPDFPostPreview_WorkerSliceError verifies that when the worker returns a
+// non-200 status, the main handler returns 400 InputError.
+func TestPDFPostPreview_WorkerSliceError(t *testing.T) {
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	}))
+	defer worker.Close()
+
+	relayClient := &http.Client{}
+	cfg := testCfg()
+
+	mux := http.NewServeMux()
+	registerPDFRoutes(mux, cfg, nil, nil, relayClient, worker.URL)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
+}
+
+// TestPDFPreview_MainDoesNotCallPDFium is a regression guard: the main-role handler
+// with pdfSliceFunc unstubbed (would return "PDFium pool not initialised" if called)
+// must return 200 when a fake worker handles the relay — proving relay is used, not
+// direct pdfium.
+func TestPDFPreview_MainDoesNotCallPDFium(t *testing.T) {
+	slicedPDF := []byte("%PDF-1.4 worker-slice")
+
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == internalPDFSlicePath {
+			w.Header().Set("Content-Type", "application/pdf")
+			w.WriteHeader(http.StatusOK)
+			w.Write(slicedPDF) //nolint:errcheck
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer worker.Close()
+
+	// Do NOT stub pdfSliceFunc — it calls render.PDFSlice which returns
+	// "PDFium pool not initialised" when PDFWorkerInit was never called.
+	// A 200 response proves main used the relay path, not pdfium directly.
+
+	relayClient := &http.Client{}
+	cfg := testCfg()
+
+	mux := http.NewServeMux()
+	registerPDFRoutes(mux, cfg, nil, nil, relayClient, worker.URL)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("regression: main process called pdfium directly — got %d, want 200 (body: %q)",
+			rec.Code, rec.Body.String())
+	}
 }

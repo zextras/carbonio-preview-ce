@@ -6,11 +6,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/zextras/carbonio-preview-ce/config"
@@ -65,7 +67,7 @@ func routePDF(
 		switch len(parts) {
 		case 2:
 			// GET /{id}/{version}/
-			pdfGetPreview(w, r, parts[0], parts[1], cfg, store)
+			pdfGetPreview(w, r, parts[0], parts[1], cfg, store, relayClient, pdfInternalAddr)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] == "thumbnail" {
@@ -81,7 +83,7 @@ func routePDF(
 		switch len(parts) {
 		case 0:
 			// POST /
-			pdfPostPreview(w, r, cfg)
+			pdfPostPreview(w, r, cfg, relayClient, pdfInternalAddr)
 		case 2:
 			// POST /{area}/thumbnail/
 			if parts[1] == "thumbnail" {
@@ -105,6 +107,8 @@ func pdfGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
+	relayClient *http.Client,
+	pdfInternalAddr string,
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
@@ -137,9 +141,9 @@ func pdfGetPreview(
 		return
 	}
 
-	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
+	sliced, err := pdfSliceRelayFunc(r.Context(), data, firstPage, lastPage, relayClient, pdfInternalAddr)
 	if err != nil {
-		log.Printf("pdfGetPreview PDFSlice error: %v", err)
+		slog.Error("pdfGetPreview: relayPDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -147,7 +151,7 @@ func pdfGetPreview(
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(sliced); werr != nil {
-		log.Printf("pdfGetPreview write: %v", werr)
+		slog.Warn("pdfGetPreview: write", "err", werr)
 	}
 }
 
@@ -216,6 +220,8 @@ func pdfPostPreview(
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg *config.Config,
+	relayClient *http.Client,
+	pdfInternalAddr string,
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
@@ -229,9 +235,9 @@ func pdfPostPreview(
 		return
 	}
 
-	sliced, err := pdfSliceFunc(data, firstPage, lastPage)
+	sliced, err := pdfSliceRelayFunc(r.Context(), data, firstPage, lastPage, relayClient, pdfInternalAddr)
 	if err != nil {
-		log.Printf("pdfPostPreview PDFSlice error: %v", err)
+		slog.Error("pdfPostPreview: relayPDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -239,7 +245,7 @@ func pdfPostPreview(
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(sliced); werr != nil {
-		log.Printf("pdfPostPreview write: %v", werr)
+		slog.Warn("pdfPostPreview: write", "err", werr)
 	}
 }
 
@@ -304,7 +310,7 @@ func renderPDFThumbnail(
 	// PDF worker process: render in-process using PDFium + libvips.
 	out, err := pdfRasterizeFunc(sem, data, 0, width, height, outputFormat, quality, shape)
 	if err != nil {
-		log.Printf("renderPDFThumbnail PDFRasterize: %v", err)
+		slog.Error("renderPDFThumbnail: PDFRasterize", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -318,7 +324,7 @@ func renderPDFThumbnail(
 	w.Header().Set("Content-Type", contentTypeForFormat(actualFormat))
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(out); werr != nil {
-		log.Printf("renderPDFThumbnail write: %v", werr)
+		slog.Warn("renderPDFThumbnail: write", "err", werr)
 	}
 }
 
@@ -341,7 +347,7 @@ func relayPDFRender(
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, relayURL, bytes.NewReader(data))
 	if err != nil {
-		log.Printf("relayPDFRender: build request: %v", err)
+		slog.Error("relayPDFRender: build request", "err", err)
 		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
@@ -349,7 +355,7 @@ func relayPDFRender(
 
 	resp, err := relayClient.Do(req)
 	if err != nil {
-		log.Printf("relayPDFRender: relay request failed: %v", err)
+		slog.Error("relayPDFRender: relay request failed", "err", err)
 		errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		return
 	}
@@ -359,9 +365,88 @@ func relayPDFRender(
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	if _, werr := io.Copy(w, resp.Body); werr != nil {
-		log.Printf("relayPDFRender: copy response body: %v", werr)
+		slog.Warn("relayPDFRender: copy response body", "err", werr)
 	}
+}
+
+// relayPDFSlice sends a PDF slice request to the internal PDF worker pool.
+// first_page and lastPage are 1-indexed. Returns the sliced PDF bytes,
+// or an error (caller maps to HTTP 400 InputError).
+func relayPDFSlice(
+	ctx context.Context,
+	data []byte,
+	firstPage, lastPage int,
+	relayClient *http.Client,
+	pdfInternalAddr string,
+) ([]byte, error) {
+	relayURL := fmt.Sprintf(
+		"%s%s?first_page=%d&last_page=%d",
+		pdfInternalAddr, internalPDFSlicePath,
+		firstPage, lastPage,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, relayURL, bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("relayPDFSlice: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/pdf")
+
+	resp, err := relayClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("relayPDFSlice: relay failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("relayPDFSlice: read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("relayPDFSlice: worker returned %d", resp.StatusCode)
+	}
+
+	return body, nil
 }
 
 // internalPDFRenderPath is the endpoint that PDF worker processes expose.
 const internalPDFRenderPath = "/render/pdf"
+
+// internalPDFSlicePath is the endpoint that PDF workers expose for PDF slicing.
+const internalPDFSlicePath = "/render/pdf/slice"
+
+// handleInternalPDFSlice is the /render/pdf/slice endpoint served by PDF workers.
+// Accepts a POST with raw PDF body and first_page / last_page query params (1-indexed).
+// Returns the sliced PDF bytes with Content-Type application/pdf.
+func handleInternalPDFSlice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	firstPage, _ := strconv.Atoi(q.Get("first_page"))
+	lastPage, _ := strconv.Atoi(q.Get("last_page"))
+	if firstPage == 0 {
+		firstPage = 1
+	}
+
+	data, err := readBody(r)
+	if err != nil || len(data) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	out, err := pdfSliceFunc(data, firstPage, lastPage)
+	if err != nil {
+		slog.Error("handleInternalPDFSlice: PDFSlice", "err", err)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.WriteHeader(http.StatusOK)
+	if _, werr := w.Write(out); werr != nil {
+		slog.Warn("handleInternalPDFSlice: write", "err", werr)
+	}
+}

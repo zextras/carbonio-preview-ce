@@ -6,7 +6,7 @@ package server
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -66,7 +66,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentPreviewDisabled)
 				return
 			}
-			docGetPreview(w, r, parts[0], parts[1], cfg, store)
+			docGetPreview(w, r, parts[0], parts[1], cfg, store, relayClient, pdfInternalAddr)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] != "thumbnail" {
@@ -90,7 +90,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentPreviewDisabled)
 				return
 			}
-			docPostPreview(w, r, cfg)
+			docPostPreview(w, r, cfg, relayClient, pdfInternalAddr)
 		case 2:
 			// POST /{area}/thumbnail/
 			if parts[1] != "thumbnail" {
@@ -119,6 +119,8 @@ func docGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
+	relayClient *http.Client,
+	pdfInternalAddr string,
 ) {
 	id, err := parseID(rawID)
 	if err != nil {
@@ -154,14 +156,14 @@ func docGetPreview(
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
-		log.Printf("docGetPreview convert error: %v", err)
+		slog.Error("docGetPreview: convert", "err", err)
 		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 
-	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
+	sliced, err := pdfSliceRelayFunc(r.Context(), pdfBytes, firstPage, lastPage, relayClient, pdfInternalAddr)
 	if err != nil {
-		log.Printf("docGetPreview PDFSlice error: %v", err)
+		slog.Error("docGetPreview: relayPDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -169,7 +171,7 @@ func docGetPreview(
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(sliced); werr != nil {
-		log.Printf("docGetPreview write: %v", werr)
+		slog.Warn("docGetPreview: write", "err", werr)
 	}
 }
 
@@ -233,7 +235,7 @@ func docGetThumbnail(
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
-		log.Printf("docGetThumbnail convert error: %v", err)
+		slog.Error("docGetThumbnail: convert", "err", err)
 		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
@@ -246,6 +248,8 @@ func docPostPreview(
 	w http.ResponseWriter,
 	r *http.Request,
 	cfg *config.Config,
+	relayClient *http.Client,
+	pdfInternalAddr string,
 ) {
 	firstPage, lastPage, err := parsePages(r)
 	if err != nil {
@@ -262,14 +266,14 @@ func docPostPreview(
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
-		log.Printf("docPostPreview convert error: %v", err)
+		slog.Error("docPostPreview: convert", "err", err)
 		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}
 
-	sliced, err := pdfSliceFunc(pdfBytes, firstPage, lastPage)
+	sliced, err := pdfSliceRelayFunc(r.Context(), pdfBytes, firstPage, lastPage, relayClient, pdfInternalAddr)
 	if err != nil {
-		log.Printf("docPostPreview PDFSlice error: %v", err)
+		slog.Error("docPostPreview: relayPDFSlice", "err", err)
 		errBadRequest(w, config.Msg.InputError)
 		return
 	}
@@ -277,7 +281,7 @@ func docPostPreview(
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(sliced); werr != nil {
-		log.Printf("docPostPreview write: %v", werr)
+		slog.Warn("docPostPreview: write", "err", werr)
 	}
 }
 
@@ -321,7 +325,7 @@ func docPostThumbnail(
 
 	pdfBytes, err := convertDocToPDF(r, data, langTag, cfg)
 	if err != nil {
-		log.Printf("docPostThumbnail convert error: %v", err)
+		slog.Error("docPostThumbnail: convert", "err", err)
 		errDetail(w, http.StatusBadGateway, config.Msg.StorageUnavailable)
 		return
 	}

@@ -72,6 +72,7 @@ func (s *Server) runPDFWorker() {
 	mux.HandleFunc(internalPDFRenderPath, func(w http.ResponseWriter, r *http.Request) {
 		handleInternalPDFRender(w, r, sem)
 	})
+	mux.HandleFunc(internalPDFSlicePath, handleInternalPDFSlice)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.cfg.PDFInternalPort)
 	ln, err := listenWithReusePort(addr)
