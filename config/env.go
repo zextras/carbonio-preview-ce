@@ -15,15 +15,11 @@ import (
 // environment variables. These are framework-level knobs (equivalent to
 // QUARKUS_* in Quarkus services) and are intentionally outside the extensions
 // networking/application config chain.
+//
+// Timeouts (ServiceTimeoutInSeconds, ServiceDocsTimeout) are NOT here: they
+// are Consul KV application-layer keys ("timeout-in-seconds",
+// "docs-timeout-in-seconds") loaded through the config chain in config.go.
 type EnvKnobs struct {
-	// StoragesTimeout is the HTTP timeout in seconds for carbonio-storages requests.
-	// Controlled by PREVIEW_STORAGES_TIMEOUT_SECONDS (default: 30).
-	StoragesTimeout int
-
-	// DocsTimeout is the HTTP timeout in seconds for carbonio-docs-editor conversion requests.
-	// Controlled by PREVIEW_DOCS_TIMEOUT_SECONDS (default: 15).
-	DocsTimeout int
-
 	// RenderConcurrency is the maximum number of concurrent image-render operations.
 	// Controlled by PREVIEW_RENDER_CONCURRENCY (default: runtime.NumCPU()).
 	RenderConcurrency int
@@ -37,7 +33,7 @@ type EnvKnobs struct {
 	VipsConcurrency int
 }
 
-// loadEnvKnobs reads the five PREVIEW_* performance-tuning environment
+// loadEnvKnobs reads the three PREVIEW_* performance-tuning environment
 // variables and returns an EnvKnobs struct. Absent or empty variables fall
 // back to their documented defaults. An invalid value (non-integer or < 1)
 // causes a descriptive error naming the variable so the service fails fast at
@@ -45,16 +41,6 @@ type EnvKnobs struct {
 func loadEnvKnobs() (EnvKnobs, error) {
 	var k EnvKnobs
 	var err error
-
-	k.StoragesTimeout, err = envPositiveInt("PREVIEW_STORAGES_TIMEOUT_SECONDS", 30)
-	if err != nil {
-		return EnvKnobs{}, err
-	}
-
-	k.DocsTimeout, err = envPositiveInt("PREVIEW_DOCS_TIMEOUT_SECONDS", 15)
-	if err != nil {
-		return EnvKnobs{}, err
-	}
 
 	k.RenderConcurrency, err = envPositiveInt("PREVIEW_RENDER_CONCURRENCY", runtime.NumCPU())
 	if err != nil {

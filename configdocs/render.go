@@ -29,10 +29,16 @@ type RawKey struct {
 
 	// IfNotPresent is the note for absent-by-default keys.
 	IfNotPresent string
+
+	// HiddenFromDocs, when true, causes this key to be excluded from the
+	// rendered documentation output.
+	HiddenFromDocs bool
 }
 
 // BuildDocs converts a flat slice of RawKey entries (typically from
 // config.RegisteredKeys()) into a Docs value ready for rendering.
+//
+// Keys with HiddenFromDocs=true are silently excluded from the output.
 //
 // Networking keys are displayed with their raw dot-notation key.
 // Application keys are displayed as Consul KV paths:
@@ -46,6 +52,9 @@ func BuildDocs(serviceName, shortName string, keys []RawKey) Docs {
 		ShortName:   shortName,
 	}
 	for _, k := range keys {
+		if k.HiddenFromDocs {
+			continue
+		}
 		e := Entry{
 			Default:      k.Default,
 			IfNotPresent: k.IfNotPresent,

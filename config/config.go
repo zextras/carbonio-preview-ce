@@ -17,6 +17,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"strconv"
 )
 
 // Config holds every configuration value consumed by the service.
@@ -167,6 +168,8 @@ func Load() error {
 
 	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "enable-document-preview", parseErr)
 	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "enable-document-thumbnail", parseErr)
+	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "timeout-in-seconds", parseErr)
+	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "docs-timeout-in-seconds", parseErr)
 
 	if parseErr != nil {
 		return parseErr
@@ -184,8 +187,6 @@ func Load() error {
 	if err != nil {
 		return err
 	}
-	c.ServiceTimeoutInSeconds = knobs.StoragesTimeout
-	c.ServiceDocsTimeout = knobs.DocsTimeout
 	c.RenderConcurrency = knobs.RenderConcurrency
 	c.PDFWorkers = knobs.PDFWorkers
 	c.VIPSConcurrency = knobs.VipsConcurrency
@@ -259,4 +260,25 @@ func appBool(r Resolved, key string, prior error) (bool, error) {
 	default:
 		return false, fmt.Errorf("config: key %q has invalid value %q: must be \"true\" or \"false\"", key, raw)
 	}
+}
+
+// appPositiveInt reads an application-layer key as a positive integer (>= 1).
+// If the key is absent (no KV value, no env override, registry default empty),
+// it returns 0 and no error — callers should ensure the registry provides a
+// non-empty default so the key is always present.
+// If the value is present but not a valid positive integer, an error naming the
+// key is returned (fail-fast at Load time).
+func appPositiveInt(r Resolved, key string, prior error) (int, error) {
+	if prior != nil {
+		return 0, prior
+	}
+	raw, ok := r.Application.Get(key)
+	if !ok || raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", key, raw)
+	}
+	return n, nil
 }

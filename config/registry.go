@@ -45,6 +45,12 @@ type KeyEntry struct {
 
 	// Description is a short human-readable explanation of the key's purpose.
 	Description string
+
+	// HiddenFromDocs, when true, causes the key to be excluded from the
+	// generated configs.txt and docs/configs.md documentation.
+	// Use for operator-facing keys that are intentionally undocumented
+	// (e.g. internal tuning knobs not intended for general use).
+	HiddenFromDocs bool
 }
 
 // registry holds all registered keys, guarded by a mutex so that advanced
@@ -221,14 +227,29 @@ func registerCEKeys() {
 			Default:     "false",
 			Description: "Whether document thumbnail generation is enabled.",
 		},
+		{
+			Key:            "timeout-in-seconds",
+			Namespace:      NamespaceApplication,
+			Default:        "30",
+			Description:    "Timeout (s) for fetching the source blob from storages.",
+			HiddenFromDocs: true,
+		},
+		{
+			Key:            "docs-timeout-in-seconds",
+			Namespace:      NamespaceApplication,
+			Default:        "15",
+			Description:    "Timeout (s) for docs-editor (Collabora) conversion.",
+			HiddenFromDocs: true,
+		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
 		// outside the extensions networking/application config chain.
 		//
-		// NOTE: timeout, concurrency, and endpoint-path knobs are also NOT registered
-		// here. They are hardcoded constants (endpoint paths) or controlled by
-		// PREVIEW_* environment variables (timeouts and concurrency).
+		// NOTE: concurrency knobs are NOT registered here; they are controlled by
+		// PREVIEW_* environment variables (PREVIEW_RENDER_CONCURRENCY,
+		// PREVIEW_PDF_WORKERS, PREVIEW_VIPS_CONCURRENCY).
+		// Endpoint-path knobs are hardcoded constants.
 	}
 
 	for _, e := range networking {

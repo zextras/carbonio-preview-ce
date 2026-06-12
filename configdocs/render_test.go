@@ -24,10 +24,11 @@ func buildDocsFromRegistry() configdocs.Docs {
 	raw := make([]configdocs.RawKey, len(keys))
 	for i, k := range keys {
 		raw[i] = configdocs.RawKey{
-			Key:          k.Key,
-			Namespace:    string(k.Namespace),
-			Default:      k.Default,
-			IfNotPresent: k.IfNotPresent,
+			Key:            k.Key,
+			Namespace:      string(k.Namespace),
+			Default:        k.Default,
+			IfNotPresent:   k.IfNotPresent,
+			HiddenFromDocs: k.HiddenFromDocs,
 		}
 	}
 	return configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
@@ -312,6 +313,48 @@ func TestBoxAlignment(t *testing.T) {
 	for i, rl := range rowLens {
 		if rl != first {
 			t.Errorf("row %d has different length %d (expected %d)", i, rl, first)
+		}
+	}
+}
+
+// TestHiddenFromDocs_Filtered verifies that keys with HiddenFromDocs=true are
+// excluded from both txt and md rendered output.
+func TestHiddenFromDocs_Filtered(t *testing.T) {
+	docs := configdocs.BuildDocs("carbonio-svc", "svc", []configdocs.RawKey{
+		{Key: "visible-key", Namespace: "application", Default: "v"},
+		{Key: "hidden-key", Namespace: "application", Default: "h", HiddenFromDocs: true},
+	})
+	txt := configdocs.RenderTxt(docs)
+	if strings.Contains(txt, "hidden-key") {
+		t.Errorf("txt: HiddenFromDocs key must not appear in output; got:\n%s", txt)
+	}
+	if !strings.Contains(txt, "visible-key") {
+		t.Errorf("txt: visible key must appear in output; got:\n%s", txt)
+	}
+
+	md := configdocs.RenderMd(docs)
+	if strings.Contains(md, "hidden-key") {
+		t.Errorf("md: HiddenFromDocs key must not appear in output; got:\n%s", md)
+	}
+	if !strings.Contains(md, "visible-key") {
+		t.Errorf("md: visible key must appear in output; got:\n%s", md)
+	}
+}
+
+// TestTimeoutKeysAbsentFromGeneratedDocs verifies that the live registry's
+// timeout keys ("timeout-in-seconds", "docs-timeout-in-seconds") are NOT
+// present in the rendered txt or md output, because they are HiddenFromDocs.
+func TestTimeoutKeysAbsentFromGeneratedDocs(t *testing.T) {
+	docs := buildDocsFromRegistry()
+	txt := configdocs.RenderTxt(docs)
+	md := configdocs.RenderMd(docs)
+
+	for _, key := range []string{"timeout-in-seconds", "docs-timeout-in-seconds"} {
+		if strings.Contains(txt, key) {
+			t.Errorf("txt: key %q must be hidden from docs but appears in output:\n%s", key, txt)
+		}
+		if strings.Contains(md, key) {
+			t.Errorf("md: key %q must be hidden from docs but appears in output:\n%s", key, md)
 		}
 	}
 }

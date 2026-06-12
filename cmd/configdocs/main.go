@@ -33,10 +33,11 @@ func main() {
 	raw := make([]configdocs.RawKey, len(keys))
 	for i, k := range keys {
 		raw[i] = configdocs.RawKey{
-			Key:          k.Key,
-			Namespace:    string(k.Namespace),
-			Default:      k.Default,
-			IfNotPresent: k.IfNotPresent,
+			Key:            k.Key,
+			Namespace:      string(k.Namespace),
+			Default:        k.Default,
+			IfNotPresent:   k.IfNotPresent,
+			HiddenFromDocs: k.HiddenFromDocs,
 		}
 	}
 

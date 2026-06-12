@@ -88,9 +88,10 @@ func TestDefaults(t *testing.T) {
 		// application (KV)
 		{"ServiceEnableDocumentPreview", App.ServiceEnableDocumentPreview, true},
 		{"ServiceEnableDocumentThumbnail", App.ServiceEnableDocumentThumbnail, false},
-		// env knobs (default values)
+		// application (KV) — timeouts (HiddenFromDocs, but still KV-configurable)
 		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
 		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
+		// env knobs (default values)
 		{"RenderConcurrency", App.RenderConcurrency, runtime.NumCPU()},
 		{"PDFWorkers", App.PDFWorkers, runtime.NumCPU()},
 		{"VIPSConcurrency", App.VIPSConcurrency, 1},
@@ -244,16 +245,46 @@ func TestEnvOverridesDocsEditorHost(t *testing.T) {
 	}
 }
 
-// TestStoragesTimeoutEnvOverride verifies PREVIEW_STORAGES_TIMEOUT_SECONDS overrides
-// the default.
-func TestStoragesTimeoutEnvOverride(t *testing.T) {
-	t.Setenv("PREVIEW_STORAGES_TIMEOUT_SECONDS", "60")
-	srv := buildKVServer(t, nil)
+// TestStoragesTimeoutKVOverride verifies that the "timeout-in-seconds" Consul KV
+// key overrides the default (30) and is reflected in ServiceTimeoutInSeconds.
+func TestStoragesTimeoutKVOverride(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{
+		"timeout-in-seconds": "60",
+	})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
 	if App.ServiceTimeoutInSeconds != 60 {
 		t.Errorf("ServiceTimeoutInSeconds = %d, want 60", App.ServiceTimeoutInSeconds)
+	}
+}
+
+// TestDocsTimeoutKVOverride verifies that the "docs-timeout-in-seconds" Consul KV
+// key overrides the default (15) and is reflected in ServiceDocsTimeout.
+func TestDocsTimeoutKVOverride(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{
+		"docs-timeout-in-seconds": "45",
+	})
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.ServiceDocsTimeout != 45 {
+		t.Errorf("ServiceDocsTimeout = %d, want 45", App.ServiceDocsTimeout)
+	}
+}
+
+// TestTimeoutKVDefaultAppliedWhenAbsent verifies that when the KV server returns
+// no timeout keys (404 → empty map), the registry defaults (30 / 15) are used.
+func TestTimeoutKVDefaultAppliedWhenAbsent(t *testing.T) {
+	srv := buildKVServer(t, nil) // 404 → empty application map
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.ServiceTimeoutInSeconds != 30 {
+		t.Errorf("ServiceTimeoutInSeconds = %d, want 30 (registry default)", App.ServiceTimeoutInSeconds)
+	}
+	if App.ServiceDocsTimeout != 15 {
+		t.Errorf("ServiceDocsTimeout = %d, want 15 (registry default)", App.ServiceDocsTimeout)
 	}
 }
 
@@ -376,18 +407,19 @@ func TestAreDocsEnabled(t *testing.T) {
 
 // ─── parse-failure → error ────────────────────────────────────────────────────
 
-// TestParseFailureEnvTimeout verifies that a non-integer PREVIEW_STORAGES_TIMEOUT_SECONDS
-// causes Load() to return an error naming the env var.
-func TestParseFailureEnvTimeout(t *testing.T) {
-	t.Setenv("PREVIEW_STORAGES_TIMEOUT_SECONDS", "not-a-number")
-	srv := buildKVServer(t, nil)
+// TestParseFailureKVTimeout verifies that a non-integer "timeout-in-seconds"
+// Consul KV value causes Load() to return an error naming the key.
+func TestParseFailureKVTimeout(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{
+		"timeout-in-seconds": "not-a-number",
+	})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad timeout value, got nil")
+		t.Fatal("expected error for bad timeout-in-seconds value, got nil")
 	}
-	if !strings.Contains(err.Error(), "PREVIEW_STORAGES_TIMEOUT_SECONDS") {
-		t.Errorf("error %q should mention env var PREVIEW_STORAGES_TIMEOUT_SECONDS", err.Error())
+	if !strings.Contains(err.Error(), "timeout-in-seconds") {
+		t.Errorf("error %q should mention key %q", err.Error(), "timeout-in-seconds")
 	}
 }
 
@@ -422,24 +454,25 @@ func TestParseFailurePDFWorkers(t *testing.T) {
 	}
 }
 
-// TestParseFailureZeroTimeout verifies that setting timeout env vars to 0
-// (not a positive integer) causes Load() to return an error naming the variable.
-func TestParseFailureZeroTimeout(t *testing.T) {
-	for _, tc := range []struct{ env, name string }{
-		{"PREVIEW_STORAGES_TIMEOUT_SECONDS", "storages timeout"},
-		{"PREVIEW_DOCS_TIMEOUT_SECONDS", "docs timeout"},
+// TestParseFailureZeroKVTimeout verifies that setting timeout KV keys to "0"
+// (not a positive integer) causes Load() to return an error naming the key.
+func TestParseFailureZeroKVTimeout(t *testing.T) {
+	for _, tc := range []struct{ kvKey, name string }{
+		{"timeout-in-seconds", "storages timeout"},
+		{"docs-timeout-in-seconds", "docs timeout"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(tc.env, "0")
-			srv := buildKVServer(t, nil)
+			srv := buildKVServer(t, map[string]string{
+				tc.kvKey: "0",
+			})
 			pointConsulAt(t, srv)
 			err := Load()
 			if err == nil {
-				t.Fatalf("expected error for %s=0, got nil", tc.env)
+				t.Fatalf("expected error for %s=0, got nil", tc.kvKey)
 			}
-			if !strings.Contains(err.Error(), tc.env) {
-				t.Errorf("error %q should mention env var %q", err.Error(), tc.env)
+			if !strings.Contains(err.Error(), tc.kvKey) {
+				t.Errorf("error %q should mention key %q", err.Error(), tc.kvKey)
 			}
 		})
 	}

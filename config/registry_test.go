@@ -53,6 +53,8 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 	required := []string{
 		"enable-document-preview",
 		"enable-document-thumbnail",
+		"timeout-in-seconds",
+		"docs-timeout-in-seconds",
 	}
 
 	idx := make(map[string]KeyEntry, len(keys))
@@ -63,6 +65,23 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 	for _, k := range required {
 		if _, ok := idx[k]; !ok {
 			t.Errorf("application key %q not registered", k)
+		}
+	}
+
+	// Verify HiddenFromDocs is set correctly.
+	hiddenExpected := map[string]bool{
+		"enable-document-preview":   false,
+		"enable-document-thumbnail": false,
+		"timeout-in-seconds":        true,
+		"docs-timeout-in-seconds":   true,
+	}
+	for k, wantHidden := range hiddenExpected {
+		e, ok := idx[k]
+		if !ok {
+			continue // already reported above
+		}
+		if e.HiddenFromDocs != wantHidden {
+			t.Errorf("application key %q HiddenFromDocs = %v, want %v", k, e.HiddenFromDocs, wantHidden)
 		}
 	}
 }
@@ -106,6 +125,8 @@ func TestKeyDefaults(t *testing.T) {
 	appChecks := []struct{ key, dflt, ifNotPresent string }{
 		{"enable-document-preview", "true", ""},
 		{"enable-document-thumbnail", "false", ""},
+		{"timeout-in-seconds", "30", ""},
+		{"docs-timeout-in-seconds", "15", ""},
 	}
 	for _, tc := range appChecks {
 		e, ok := appIdx[tc.key]
@@ -245,10 +266,13 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		}
 	}
 
-	// Spot-check: known application keys that must appear in order.
+	// Spot-check: known application keys that must appear in alphabetical order.
+	// Order: docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < timeout-in-seconds
 	appExpected := []string{
+		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
+		"timeout-in-seconds",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {
