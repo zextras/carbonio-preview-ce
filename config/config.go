@@ -67,6 +67,12 @@ type Config struct {
 	// Controlled by PREVIEW_VIPS_CONCURRENCY env var (default: 1).
 	VIPSConcurrency int
 
+	// CacheMaxBytes is the byte budget of the in-process rendered-output cache,
+	// derived from the "cache-max-mb" application key (MiB → bytes). 0 disables
+	// the cache. Application key ⇒ env override APPLICATION_CONFIG_CACHE_MAX_MB
+	// is accepted automatically by the resolver chain.
+	CacheMaxBytes int64
+
 	// Derived addresses (computed once in Load)
 	StorageFullAddress                   string
 	DocumentConversionBaseAddress        string
@@ -171,9 +177,14 @@ func Load() error {
 	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "timeout-in-seconds", parseErr)
 	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "docs-timeout-in-seconds", parseErr)
 
+	var cacheMaxMB int
+	cacheMaxMB, parseErr = appNonNegativeInt(r, "cache-max-mb", parseErr)
+
 	if parseErr != nil {
 		return parseErr
 	}
+
+	c.CacheMaxBytes = int64(cacheMaxMB) * 1024 * 1024
 
 	// ── Hardcoded endpoint constants (not operator-configurable) ──────────────
 	c.StorageDownloadAPI = storageDownloadAPI
@@ -279,6 +290,24 @@ func appPositiveInt(r Resolved, key string, prior error) (int, error) {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
 		return 0, fmt.Errorf("config: key %q has invalid value %q: must be a positive integer", key, raw)
+	}
+	return n, nil
+}
+
+// appNonNegativeInt reads an application-layer key as a non-negative integer
+// (>= 0). Absent/empty → returns 0 (callers should give the key a default).
+// A present-but-invalid value (non-integer or < 0) is a fail-fast error.
+func appNonNegativeInt(r Resolved, key string, prior error) (int, error) {
+	if prior != nil {
+		return 0, prior
+	}
+	raw, ok := r.Application.Get(key)
+	if !ok || raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("config: key %q has invalid value %q: must be a non-negative integer", key, raw)
 	}
 	return n, nil
 }

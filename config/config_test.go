@@ -634,3 +634,36 @@ func TestAccessorWorksAfterLoad(t *testing.T) {
 	// Application() must also be accessible without panicking.
 	_ = Application()
 }
+
+func TestCacheMaxMBDefault(t *testing.T) {
+	// No KV value → registry default "256" → 256 MiB.
+	srv := buildKVServer(t, nil) // 404 → empty application map
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	want := int64(256) * 1024 * 1024
+	if App.CacheMaxBytes != want {
+		t.Errorf("CacheMaxBytes = %d, want %d", App.CacheMaxBytes, want)
+	}
+}
+
+func TestCacheMaxMBKVOverride(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"cache-max-mb": "512"})
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	want := int64(512) * 1024 * 1024
+	if App.CacheMaxBytes != want {
+		t.Errorf("CacheMaxBytes = %d, want %d", App.CacheMaxBytes, want)
+	}
+}
+
+func TestCacheMaxMBZeroDisables(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"cache-max-mb": "0"})
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.CacheMaxBytes != 0 {
+		t.Errorf("CacheMaxBytes = %d, want 0 (disabled)", App.CacheMaxBytes)
+	}
+}
