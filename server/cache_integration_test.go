@@ -88,3 +88,23 @@ func TestCacheVersionDifferentiation(t *testing.T) {
 		t.Errorf("repeat of v1 must hit cache; store.calls = %d, want 2", store.calls)
 	}
 }
+
+// TestCacheKey_OwnerDifferentiation: different ownerID ⇒ different cache key.
+// This is the ADV delta: PowerStore routing scopes entries per file owner, and
+// the shared CE cacheKey must keep two owners' renders distinct. It would fail
+// if ownerID were ever dropped from the key construction.
+func TestCacheKey_OwnerDifferentiation(t *testing.T) {
+	k1 := cacheKey("img-preview", validUUID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "ownerA")
+	k2 := cacheKey("img-preview", validUUID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "ownerB")
+	if k1 == k2 {
+		t.Error("different ownerID must produce different cache keys (ADV owner-scoping)")
+	}
+	kEmpty := cacheKey("img-preview", validUUID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "")
+	if kEmpty == k1 {
+		t.Error("empty ownerID (CE) must differ from a populated one")
+	}
+	// Identical args must produce identical keys (key is a pure function of args).
+	if cacheKey("img-preview", validUUID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "ownerA") != k1 {
+		t.Error("identical args must produce identical cache keys")
+	}
+}
