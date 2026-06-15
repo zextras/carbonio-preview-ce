@@ -36,7 +36,7 @@ func stubCollaboraConvert(returnData []byte, returnErr error) (restore func()) {
 // buildDocMux registers document routes on a fresh mux.
 func buildDocMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerDocumentRoutes(mux, cfg, store, nil)
+	registerDocumentRoutes(mux, cfg, store, nil, nil)
 	return mux
 }
 

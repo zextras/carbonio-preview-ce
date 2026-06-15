@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
@@ -20,12 +21,13 @@ func registerPDFRoutes(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	base := "/" + cfg.ServiceName + "/" + cfg.ServicePDFName
 
 	mux.HandleFunc(base+"/", func(w http.ResponseWriter, r *http.Request) {
-		routePDF(w, r, base, cfg, store, sem)
+		routePDF(w, r, base, cfg, store, c, sem)
 	})
 }
 
@@ -43,6 +45,7 @@ func routePDF(
 	base string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	tail := strings.TrimPrefix(r.URL.Path, base)
@@ -59,11 +62,11 @@ func routePDF(
 		switch len(parts) {
 		case 2:
 			// GET /{id}/{version}/
-			pdfGetPreview(w, r, parts[0], parts[1], cfg, store, sem)
+			pdfGetPreview(w, r, parts[0], parts[1], cfg, store, c, sem)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] == "thumbnail" {
-				pdfGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
+				pdfGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, c, sem)
 				return
 			}
 			errNotFound(w, "Not Found")
@@ -99,6 +102,7 @@ func pdfGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -121,6 +125,8 @@ func pdfGetPreview(
 		errDetail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+
+	_ = c // cache lookup/store wired in Task 6
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
@@ -158,6 +164,7 @@ func pdfGetThumbnail(
 	rawID, rawVersion, rawArea string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -206,7 +213,7 @@ func pdfGetThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, data, width, height, outputFormat, quality, shape, sem)
+	renderPDFThumbnail(w, r, data, width, height, outputFormat, quality, shape, c, "", sem)
 }
 
 // pdfPostPreview handles POST /
@@ -282,16 +289,26 @@ func pdfPostThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, data, width, height, outputFormat, quality, shape, sem)
+	// POST uploads are never cached.
+	renderPDFThumbnail(w, r, data, width, height, outputFormat, quality, shape, nil, "", sem)
 }
 
 // renderPDFThumbnail renders a PDF page to an image and writes the response.
+//
+// It is shared by the GET thumbnail handlers (pdfGetThumbnail, docGetThumbnail)
+// and the POST upload handlers (pdfPostThumbnail, docPostThumbnail). Only the
+// GET callers participate in caching: they pass a non-nil c and a non-empty
+// key. POST callers pass (nil, "") so their output is never cached. The cached
+// Content-Type is the ACTUAL written one (png when shape=="rounded"), computed
+// from actualFormat after rasterization.
 func renderPDFThumbnail(
 	w http.ResponseWriter,
 	r *http.Request,
 	data []byte,
 	width, height int,
 	outputFormat, quality, shape string,
+	c *cache.Cache,
+	key string,
 	sem chan struct{},
 ) {
 	out, err := pdfRasterizeFunc(sem, data, 0, width, height, outputFormat, quality, shape)
@@ -312,7 +329,11 @@ func renderPDFThumbnail(
 		actualFormat = "png"
 	}
 
-	w.Header().Set("Content-Type", contentTypeForFormat(actualFormat))
+	ct := contentTypeForFormat(actualFormat)
+	if c != nil && key != "" {
+		c.Put(key, cache.Entry{Body: out, ContentType: ct})
+	}
+	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(out); werr != nil {
 		slog.Warn("renderPDFThumbnail: write", "err", werr)

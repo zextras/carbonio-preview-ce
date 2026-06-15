@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
@@ -24,11 +25,12 @@ import (
 type Server struct {
 	cfg   *config.Config
 	store storage.Client
+	cache *cache.Cache
 }
 
-// New constructs a Server. cfg and store must not be nil.
-func New(cfg *config.Config, store storage.Client) *Server {
-	return &Server{cfg: cfg, store: store}
+// New constructs a Server. cfg and store must not be nil. c may be nil (cache disabled).
+func New(cfg *config.Config, store storage.Client, c *cache.Cache) *Server {
+	return &Server{cfg: cfg, store: store, cache: c}
 }
 
 // Run starts the server. It blocks until the process receives SIGTERM or SIGINT.
@@ -111,9 +113,9 @@ func (s *Server) Run() {
 // buildMux assembles the public HTTP mux with all route groups.
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, s.cfg, s.store, sem)
-	registerPDFRoutes(mux, s.cfg, s.store, sem)
-	registerDocumentRoutes(mux, s.cfg, s.store, sem)
+	registerImageRoutes(mux, s.cfg, s.store, s.cache, sem)
+	registerPDFRoutes(mux, s.cfg, s.store, s.cache, sem)
+	registerDocumentRoutes(mux, s.cfg, s.store, s.cache, sem)
 	registerHealthRoutes(mux, s.cfg)
 	registerDocRoutes(mux)
 	return mux

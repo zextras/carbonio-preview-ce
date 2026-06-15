@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
@@ -21,12 +22,13 @@ func registerDocumentRoutes(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	base := "/" + cfg.ServiceName + "/" + cfg.ServiceDocumentName
 
 	mux.HandleFunc(base+"/", func(w http.ResponseWriter, r *http.Request) {
-		routeDocument(w, r, base, cfg, store, sem)
+		routeDocument(w, r, base, cfg, store, c, sem)
 	})
 }
 
@@ -44,6 +46,7 @@ func routeDocument(
 	base string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	tail := strings.TrimPrefix(r.URL.Path, base)
@@ -63,7 +66,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentPreviewDisabled)
 				return
 			}
-			docGetPreview(w, r, parts[0], parts[1], cfg, store, sem)
+			docGetPreview(w, r, parts[0], parts[1], cfg, store, c, sem)
 		case 4:
 			// GET /{id}/{version}/{area}/thumbnail/
 			if parts[3] != "thumbnail" {
@@ -74,7 +77,7 @@ func routeDocument(
 				errBadRequest(w, config.Msg.DocumentThumbnailDisabled)
 				return
 			}
-			docGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
+			docGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, c, sem)
 		default:
 			errNotFound(w, "Not Found")
 		}
@@ -116,6 +119,7 @@ func docGetPreview(
 	rawID, rawVersion string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -139,6 +143,8 @@ func docGetPreview(
 		return
 	}
 	langTag := parseLangTag(r)
+
+	_ = c // cache lookup/store wired in Task 6
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
@@ -183,6 +189,7 @@ func docGetThumbnail(
 	rawID, rawVersion, rawArea string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -239,7 +246,7 @@ func docGetThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem)
+	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, c, "", sem)
 }
 
 // docPostPreview handles POST /
@@ -331,7 +338,8 @@ func docPostThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, sem)
+	// POST uploads are never cached.
+	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, nil, "", sem)
 }
 
 // convertDocToPDF calls CollaboraConvert to turn the document bytes into PDF.

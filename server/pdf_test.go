@@ -42,7 +42,7 @@ func stubPDFRasterize(returnData []byte, returnErr error) (restore func()) {
 // buildPDFMux registers PDF routes on a fresh mux.
 func buildPDFMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerPDFRoutes(mux, cfg, store, nil)
+	registerPDFRoutes(mux, cfg, store, nil, nil)
 	return mux
 }
 

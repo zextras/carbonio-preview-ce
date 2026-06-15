@@ -35,6 +35,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
 	"github.com/zextras/carbonio-preview-ce/render"
@@ -89,8 +90,11 @@ func main() {
 		storageTimeout,
 	)
 
+	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).
+	outCache := cache.New(cfg.CacheMaxBytes)
+
 	// Create and run the server.
-	srv := server.New(cfg, storageClient)
+	srv := server.New(cfg, storageClient, outCache)
 	srv.Run()
 }
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
@@ -23,6 +24,7 @@ func registerImageRoutes(
 	mux *http.ServeMux,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	base := "/" + cfg.ServiceName + "/" + cfg.ServiceImageName
@@ -30,7 +32,7 @@ func registerImageRoutes(
 	// We register a catch-all under the image base and dispatch manually.
 	// This avoids the lack of path-parameter support in net/http's ServeMux.
 	mux.HandleFunc(base+"/", func(w http.ResponseWriter, r *http.Request) {
-		routeImage(w, r, base, cfg, store, sem)
+		routeImage(w, r, base, cfg, store, c, sem)
 	})
 }
 
@@ -48,6 +50,7 @@ func routeImage(
 	base string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	tail := strings.TrimPrefix(r.URL.Path, base)
@@ -60,11 +63,11 @@ func routeImage(
 	case http.MethodGet:
 		// Expected: {id}/{version}/{area}  OR  {id}/{version}/{area}/thumbnail
 		if len(parts) == 4 && parts[3] == "thumbnail" {
-			imageGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
+			imageGetThumbnail(w, r, parts[0], parts[1], parts[2], cfg, store, c, sem)
 			return
 		}
 		if len(parts) == 3 {
-			imageGetPreview(w, r, parts[0], parts[1], parts[2], cfg, store, sem)
+			imageGetPreview(w, r, parts[0], parts[1], parts[2], cfg, store, c, sem)
 			return
 		}
 		errNotFound(w, "Not Found")
@@ -93,6 +96,7 @@ func imageGetPreview(
 	rawID, rawVersion, rawArea string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -131,6 +135,8 @@ func imageGetPreview(
 		return
 	}
 
+	_ = c // cache lookup/store wired in Task 6
+
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -168,6 +174,7 @@ func imageGetThumbnail(
 	rawID, rawVersion, rawArea string,
 	cfg *config.Config,
 	store storage.Client,
+	c *cache.Cache,
 	sem chan struct{},
 ) {
 	id, err := parseID(rawID)
@@ -205,6 +212,8 @@ func imageGetThumbnail(
 		errValidation(w, "query", "output_format", err.Error())
 		return
 	}
+
+	_ = c // cache lookup/store wired in Task 6
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {

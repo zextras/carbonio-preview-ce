@@ -167,7 +167,7 @@ func TestImageGetPreview_Success(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -192,7 +192,7 @@ func TestImageGetPreview_OutputFormatPNG(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files&output_format=png", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -214,7 +214,7 @@ func TestImageGetPreview_Storage404(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -231,7 +231,7 @@ func TestImageGetPreview_StorageError(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -258,7 +258,7 @@ func TestImageGetPreview_InvalidArea(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &mockStore{}
 			mux := http.NewServeMux()
-			registerImageRoutes(mux, cfg, store, nil)
+			registerImageRoutes(mux, cfg, store, nil, nil)
 
 			path := fmt.Sprintf("/preview/image/%s/1/%s/?service_type=files", validUUID, tt.area)
 			rec := doRequest(mux, http.MethodGet, path)
@@ -285,7 +285,7 @@ func TestImageGetPreview_InvalidUUID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &mockStore{}
 			mux := http.NewServeMux()
-			registerImageRoutes(mux, cfg, store, nil)
+			registerImageRoutes(mux, cfg, store, nil, nil)
 
 			path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", tt.id)
 			rec := doRequest(mux, http.MethodGet, path)
@@ -306,7 +306,7 @@ func TestImageGetPreview_MissingServiceType(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -319,7 +319,7 @@ func TestImageGetPreview_InvalidServiceType(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=unknown", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -335,7 +335,7 @@ func TestImageGetThumbnail_Success(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -366,7 +366,7 @@ func TestImageGetThumbnail_ShapeRounded(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files&shape=rounded&output_format=png", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -381,7 +381,7 @@ func TestImageGetThumbnail_InvalidShape(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files&shape=hexagonal", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -400,7 +400,7 @@ func TestImageGetPreview_QualityValues(t *testing.T) {
 
 			cfg := testCfg()
 			mux := http.NewServeMux()
-			registerImageRoutes(mux, cfg, store, nil)
+			registerImageRoutes(mux, cfg, store, nil, nil)
 
 			path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files&quality=%s", validUUID, q)
 			rec := doRequest(mux, http.MethodGet, path)
@@ -416,7 +416,7 @@ func TestImageGetPreview_InvalidQuality(t *testing.T) {
 	store := &mockStore{}
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files&quality=extreme", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -432,7 +432,7 @@ func TestImageGetPreview_CropTrue(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files&crop=true", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -449,7 +449,7 @@ func TestImagePostPreview_Success(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, nil, nil) // POST has no storage call
+	registerImageRoutes(mux, cfg, nil, nil, nil) // POST has no storage call
 
 	body, ct := buildMultipart(t, "file", "test.jpg", []byte("jpeg-data"))
 	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x200/", body)
@@ -472,7 +472,7 @@ func TestImagePostThumbnail_Success(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, nil, nil)
+	registerImageRoutes(mux, cfg, nil, nil, nil)
 
 	body, ct := buildMultipart(t, "file", "img.png", []byte("png-data"))
 	req := httptest.NewRequest(http.MethodPost, "/preview/image/50x50/thumbnail/", body)
@@ -490,7 +490,7 @@ func TestImagePostThumbnail_Success(t *testing.T) {
 func TestImagePostPreview_NoFile(t *testing.T) {
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, nil, nil)
+	registerImageRoutes(mux, cfg, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x200/", strings.NewReader(""))
 	req.Header.Set("Content-Type", "text/plain")
@@ -512,7 +512,7 @@ func TestImageGetThumbnail_Storage404(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -526,7 +526,7 @@ func TestImageGetThumbnail_StorageError(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/thumbnail/?service_type=chats", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -543,7 +543,7 @@ func TestImageGetPreview_RenderError(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -565,7 +565,7 @@ func TestImageGetPreview_InvalidVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &mockStore{}
 			mux := http.NewServeMux()
-			registerImageRoutes(mux, cfg, store, nil)
+			registerImageRoutes(mux, cfg, store, nil, nil)
 
 			path := fmt.Sprintf("/preview/image/%s/%s/100x200/?service_type=files", validUUID, tt.version)
 			rec := doRequest(mux, http.MethodGet, path)
@@ -583,7 +583,7 @@ func TestImageGetPreview_ZeroArea(t *testing.T) {
 
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, store, nil)
+	registerImageRoutes(mux, cfg, store, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/0x0/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodGet, path)
@@ -596,7 +596,7 @@ func TestImageGetPreview_ZeroArea(t *testing.T) {
 func TestImageMethodNotAllowed(t *testing.T) {
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, &mockStore{}, nil)
+	registerImageRoutes(mux, cfg, &mockStore{}, nil, nil)
 
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/?service_type=files", validUUID)
 	rec := doRequest(mux, http.MethodDelete, path)
@@ -610,7 +610,7 @@ func TestImageMethodNotAllowed(t *testing.T) {
 func TestImageGetPreview_UnmatchedPath(t *testing.T) {
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, &mockStore{}, nil)
+	registerImageRoutes(mux, cfg, &mockStore{}, nil, nil)
 
 	// 5-segment GET path has no matching route.
 	path := fmt.Sprintf("/preview/image/%s/1/100x200/extra/junk/", validUUID)
@@ -622,7 +622,7 @@ func TestImageGetPreview_UnmatchedPath(t *testing.T) {
 func TestImagePostPreview_UnmatchedPath(t *testing.T) {
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	registerImageRoutes(mux, cfg, &mockStore{}, nil)
+	registerImageRoutes(mux, cfg, &mockStore{}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x200/extra/", strings.NewReader(""))
 	req.Header.Set("Content-Type", "text/plain")
