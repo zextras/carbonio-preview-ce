@@ -152,27 +152,3 @@ func loggingMiddleware(h http.Handler) http.Handler {
 		)
 	})
 }
-
-// -------------------------------------------------------------------------
-// Misc helpers
-// -------------------------------------------------------------------------
-
-// readBody reads the full request body and returns the bytes.
-func readBody(r *http.Request) ([]byte, error) {
-	if r.Body == nil {
-		return nil, nil
-	}
-	defer r.Body.Close()
-	data := make([]byte, 0, 1<<20) // pre-alloc 1 MiB
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := r.Body.Read(buf)
-		if n > 0 {
-			data = append(data, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
-	}
-	return data, nil
-}

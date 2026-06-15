@@ -5,7 +5,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -385,17 +384,4 @@ func readMultipartFile(r *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("empty file")
 	}
 	return data, nil
-}
-
-// fetchFromStorage is a convenience wrapper used by pdf.go and document.go
-// to retrieve blobs with uniform error handling.
-func fetchFromStorage(
-	ctx context.Context,
-	store storage.Client,
-	id string,
-	version int,
-	serviceType string,
-	owner string,
-) ([]byte, error) {
-	return store.RetrieveData(ctx, id, version, serviceType, owner)
 }
