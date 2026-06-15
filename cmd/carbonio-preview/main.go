@@ -45,23 +45,8 @@ import (
 
 func main() {
 	// Intercept --setup <consul-url> BEFORE the config chain.
-	if idx := findArg(os.Args[1:], "--setup"); idx >= 0 {
-		args := os.Args[1:]
-		if idx+1 >= len(args) {
-			fmt.Fprintln(os.Stderr, "Usage: --setup <consul-url>")
-			fmt.Fprintln(os.Stderr, "Example: --setup http://127.0.0.1:8500")
-			os.Exit(1)
-		}
-		consulURL := args[idx+1]
-		paths := migrate.Paths{
-			IniPath:   "/etc/carbonio/preview/config.ini",
-			PropsPath: "/etc/carbonio/preview/config.properties",
-		}
-		if err := migrate.RunSetup(consulURL, paths, config.ConfigsTxt()); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
+	if handled, code := runSetupIfRequested(os.Args[1:]); handled {
+		os.Exit(code)
 	}
 
 	// Load config (registry defaults → config.properties / Consul KV → ENV).
@@ -106,4 +91,33 @@ func findArg(args []string, name string) int {
 		}
 	}
 	return -1
+}
+
+// runSetupIfRequested intercepts the --setup <consul-url> flag.
+//
+// It returns handled=false when --setup is absent (the caller continues with the
+// normal server boot). When --setup is present it runs the config migration and
+// returns handled=true with the process exit code (0 on success, 1 on a missing
+// URL or a RunSetup failure). It prints usage/error messages to stderr but never
+// calls os.Exit itself, so it is directly unit-testable; main() owns the exit.
+func runSetupIfRequested(args []string) (handled bool, exitCode int) {
+	idx := findArg(args, "--setup")
+	if idx < 0 {
+		return false, 0
+	}
+	if idx+1 >= len(args) {
+		fmt.Fprintln(os.Stderr, "Usage: --setup <consul-url>")
+		fmt.Fprintln(os.Stderr, "Example: --setup http://127.0.0.1:8500")
+		return true, 1
+	}
+	consulURL := args[idx+1]
+	paths := migrate.Paths{
+		IniPath:   "/etc/carbonio/preview/config.ini",
+		PropsPath: "/etc/carbonio/preview/config.properties",
+	}
+	if err := migrate.RunSetup(consulURL, paths, config.ConfigsTxt()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return true, 1
+	}
+	return true, 0
 }

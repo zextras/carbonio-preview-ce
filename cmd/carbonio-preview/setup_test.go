@@ -7,6 +7,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,71 @@ import (
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
 )
+
+// TestFindArg verifies the pure --setup flag locator.
+func TestFindArg(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		flag string
+		want int
+	}{
+		{"flag first", []string{"--setup", "url"}, "--setup", 0},
+		{"flag second", []string{"a", "--setup", "url"}, "--setup", 1},
+		{"flag absent", []string{"a", "b"}, "--setup", -1},
+		{"empty args", nil, "--setup", -1},
+		{"flag last", []string{"x", "y", "--setup"}, "--setup", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := findArg(tc.args, tc.flag); got != tc.want {
+				t.Errorf("findArg(%v, %q) = %d, want %d", tc.args, tc.flag, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunSetupIfRequested_NotRequested verifies that without --setup the helper
+// reports handled=false so main() continues to the normal server boot.
+func TestRunSetupIfRequested_NotRequested(t *testing.T) {
+	handled, code := runSetupIfRequested([]string{"--some-other-flag", "value"})
+	if handled {
+		t.Errorf("handled = true, want false when --setup is absent")
+	}
+	if code != 0 {
+		t.Errorf("code = %d, want 0 when not handled", code)
+	}
+}
+
+// TestRunSetupIfRequested_MissingURL verifies that --setup with no following URL
+// is handled with exit code 1 (usage error).
+func TestRunSetupIfRequested_MissingURL(t *testing.T) {
+	handled, code := runSetupIfRequested([]string{"--setup"})
+	if !handled {
+		t.Fatal("handled = false, want true for --setup with missing URL")
+	}
+	if code != 1 {
+		t.Errorf("code = %d, want 1 for missing URL", code)
+	}
+}
+
+// TestRunSetupIfRequested_Success verifies the success dispatch: --setup with a
+// URL runs the migration and returns handled=true, code=0. It relies on the
+// production ini path being absent (the default on a developer/CI machine), so
+// there is no application work, no token is needed, and no Consul call is made.
+// If the production ini happens to exist, the test skips rather than touch it.
+func TestRunSetupIfRequested_Success(t *testing.T) {
+	if _, err := os.Stat("/etc/carbonio/preview/config.ini"); err == nil {
+		t.Skip("production config.ini present; skipping to avoid touching real config")
+	}
+	handled, code := runSetupIfRequested([]string{"--setup", "http://127.0.0.1:8500"})
+	if !handled {
+		t.Fatal("handled = false, want true for --setup with URL")
+	}
+	if code != 0 {
+		t.Errorf("code = %d, want 0 on successful setup (absent ini → no-op)", code)
+	}
+}
 
 // TestSetupCLI_MissingConsulURL verifies that --setup with no URL exits 1.
 // This is a pure CLI concern (argument parsing before any path/store logic)
