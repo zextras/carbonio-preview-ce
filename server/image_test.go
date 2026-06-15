@@ -30,6 +30,7 @@ type mockStore struct {
 	lastID          string
 	lastVersion     int
 	lastServiceType string
+	calls           int // number of RetrieveData invocations
 }
 
 func (m *mockStore) RetrieveData(
@@ -38,6 +39,7 @@ func (m *mockStore) RetrieveData(
 	version int,
 	serviceType, _ string,
 ) (storage.Blob, error) {
+	m.calls++
 	m.lastID = fileID
 	m.lastVersion = version
 	m.lastServiceType = serviceType

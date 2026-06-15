@@ -144,7 +144,15 @@ func docGetPreview(
 	}
 	langTag := parseLangTag(r)
 
-	_ = c // cache lookup/store wired in Task 6
+	key := cacheKey("doc-preview", id, version, serviceType, 0, 0, "medium", "jpeg", false, "rectangular", firstPage, lastPage, langTag, ownerID(r))
+	if e, ok := c.Get(key); ok {
+		w.Header().Set("Content-Type", e.ContentType)
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(e.Body); werr != nil {
+			slog.Warn("docGetPreview: cache write", "err", werr)
+		}
+		return
+	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
@@ -175,6 +183,7 @@ func docGetPreview(
 		return
 	}
 
+	c.Put(key, cache.Entry{Body: sliced, ContentType: "application/pdf"})
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(sliced); werr != nil {
@@ -229,6 +238,16 @@ func docGetThumbnail(
 	}
 	langTag := parseLangTag(r)
 
+	key := cacheKey("doc-thumb", id, version, serviceType, width, height, quality, outputFormat, false, shape, 1, 0, langTag, ownerID(r))
+	if e, ok := c.Get(key); ok {
+		w.Header().Set("Content-Type", e.ContentType)
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(e.Body); werr != nil {
+			slog.Warn("docGetThumbnail: cache write", "err", werr)
+		}
+		return
+	}
+
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -246,7 +265,7 @@ func docGetThumbnail(
 		return
 	}
 
-	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, c, "", sem)
+	renderPDFThumbnail(w, r, pdfBytes, width, height, outputFormat, quality, shape, c, key, sem)
 }
 
 // docPostPreview handles POST /

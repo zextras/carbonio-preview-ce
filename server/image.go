@@ -135,7 +135,15 @@ func imageGetPreview(
 		return
 	}
 
-	_ = c // cache lookup/store wired in Task 6
+	key := cacheKey("img-preview", id, version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerID(r))
+	if e, ok := c.Get(key); ok {
+		w.Header().Set("Content-Type", e.ContentType)
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(e.Body); werr != nil {
+			log.Printf("imageGetPreview cache write: %v", werr)
+		}
+		return
+	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
@@ -160,7 +168,9 @@ func imageGetPreview(
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeForFormat(outputFormat))
+	ct := contentTypeForFormat(outputFormat)
+	c.Put(key, cache.Entry{Body: out, ContentType: ct})
+	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(out); werr != nil {
 		log.Printf("imageGetPreview write: %v", werr)
@@ -213,7 +223,16 @@ func imageGetThumbnail(
 		return
 	}
 
-	_ = c // cache lookup/store wired in Task 6
+	// crop=true constant: image thumbnails always center-crop.
+	key := cacheKey("img-thumb", id, version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerID(r))
+	if e, ok := c.Get(key); ok {
+		w.Header().Set("Content-Type", e.ContentType)
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(e.Body); werr != nil {
+			log.Printf("imageGetThumbnail cache write: %v", werr)
+		}
+		return
+	}
 
 	data, err := store.RetrieveData(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
@@ -233,7 +252,9 @@ func imageGetThumbnail(
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeForFormat(outputFormat))
+	ct := contentTypeForFormat(outputFormat)
+	c.Put(key, cache.Entry{Body: out, ContentType: ct})
+	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	if _, werr := w.Write(out); werr != nil {
 		log.Printf("imageGetThumbnail write: %v", werr)

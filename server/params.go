@@ -298,3 +298,29 @@ func parseLangTag(r *http.Request) string {
 func ownerID(r *http.Request) string {
 	return r.Header.Get("fileownerid")
 }
+
+// cacheKey builds a stable, collision-resistant cache key from the already
+// parsed/defaulted request parameters. It uses the REQUESTED area (raw width/
+// height), never the post-ConvertRequestedSize values, so it is computable
+// before the storages fetch. ownerID is "" for CE (DirectClient) and the
+// fileownerid header value for ADV (PowerStore routing).
+//
+// The leading kind discriminator prevents cross-route aliasing; route-specific
+// fields take their parsed default for routes that do not use them, so the
+// format is uniform across all six GET handlers.
+func cacheKey(
+	kind string, // "img-preview" | "img-thumb" | "pdf-preview" | "pdf-thumb" | "doc-preview" | "doc-thumb"
+	nodeID string, version int, serviceType string,
+	width, height int,
+	quality, outputFormat string,
+	crop bool, shape string,
+	firstPage, lastPage int,
+	langTag, ownerID string,
+) string {
+	return fmt.Sprintf(
+		"%s|%s|%d|%s|%d|%d|%s|%s|%t|%s|%d|%d|%s|%s",
+		kind, nodeID, version, serviceType,
+		width, height, quality, outputFormat,
+		crop, shape, firstPage, lastPage, langTag, ownerID,
+	)
+}
