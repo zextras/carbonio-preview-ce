@@ -326,6 +326,39 @@ func TestUnregisteredKVKeyBlankValueAbsent(t *testing.T) {
 	}
 }
 
+// TestResolveServiceDiscoverCoord_BlankFileFallsThrough verifies that a file
+// value present-but-blank for the service-discover coordinate is treated as
+// absent and the default is returned (the v != "" guard).
+func TestResolveServiceDiscoverCoord_BlankFileFallsThrough(t *testing.T) {
+	// Ensure the env var is not set so the file/default path is taken.
+	os.Unsetenv("NETWORKING_CONFIG_CARBONIO_SERVICE_DISCOVER_HOST")
+	fileValues := map[string]string{"carbonio.service-discover.host": ""}
+	got := resolveServiceDiscoverCoord(
+		"NETWORKING_CONFIG_CARBONIO_SERVICE_DISCOVER_HOST",
+		"carbonio.service-discover.host",
+		"127.0.0.1",
+		fileValues,
+	)
+	if got != "127.0.0.1" {
+		t.Errorf("blank file value must fall through to default; got %q, want 127.0.0.1", got)
+	}
+}
+
+// TestResolveServiceDiscoverCoord_FilePresent verifies a non-blank file value is
+// returned over the default.
+func TestResolveServiceDiscoverCoord_FilePresent(t *testing.T) {
+	os.Unsetenv("NETWORKING_CONFIG_CARBONIO_SERVICE_DISCOVER_HOST")
+	got := resolveServiceDiscoverCoord(
+		"NETWORKING_CONFIG_CARBONIO_SERVICE_DISCOVER_HOST",
+		"carbonio.service-discover.host",
+		"127.0.0.1",
+		map[string]string{"carbonio.service-discover.host": "10.1.2.3"},
+	)
+	if got != "10.1.2.3" {
+		t.Errorf("got %q, want 10.1.2.3 (file should beat default)", got)
+	}
+}
+
 // TestBlankKVValueFallsThroughToDefault verifies that a Consul KV entry whose
 // decoded value is empty string is treated as absent and the registry default wins.
 func TestBlankKVValueFallsThroughToDefault(t *testing.T) {

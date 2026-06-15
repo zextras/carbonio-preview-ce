@@ -169,6 +169,63 @@ func TestConsulClientRecurseQueryParam(t *testing.T) {
 	fetchConsulKV(host, port)
 }
 
+// TestConsulClientBase64DecodeError verifies that a KV entry whose Value is not
+// valid base64 makes fetchConsulKV fail (fail-fast on malformed data).
+func TestConsulClientBase64DecodeError(t *testing.T) {
+	const kvPrefix = "carbonio-preview/"
+	bad := "not!valid!base64!" // '!' is not in the standard base64 alphabet
+	entries := []kvEntry{
+		{Key: kvPrefix + "broken-key", Value: &bad},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	_, err := fetchConsulKV(host, port)
+	if err == nil {
+		t.Fatal("expected base64 decode error, got nil")
+	}
+	if !strings.Contains(err.Error(), "base64 decode") {
+		t.Errorf("error = %v, want it to mention base64 decode", err)
+	}
+}
+
+// TestConsulClientBlankDecodedValueSkipped verifies that a KV entry whose
+// decoded value is the empty string is treated as absent (extensions parity:
+// blank = absent) and filtered out of the returned map.
+func TestConsulClientBlankDecodedValueSkipped(t *testing.T) {
+	const kvPrefix = "carbonio-preview/"
+	entries := []kvEntry{
+		// Decodes to "" — must be filtered out.
+		{Key: kvPrefix + "blank-key", Value: ptr(encodeB64(""))},
+		// A real entry alongside it must still appear.
+		{Key: kvPrefix + "real-key", Value: ptr(encodeB64("present"))},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer srv.Close()
+
+	host, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	m, err := fetchConsulKV(host, port)
+	if err != nil {
+		t.Fatalf("fetchConsulKV: %v", err)
+	}
+	if _, ok := m["blank-key"]; ok {
+		t.Error("blank-decoded entry must be filtered out")
+	}
+	if m["real-key"] != "present" {
+		t.Errorf("real-key = %q, want %q", m["real-key"], "present")
+	}
+	if len(m) != 1 {
+		t.Errorf("expected 1 entry, got %d: %v", len(m), m)
+	}
+}
+
 func TestConsulClientURLPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

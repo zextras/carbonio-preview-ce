@@ -5,6 +5,8 @@
 *.deb
 *.rpm
 .coverage
+coverage.out
+coverage.html
 .idea
 .run/
 /carbonio-preview

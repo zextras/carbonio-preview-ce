@@ -667,3 +667,60 @@ func TestCacheMaxMBZeroDisables(t *testing.T) {
 		t.Errorf("CacheMaxBytes = %d, want 0 (disabled)", App.CacheMaxBytes)
 	}
 }
+
+// resolvedWithApp builds a Resolved whose Application map holds the given pairs.
+// White-box helper for testing the appNonNegativeInt accessor directly.
+func resolvedWithApp(pairs map[string]string) Resolved {
+	return Resolved{Application: FrozenMap{m: pairs}}
+}
+
+// TestAppNonNegativeInt_PriorError verifies a non-nil prior error short-circuits.
+func TestAppNonNegativeInt_PriorError(t *testing.T) {
+	prior := errSentinel("boom")
+	n, err := appNonNegativeInt(resolvedWithApp(map[string]string{"k": "5"}), "k", prior)
+	if n != 0 || err != prior {
+		t.Errorf("got (%d, %v), want (0, prior error)", n, err)
+	}
+}
+
+// TestAppNonNegativeInt_AbsentOrBlank verifies absent/blank → (0, nil).
+func TestAppNonNegativeInt_AbsentOrBlank(t *testing.T) {
+	if n, err := appNonNegativeInt(resolvedWithApp(map[string]string{}), "missing", nil); n != 0 || err != nil {
+		t.Errorf("absent: got (%d, %v), want (0, nil)", n, err)
+	}
+	if n, err := appNonNegativeInt(resolvedWithApp(map[string]string{"k": ""}), "k", nil); n != 0 || err != nil {
+		t.Errorf("blank: got (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// TestAppNonNegativeInt_Valid verifies a present non-negative value parses.
+func TestAppNonNegativeInt_Valid(t *testing.T) {
+	n, err := appNonNegativeInt(resolvedWithApp(map[string]string{"k": "42"}), "k", nil)
+	if n != 42 || err != nil {
+		t.Errorf("got (%d, %v), want (42, nil)", n, err)
+	}
+}
+
+// TestAppNonNegativeInt_Negative verifies a negative value is a fail-fast error.
+func TestAppNonNegativeInt_Negative(t *testing.T) {
+	_, err := appNonNegativeInt(resolvedWithApp(map[string]string{"k": "-3"}), "k", nil)
+	if err == nil {
+		t.Fatal("want error for negative value, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-negative integer") {
+		t.Errorf("error = %v, want it to mention non-negative integer", err)
+	}
+}
+
+// TestAppNonNegativeInt_NonInteger verifies a non-integer value is an error.
+func TestAppNonNegativeInt_NonInteger(t *testing.T) {
+	_, err := appNonNegativeInt(resolvedWithApp(map[string]string{"k": "abc"}), "k", nil)
+	if err == nil {
+		t.Fatal("want error for non-integer value, got nil")
+	}
+}
+
+// errSentinel is a trivial error type for the prior-error short-circuit test.
+type errSentinel string
+
+func (e errSentinel) Error() string { return string(e) }
