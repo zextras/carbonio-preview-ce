@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -229,6 +230,73 @@ func TestBuildURL(t *testing.T) {
 		})
 	}
 }
+
+// errReader is an io.ReadCloser whose Read always fails, used to exercise the
+// body-read error arm of RetrieveData.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("simulated body read error") }
+func (errReader) Close() error             { return nil }
+
+// errBodyRoundTripper returns a 200 response whose Body errors on Read.
+type errBodyRoundTripper struct{}
+
+func (errBodyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       errReader{},
+		Header:     make(http.Header),
+	}, nil
+}
+
+// TestRetrieveData_BodyReadError verifies that a failure while reading the
+// response body on the success path maps to ErrUnavailable.
+func TestRetrieveData_BodyReadError(t *testing.T) {
+	client := &DirectClient{
+		downloadURL: "http://127.0.0.1:20000/download",
+		http:        &http.Client{Transport: errBodyRoundTripper{}},
+	}
+	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
+	if err == nil {
+		t.Fatal("expected error from body read failure, got nil")
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("expected ErrUnavailable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "reading body") {
+		t.Errorf("error = %v, want it to mention reading body", err)
+	}
+}
+
+// TestBuildURL_ParseError verifies that an unparseable base URL makes buildURL
+// return a non-nil error.
+func TestBuildURL_ParseError(t *testing.T) {
+	_, err := buildURL("http://[::1", "id", 1, "files") // unterminated IPv6 → url.Parse fails
+	if err == nil {
+		t.Fatal("expected url.Parse error for malformed base, got nil")
+	}
+}
+
+// TestRetrieveData_BuildURLError verifies that a malformed downloadURL surfaces
+// as an ErrUnavailable-wrapped error from RetrieveData (the buildURL error arm).
+func TestRetrieveData_BuildURLError(t *testing.T) {
+	client := &DirectClient{
+		downloadURL: "http://[::1", // unparseable
+		http:        &http.Client{},
+	}
+	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
+	if err == nil {
+		t.Fatal("expected error from malformed downloadURL, got nil")
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("expected ErrUnavailable, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "building URL") {
+		t.Errorf("error = %v, want it to mention building URL", err)
+	}
+}
+
+var _ io.ReadCloser = errReader{}
 
 // TestRetrieveData_2xxVariants verifies that non-200 success codes (201, 206,
 // 302) are also treated as successful.

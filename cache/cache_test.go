@@ -169,3 +169,37 @@ func TestConcurrent_NoRace(t *testing.T) {
 		t.Errorf("after concurrent storm used=%d exceeds budget=%d", used, 1<<20)
 	}
 }
+
+// TestOverwrite_GrowsPastBudget_EvictsToFit covers the evictToFit loop body
+// reached from Put's overwrite branch: overwriting an existing key with a LARGER
+// body pushes used past the budget, so evictToFit must run and evict another
+// entry until used <= budget. The grown entry (just bumped twice) outscores the
+// cold sibling, so the sibling is the victim.
+func TestOverwrite_GrowsPastBudget_EvictsToFit(t *testing.T) {
+	withClock(t, 0)
+	c := New(100) // 100-byte budget
+
+	c.Put("a", Entry{Body: make([]byte, 40), ContentType: "x"})
+	c.Put("b", Entry{Body: make([]byte, 40), ContentType: "x"})
+	if used := c.debugUsed(); used != 80 {
+		t.Fatalf("setup used=%d, want 80", used)
+	}
+
+	// Overwrite "a" with a 90-byte body: used becomes 40-40+... actually
+	// 80 - 40 + 90 = 130 > 100 → evictToFit must evict "b".
+	c.Put("a", Entry{Body: make([]byte, 90), ContentType: "x"})
+
+	if _, ok := c.Get("b"); ok {
+		t.Error("b should have been evicted when a grew past the budget")
+	}
+	got, ok := c.Get("a")
+	if !ok {
+		t.Fatal("a (the grown entry) should still be present")
+	}
+	if len(got.Body) != 90 {
+		t.Errorf("a body len=%d, want 90 (the overwritten value)", len(got.Body))
+	}
+	if used := c.debugUsed(); used > int64(100) {
+		t.Errorf("after overwrite used=%d exceeds budget=100", used)
+	}
+}
