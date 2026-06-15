@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+// collaboraInitialBackoff is the delay before the first retry in
+// CollaboraConvert (it doubles after each retry: 0.5s, 1s). It is a package
+// variable purely so tests can shorten it to keep the retry tests fast; in
+// production it is never reassigned. Do not mutate it from non-test code.
+var collaboraInitialBackoff = 500 * time.Millisecond
+
 // CollaboraConvert converts a document (any format LibreOffice/Collabora
 // accepts) to the requested output extension by calling the Collabora Online
 // convert-to endpoint.
@@ -44,7 +50,7 @@ func CollaboraConvert(
 
 	const maxRetries = 2
 	var lastErr error
-	backoff := 500 * time.Millisecond
+	backoff := collaboraInitialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
