@@ -61,6 +61,7 @@ ENV GONOSUMCHECK=github.com/zextras/*
 RUN go mod download
 
 # Copy source tree.
+COPY cache/  ./cache/
 COPY cmd/    ./cmd/
 COPY config/ ./config/
 COPY render/ ./render/
