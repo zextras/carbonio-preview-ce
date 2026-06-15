@@ -241,6 +241,12 @@ func registerCEKeys() {
 			Description:    "Timeout (s) for docs-editor (Collabora) conversion.",
 			HiddenFromDocs: true,
 		},
+		{
+			Key:         "cache-max-mb",
+			Namespace:   NamespaceApplication,
+			Default:     "256",
+			Description: "Maximum size (MiB) of the in-process rendered-output cache. 0 disables the cache.",
+		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),

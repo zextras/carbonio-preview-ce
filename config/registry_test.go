@@ -267,8 +267,9 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 
 	// Spot-check: known application keys that must appear in alphabetical order.
-	// Order: docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < timeout-in-seconds
+	// Order: cache-max-mb < docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < timeout-in-seconds
 	appExpected := []string{
+		"cache-max-mb",
 		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
@@ -283,5 +284,19 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		if appKeys[i].Key != want {
 			t.Errorf("application[%d] = %q, want %q", i, appKeys[i].Key, want)
 		}
+	}
+}
+
+func TestCacheMaxMBRegistered(t *testing.T) {
+	m := registeredKeyMap(NamespaceApplication)
+	e, ok := m["cache-max-mb"]
+	if !ok {
+		t.Fatal("application key \"cache-max-mb\" not registered")
+	}
+	if e.Default != "256" {
+		t.Errorf("cache-max-mb default = %q, want \"256\"", e.Default)
+	}
+	if e.HiddenFromDocs {
+		t.Error("cache-max-mb must be visible in docs (HiddenFromDocs=false)")
 	}
 }
