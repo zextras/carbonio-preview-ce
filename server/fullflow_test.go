@@ -7,7 +7,7 @@
 // Full-flow in-process tests (Phase 2).
 //
 // These exercise the REAL preview server end to end: real handlers (via the
-// real buildMux over an httptest.Server), real config, real cache, and — the
+// public Server.Handler() over an httptest.Server), real config, real cache, and — the
 // key difference from the Phase-1 handler tests — REAL render (cgo libvips +
 // a real pdfium worker, NOT the render_hooks.go stubs). The only things mocked
 // are the two direct dependencies, both in-process httptest.Server instances:
@@ -49,7 +49,7 @@ type fullFlowFixtures struct {
 
 // buildFullFlowServer wires a REAL server (real handlers, real render hooks,
 // real cache) pointed at the two in-process mocks, and returns a started
-// httptest.Server over the real buildMux plus the cache and store.
+// httptest.Server over the real Server.Handler() plus the cache and store.
 //
 // downloadAPI must match between the cfg and the storages mock route; we use
 // "download" throughout.
@@ -70,9 +70,10 @@ func buildFullFlowServer(
 	store := storage.NewDirectClient(cfg.StorageFullAddress, cfg.StorageDownloadAPI, 10*time.Second)
 
 	s := New(cfg, store, c)
-	// nil semaphore: render funcs treat nil as "no gate" (see render hooks).
-	mux := s.buildMux(nil)
-	ts := httptest.NewServer(loggingMiddleware(mux))
+	// Use the public Handler(): same handler chain Run serves (render
+	// semaphore + mux + logging middleware), without a real listener or
+	// signal handling. Render init is done once by InitRealRender(t).
+	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }

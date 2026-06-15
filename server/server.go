@@ -66,15 +66,13 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
-	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
-
-	// Build the public mux.
-	mux := loggingMiddleware(s.buildMux(sem))
+	// Build the public request handler (semaphore + mux + logging).
+	handler := s.Handler()
 
 	addr := fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.ServicePort)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 		WriteTimeout: time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 	}
@@ -108,6 +106,19 @@ func (s *Server) Run() {
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: shutdown", "err", err)
 	}
+}
+
+// Handler builds and returns the server's HTTP request handler: the render
+// concurrency semaphore (sized from cfg.RenderConcurrency), the public mux with
+// all route groups, and the logging middleware. It does NOT start a listener,
+// install signal handlers, or perform render initialisation (InitVips / the
+// pdfium pool) — that remains Run's responsibility. Callers embedding the
+// preview server (or testing it over httptest.Server) must ensure render is
+// initialised before serving requests; Handler itself is pure and side-effect
+// free beyond constructing the handler chain.
+func (s *Server) Handler() http.Handler {
+	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
+	return loggingMiddleware(s.buildMux(sem))
 }
 
 // buildMux assembles the public HTTP mux with all route groups.
