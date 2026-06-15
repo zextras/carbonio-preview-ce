@@ -633,6 +633,201 @@ func TestImagePostPreview_UnmatchedPath(t *testing.T) {
 	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
 }
 
+// TestImagePostThumbnail_NotMultipart_422 covers the readMultipartFile
+// parse-error arm: a non-multipart body fails ParseMultipartForm, so the POST
+// thumbnail handler returns 422 with the "file" body param.
+func TestImagePostThumbnail_NotMultipart_422(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/thumbnail/", strings.NewReader("not-multipart"))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "file")
+}
+
+// TestImagePostThumbnail_EmptyFile_422 covers the len(data)==0 arm of
+// readMultipartFile: a multipart body with a zero-byte "file" field → "empty
+// file" → 422 with the "file" body param.
+func TestImagePostThumbnail_EmptyFile_422(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "empty.jpg", []byte{})
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "file")
+}
+
+// TestImagePostPreview_EmptyFile_422 covers the same empty-file arm on the POST
+// preview handler.
+func TestImagePostPreview_EmptyFile_422(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "empty.jpg", []byte{})
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "file")
+}
+
+// TestImagePostPreview_RenderError_400 covers the render-error arm of the POST
+// preview handler: a render failure → 400 with FormatNotSupported.
+func TestImagePostPreview_RenderError_400(t *testing.T) {
+	restore := stubImageThumbnail("", "", "", "", nil, errors.New("vips boom"))
+	defer restore()
+
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg-data"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
+}
+
+// TestImagePostThumbnail_RenderError_400 covers the render-error arm of the
+// POST thumbnail handler.
+func TestImagePostThumbnail_RenderError_400(t *testing.T) {
+	restore := stubImageThumbnail("", "", "", "", nil, errors.New("vips boom"))
+	defer restore()
+
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg-data"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
+}
+
+// TestImagePostPreview_InvalidQueryParams covers the query-param validation
+// arms of imagePostPreview (crop, quality, output_format → 422).
+func TestImagePostPreview_InvalidQueryParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		param string
+	}{
+		{"bad crop", "crop=maybe", "crop"},
+		{"bad quality", "quality=extreme", "quality"},
+		{"bad output_format", "output_format=tiff", "output_format"},
+	}
+	cfg := testCfg()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			registerImageRoutes(mux, cfg, nil, nil, nil)
+
+			body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg"))
+			req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/?"+tt.query, body)
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assertValidationError(t, rec, tt.param)
+		})
+	}
+}
+
+// TestImagePostThumbnail_InvalidQueryParams covers the query-param validation
+// arms of imagePostThumbnail (shape, quality, output_format → 422).
+func TestImagePostThumbnail_InvalidQueryParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		param string
+	}{
+		{"bad shape", "shape=hexagonal", "shape"},
+		{"bad quality", "quality=extreme", "quality"},
+		{"bad output_format", "output_format=tiff", "output_format"},
+	}
+	cfg := testCfg()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			registerImageRoutes(mux, cfg, nil, nil, nil)
+
+			body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg"))
+			req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/thumbnail/?"+tt.query, body)
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assertValidationError(t, rec, tt.param)
+		})
+	}
+}
+
+// TestImagePostThumbnail_InvalidArea covers the area-path validation arm of
+// imagePostThumbnail.
+func TestImagePostThumbnail_InvalidArea(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/badarea/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "area")
+}
+
+// TestImagePostPreview_InvalidArea covers the area-path validation arm of
+// imagePostPreview.
+func TestImagePostPreview_InvalidArea(t *testing.T) {
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, nil, nil, nil)
+
+	body, ct := buildMultipart(t, "file", "x.jpg", []byte("jpeg"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/image/badarea/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "area")
+}
+
+// TestImageGetThumbnail_RenderError_400 covers the render-error arm of the GET
+// thumbnail handler (the GET preview variant is already covered by
+// TestImageGetPreview_RenderError).
+func TestImageGetThumbnail_RenderError_400(t *testing.T) {
+	store := &mockStore{blob: []byte("img")}
+	restore := stubImageThumbnail("", "", "", "", nil, errors.New("vips boom"))
+	defer restore()
+
+	cfg := testCfg()
+	mux := http.NewServeMux()
+	registerImageRoutes(mux, cfg, store, nil, nil)
+
+	path := fmt.Sprintf("/preview/image/%s/1/100x100/thumbnail/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
+}
+
 // ---- helpers ----
 
 // buildMultipart builds a multipart/form-data body with a single field.

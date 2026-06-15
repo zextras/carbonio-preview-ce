@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -461,6 +462,175 @@ func TestDocPostPreview_PoolUnavailable_503(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestDocGetThumbnail_CollaboraFailure_502 verifies that a Collabora conversion
+// error on the thumbnail endpoint → 502 JSON (the convert step runs before
+// rasterization).
+func TestDocGetThumbnail_CollaboraFailure_502(t *testing.T) {
+	store := &mockStore{blob: []byte("docx-bytes")}
+	restoreCollab := stubCollaboraConvert(nil, fmt.Errorf("collabora down"))
+	defer restoreCollab()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusBadGateway, config.Msg.StorageUnavailable)
+}
+
+// TestDocPostPreview_InvalidPages_422 covers the parsePages error arm of
+// docPostPreview (first_page > last_page → 422 string-detail).
+func TestDocPostPreview_InvalidPages_422(t *testing.T) {
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.docx", []byte("docx-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/?first_page=5&last_page=2", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.NumberOfPagesNotValid)
+}
+
+// TestDocPostPreview_RenderError_400 covers the genuine (non-pool) PDFSlice
+// error arm of docPostPreview → 400 InputError.
+func TestDocPostPreview_RenderError_400(t *testing.T) {
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreSlice := stubPDFSlice(nil, errors.New("corrupt pdf"))
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.docx", []byte("docx-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
+}
+
+// TestDocPostPreview_CollaboraFailure_502 verifies the POST preview Collabora
+// failure arm → 502.
+func TestDocPostPreview_CollaboraFailure_502(t *testing.T) {
+	restoreCollab := stubCollaboraConvert(nil, fmt.Errorf("collabora down"))
+	defer restoreCollab()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.docx", []byte("docx-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadGateway, config.Msg.StorageUnavailable)
+}
+
+// TestDocPostThumbnail_CollaboraFailure_502 verifies the POST thumbnail
+// Collabora failure arm → 502.
+func TestDocPostThumbnail_CollaboraFailure_502(t *testing.T) {
+	restoreCollab := stubCollaboraConvert(nil, fmt.Errorf("collabora down"))
+	defer restoreCollab()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x200/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadGateway, config.Msg.StorageUnavailable)
+}
+
+// TestDocPostThumbnail_PoolUnavailable_503 verifies the POST thumbnail pool-
+// exhaustion arm → 503 (the GET thumbnail variant is covered below).
+func TestDocPostThumbnail_PoolUnavailable_503(t *testing.T) {
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
+	defer restoreRaster()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x200/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestDocPostThumbnail_InvalidQueryParams covers the query-param validation arms
+// of docPostThumbnail (area, shape, quality, output_format → 422).
+func TestDocPostThumbnail_InvalidQueryParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		param string
+	}{
+		{"bad area", "/preview/document/badarea/thumbnail/", "area"},
+		{"bad shape", "/preview/document/100x100/thumbnail/?shape=hexagonal", "shape"},
+		{"bad quality", "/preview/document/100x100/thumbnail/?quality=extreme", "quality"},
+		{"bad output_format", "/preview/document/100x100/thumbnail/?output_format=tiff", "output_format"},
+	}
+	cfg := testCfg()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := buildDocMux(cfg, nil)
+
+			body, ct := buildMultipart(t, "file", "x.docx", []byte("doc-bytes"))
+			req := httptest.NewRequest(http.MethodPost, tt.path, body)
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assertValidationError(t, rec, tt.param)
+		})
+	}
+}
+
+// TestDocPostThumbnail_NotMultipart_422 covers the multipart parse-error arm of
+// docPostThumbnail.
+func TestDocPostThumbnail_NotMultipart_422(t *testing.T) {
+	cfg := testCfg()
+	mux := buildDocMux(cfg, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x200/thumbnail/", strings.NewReader("not-multipart"))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "file")
+}
+
+// TestDocGetPreview_RenderError_400 verifies a genuine (non-pool) PDFSlice error
+// on the document preview path → 400 InputError.
+func TestDocGetPreview_RenderError_400(t *testing.T) {
+	store := &mockStore{blob: []byte("docx-bytes")}
+	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+	defer restoreCollab()
+	restoreSlice := stubPDFSlice(nil, errors.New("corrupt pdf"))
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildDocMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/document/%s/1/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
 }
 
 // TestDocGetThumbnail_PoolUnavailable_503 verifies that ErrRenderUnavailable from

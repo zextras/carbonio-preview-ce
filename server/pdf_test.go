@@ -5,6 +5,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -341,6 +342,113 @@ func TestPDFGetThumbnail_PoolUnavailable_503(t *testing.T) {
 	rec := doRequest(mux, http.MethodGet, path)
 
 	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+}
+
+// TestPDFGetPreview_RenderError_400 verifies that a genuine (non-pool) PDFSlice
+// error → 400 with the InputError detail (distinct from the 503 pool arm).
+func TestPDFGetPreview_RenderError_400(t *testing.T) {
+	store := &mockStore{blob: []byte(fakePDFBytes)}
+	restoreSlice := stubPDFSlice(nil, errors.New("corrupt pdf"))
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
+}
+
+// TestPDFPostPreview_InvalidPages_422 covers the parsePages error arm of
+// pdfPostPreview (first_page > last_page → 422 string-detail).
+func TestPDFPostPreview_InvalidPages_422(t *testing.T) {
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/?first_page=5&last_page=2", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.NumberOfPagesNotValid)
+}
+
+// TestPDFPostPreview_RenderError_400 verifies the POST preview render-error arm.
+func TestPDFPostPreview_RenderError_400(t *testing.T) {
+	restoreSlice := stubPDFSlice(nil, errors.New("corrupt pdf"))
+	defer restoreSlice()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, nil)
+
+	body, ct := buildMultipart(t, "file", "test.pdf", []byte(fakePDFBytes))
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
+}
+
+// TestPDFGetThumbnail_RenderError_400 verifies that a genuine (non-pool)
+// PDFRasterize error → 400 via renderPDFThumbnail.
+func TestPDFGetThumbnail_RenderError_400(t *testing.T) {
+	store := &mockStore{blob: []byte(fakePDFBytes)}
+	restoreRaster := stubPDFRasterize(nil, errors.New("bad page"))
+	defer restoreRaster()
+
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, store)
+
+	path := fmt.Sprintf("/preview/pdf/%s/1/100x200/thumbnail/?service_type=files", validUUID)
+	rec := doRequest(mux, http.MethodGet, path)
+
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
+}
+
+// TestPDFPostThumbnail_InvalidQueryParams covers the query-param validation arms
+// of pdfPostThumbnail (shape, quality, output_format → 422) and the area arm.
+func TestPDFPostThumbnail_InvalidQueryParams(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		param string
+	}{
+		{"bad area", "/preview/pdf/badarea/thumbnail/", "area"},
+		{"bad shape", "/preview/pdf/100x100/thumbnail/?shape=hexagonal", "shape"},
+		{"bad quality", "/preview/pdf/100x100/thumbnail/?quality=extreme", "quality"},
+		{"bad output_format", "/preview/pdf/100x100/thumbnail/?output_format=tiff", "output_format"},
+	}
+	cfg := testCfg()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := buildPDFMux(cfg, nil)
+
+			body, ct := buildMultipart(t, "file", "x.pdf", []byte(fakePDFBytes))
+			req := httptest.NewRequest(http.MethodPost, tt.path, body)
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assertValidationError(t, rec, tt.param)
+		})
+	}
+}
+
+// TestPDFPostThumbnail_NotMultipart_422 covers the multipart parse-error arm of
+// pdfPostThumbnail.
+func TestPDFPostThumbnail_NotMultipart_422(t *testing.T) {
+	cfg := testCfg()
+	mux := buildPDFMux(cfg, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/100x200/thumbnail/", strings.NewReader("not-multipart"))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assertValidationError(t, rec, "file")
 }
 
 // TestPDFPostThumbnail_PoolUnavailable_503 verifies POST thumbnail → 503 on pool exhaustion.
