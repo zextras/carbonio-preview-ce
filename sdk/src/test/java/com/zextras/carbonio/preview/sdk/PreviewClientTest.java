@@ -251,6 +251,121 @@ class PreviewClientTest {
     assertEquals(Status.Code.INVALID_ARGUMENT, ex.getCode());
   }
 
+  /** New: server returns two separate data chunks — lazy reader must reassemble them. */
+  @Test
+  void uploadMultiFrameResponse_reassemblesCorrectly() throws Exception {
+    String serverName = "preview-multiframe-" + System.nanoTime();
+    byte[] part1 = "hello ".getBytes(StandardCharsets.UTF_8);
+    byte[] part2 = "world".getBytes(StandardCharsets.UTF_8);
+    byte[] expected = "hello world".getBytes(StandardCharsets.UTF_8);
+
+    Server multiServer = InProcessServerBuilder.forName(serverName)
+        .directExecutor()
+        .addService(new PreviewServiceGrpc.PreviewServiceImplBase() {
+          @Override
+          public StreamObserver<UploadChunk> postImagePreview(StreamObserver<PreviewChunk> obs) {
+            return new StreamObserver<>() {
+              @Override public void onNext(UploadChunk chunk) { /* consume */ }
+              @Override public void onError(Throwable t) { obs.onError(t); }
+              @Override public void onCompleted() {
+                // Metadata frame first, then TWO data chunks
+                obs.onNext(PreviewChunk.newBuilder()
+                    .setMetadata(PreviewMetadata.newBuilder()
+                        .setMimeType("image/png")
+                        .setLength(expected.length)
+                        .build())
+                    .build());
+                obs.onNext(PreviewChunk.newBuilder()
+                    .setChunk(ByteString.copyFrom(part1))
+                    .build());
+                obs.onNext(PreviewChunk.newBuilder()
+                    .setChunk(ByteString.copyFrom(part2))
+                    .build());
+                obs.onCompleted();
+              }
+            };
+          }
+        })
+        .build().start();
+
+    ManagedChannel ch = InProcessChannelBuilder.forName(serverName).directExecutor().build();
+    try (PreviewClient c = new PreviewClient(ch)) {
+      Query q = new QueryBuilder().area("320x240").serviceType("files").build();
+      try (PreviewResponse r = c.postPreviewOfImage(
+          new ByteArrayInputStream(new byte[]{1}), q)) {
+        assertEquals("image/png", r.getMimeType());
+        assertEquals(expected.length, r.getLength());
+        assertArrayEquals(expected, r.getContent().readAllBytes());
+      }
+    } finally {
+      multiServer.shutdown();
+      multiServer.awaitTermination();
+    }
+  }
+
+  /**
+   * New: closing PreviewResponse before reading all upload response bytes cancels the gRPC call
+   * and does not cause a hang — mirroring the download earlyClose test.
+   */
+  @Test
+  void uploadEarlyClose_cancelsCall_doesNotHang() throws Exception {
+    String serverName = "preview-upload-cancel-" + System.nanoTime();
+    AtomicBoolean serverCancelled = new AtomicBoolean(false);
+    CountDownLatch serverSentFirstChunk = new CountDownLatch(1);
+    CountDownLatch serverDoneLatch = new CountDownLatch(1);
+
+    Server cancelServer = InProcessServerBuilder.forName(serverName)
+        // NOT directExecutor — server must run on its own thread to block independently
+        .addService(new PreviewServiceGrpc.PreviewServiceImplBase() {
+          @Override
+          public StreamObserver<UploadChunk> postImagePreview(StreamObserver<PreviewChunk> obs) {
+            return new StreamObserver<>() {
+              @Override public void onNext(UploadChunk chunk) { /* consume */ }
+              @Override public void onError(Throwable t) { obs.onError(t); }
+              @Override public void onCompleted() {
+                obs.onNext(PreviewChunk.newBuilder()
+                    .setMetadata(PreviewMetadata.newBuilder()
+                        .setMimeType(MIME).setLength(100L).build())
+                    .build());
+                obs.onNext(PreviewChunk.newBuilder()
+                    .setChunk(ByteString.copyFrom(new byte[]{42}))
+                    .build());
+                serverSentFirstChunk.countDown();
+                // Block until client cancels
+                Context ctx = Context.current();
+                long deadline = System.currentTimeMillis() + 5000;
+                while (!ctx.isCancelled() && System.currentTimeMillis() < deadline) {
+                  try { Thread.sleep(10); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt(); break;
+                  }
+                }
+                serverCancelled.set(ctx.isCancelled());
+                serverDoneLatch.countDown();
+                if (!ctx.isCancelled()) obs.onCompleted();
+              }
+            };
+          }
+        })
+        .build().start();
+
+    ManagedChannel ch = InProcessChannelBuilder.forName(serverName).build();
+    try (PreviewClient c = new PreviewClient(ch)) {
+      Query q = new QueryBuilder().area("320x240").serviceType("files").build();
+      PreviewResponse r = c.postPreviewOfImage(new ByteArrayInputStream(new byte[]{1}), q);
+      assertTrue(serverSentFirstChunk.await(2, TimeUnit.SECONDS), "Server should have sent first chunk");
+      // Read exactly 1 byte to confirm stream is live
+      int b = r.getContent().read();
+      assertNotEquals(-1, b);
+      // Early close — cancels the gRPC call
+      r.close();
+      assertTrue(serverDoneLatch.await(3, TimeUnit.SECONDS), "Server should have observed cancellation");
+      assertTrue(serverCancelled.get(), "Server context should be cancelled");
+    } finally {
+      cancelServer.shutdown();
+      cancelServer.awaitTermination();
+    }
+  }
+
   // ---- healthReady ----
 
   @Test
