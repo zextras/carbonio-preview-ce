@@ -25,18 +25,18 @@ public final class Query {
   private final String langTag;
 
   Query(QueryBuilder b) {
-    this.fileId = b.fileId;
-    this.version = b.version;
-    this.area = b.area;
-    this.outputFormat = b.outputFormat;
-    this.quality = b.quality;
-    this.shape = b.shape;
-    this.serviceType = b.serviceType;
-    this.ownerId = b.ownerId;
-    this.crop = b.crop;
-    this.firstPage = b.firstPage;
-    this.lastPage = b.lastPage;
-    this.langTag = b.langTag;
+    this.fileId = b.getFileId();
+    this.version = b.getVersion();
+    this.area = b.getArea();
+    this.outputFormat = b.getOutputFormat();
+    this.quality = b.getQuality();
+    this.shape = b.getShape();
+    this.serviceType = b.getServiceType();
+    this.ownerId = b.getOwnerId();
+    this.crop = b.isCrop();
+    this.firstPage = b.getFirstPage();
+    this.lastPage = b.getLastPage();
+    this.langTag = b.getLangTag();
   }
 
   public String getFileId() { return fileId; }

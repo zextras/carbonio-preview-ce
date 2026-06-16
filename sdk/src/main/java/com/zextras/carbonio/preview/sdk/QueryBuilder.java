@@ -10,18 +10,18 @@ package com.zextras.carbonio.preview.sdk;
  */
 public final class QueryBuilder {
 
-  String fileId;
-  int version;
-  String area;
-  String outputFormat;
-  String quality;
-  String shape;
-  String serviceType;
-  String ownerId;
-  boolean crop;
-  int firstPage;
-  int lastPage;
-  String langTag;
+  private String fileId;
+  private int version;
+  private String area;
+  private String outputFormat;
+  private String quality;
+  private String shape;
+  private String serviceType;
+  private String ownerId;
+  private boolean crop;
+  private int firstPage;
+  private int lastPage;
+  private String langTag;
 
   public QueryBuilder fileId(String fileId) { this.fileId = fileId; return this; }
   public QueryBuilder version(int version) { this.version = version; return this; }
@@ -39,4 +39,18 @@ public final class QueryBuilder {
   public Query build() {
     return new Query(this);
   }
+
+  // Package-private accessors used by Query constructor
+  String getFileId() { return fileId; }
+  int getVersion() { return version; }
+  String getArea() { return area; }
+  String getOutputFormat() { return outputFormat; }
+  String getQuality() { return quality; }
+  String getShape() { return shape; }
+  String getServiceType() { return serviceType; }
+  String getOwnerId() { return ownerId; }
+  boolean isCrop() { return crop; }
+  int getFirstPage() { return firstPage; }
+  int getLastPage() { return lastPage; }
+  String getLangTag() { return langTag; }
 }
