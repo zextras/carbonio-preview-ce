@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// gRPC contract for the Carbonio preview backend interface.
+//
+// Error-mapping convention (HTTP status -> gRPC status code), single source of truth,
+// consumed by the Go server error mapper and the Java SDK PreviewException mapping:
+//   404 Not Found            -> NOT_FOUND
+//   400 Bad Request          -> INVALID_ARGUMENT
+//   422 Unprocessable Entity -> FAILED_PRECONDITION
+//   500 Internal Server Error-> INTERNAL
+//
+// Streaming convention:
+//   Downloads are server-streaming: the FIRST frame is always PreviewMetadata,
+//   followed by zero or more chunk frames (~64KB each).
+//   Uploads are client-streaming: the FIRST frame is always UploadMetadata,
+//   followed by one or more data frames (~64KB each).
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.zextras.carbonio.preview.sdk.grpc";
+option go_package = "github.com/zextras/carbonio-preview-ce/server/grpc/pb;previewpb";
+
+package preview;
+
+service PreviewService {
+  // ---- Downloads: server-streaming, metadata ALWAYS first ----
+  rpc GetImagePreview      (GetRequest)  returns (stream PreviewChunk);
+  rpc GetImageThumbnail    (GetRequest)  returns (stream PreviewChunk);
+  rpc GetPdfPreview        (GetRequest)  returns (stream PreviewChunk);
+  rpc GetPdfThumbnail      (GetRequest)  returns (stream PreviewChunk);
+  rpc GetDocumentPreview   (GetRequest)  returns (stream PreviewChunk);
+  rpc GetDocumentThumbnail (GetRequest)  returns (stream PreviewChunk);
+
+  // ---- Uploads: client-streaming in, server-streaming out (mailbox only) ----
+  rpc PostImagePreview      (stream UploadChunk) returns (stream PreviewChunk);
+  rpc PostImageThumbnail    (stream UploadChunk) returns (stream PreviewChunk);
+  rpc PostPdfPreview        (stream UploadChunk) returns (stream PreviewChunk);
+  rpc PostPdfThumbnail      (stream UploadChunk) returns (stream PreviewChunk);
+  rpc PostDocumentPreview   (stream UploadChunk) returns (stream PreviewChunk);
+  rpc PostDocumentThumbnail (stream UploadChunk) returns (stream PreviewChunk);
+}
+
+// Query parameters shared by all download RPCs and (via UploadMetadata) uploads.
+message PreviewParams {
+  string file_id       = 1; // ignored for upload RPCs
+  int32  version       = 2;
+  string area          = 3; // e.g. "320x240"
+  string output_format = 4; // image output_format / pdf+doc "format"
+  int32  quality       = 5;
+  string shape         = 6;
+  string service_type  = 7;
+  string owner_id      = 8; // CE ignores; Advanced uses server-side for powerstore routing
+}
+
+message GetRequest {
+  PreviewParams params = 1;
+}
+
+message PreviewMetadata {
+  string mime_type = 1;
+  int64  length    = 2; // total byte length; known because storage buffers full blob (<=32MB)
+}
+
+// Download frame: metadata first, then >=0 chunk frames (~64KB each).
+message PreviewChunk {
+  oneof payload {
+    PreviewMetadata metadata = 1;
+    bytes           chunk    = 2;
+  }
+}
+
+message UploadMetadata {
+  PreviewParams params = 1;
+}
+
+// Upload frame: metadata first, then >=1 data frames (~64KB each).
+message UploadChunk {
+  oneof payload {
+    UploadMetadata metadata = 1;
+    bytes          data     = 2;
+  }
+}
