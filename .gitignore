@@ -22,3 +22,7 @@ package/carbonio-preview-ce.tar.xz
 preview.log
 scratch.py
 venv
+
+# Maven build output (sdk module)
+sdk/target/
+sdk/.flattened-pom.xml
