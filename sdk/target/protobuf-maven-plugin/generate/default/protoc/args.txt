@@ -1,0 +1,9 @@
+--java_out=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/generated-sources/protobuf
+--plugin=protoc-gen-0_c1c555a3a8805059eb9bfa6df0a22edbca03dd1a=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/protobuf-maven-plugin/generate/default/artifacts/protoc-gen-grpc-java-48e6506588b050f251ff028d69f3a929891fd3e7.exe
+--0_c1c555a3a8805059eb9bfa6df0a22edbca03dd1a_out=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/generated-sources/protobuf
+--0_c1c555a3a8805059eb9bfa6df0a22edbca03dd1a_opt=jakarta=true
+/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/src/main/protobuf/preview.proto
+--proto_path=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/src/main/protobuf
+--proto_path=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/protobuf-maven-plugin/generate/default/archives/grpc-services-1.79.0-b81ac5a408a548356443e25108d42827d8ce701e
+--proto_path=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/protobuf-maven-plugin/generate/default/archives/proto-google-common-protos-2.63.2-62b3810969120d0f235f9c389d870a313be056d2
+--proto_path=/home/mattogalvagni/IdeaProjects/carbonio-preview-ce/sdk/target/protobuf-maven-plugin/generate/default/archives/protobuf-java-4.33.2-4725a99ae5f132640473caf263d2404f90a5e96d
