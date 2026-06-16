@@ -19,11 +19,17 @@ import (
 	"github.com/zextras/carbonio-preview-ce/render"
 )
 
+// documentDisabledErr returns 400 INVALID_ARGUMENT when a document endpoint is
+// disabled via config. Mirrors REST errBadRequest (HTTP 400).
+func documentDisabledErr(msg string) error {
+	return toStatus(http.StatusBadRequest, msg)
+}
+
 // GetDocumentPreview implements PreviewService.GetDocumentPreview.
 // Config-gated by ServiceEnableDocumentPreview (mirrors REST behaviour).
 func (s *PreviewServer) GetDocumentPreview(req *pb.GetRequest, stream pb.PreviewService_GetDocumentPreviewServer) error {
 	if !s.cfg.ServiceEnableDocumentPreview {
-		return status.Error(codes.FailedPrecondition, config.Msg.DocumentPreviewDisabled)
+		return documentDisabledErr(config.Msg.DocumentPreviewDisabled)
 	}
 
 	p := req.GetParams()
@@ -38,7 +44,7 @@ func (s *PreviewServer) GetDocumentPreview(req *pb.GetRequest, stream pb.Preview
 	}
 	langTag := parseGRPCLangTag(p.GetLangTag())
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -65,7 +71,7 @@ func (s *PreviewServer) GetDocumentPreview(req *pb.GetRequest, stream pb.Preview
 // Config-gated by ServiceEnableDocumentThumbnail (mirrors REST behaviour).
 func (s *PreviewServer) GetDocumentThumbnail(req *pb.GetRequest, stream pb.PreviewService_GetDocumentThumbnailServer) error {
 	if !s.cfg.ServiceEnableDocumentThumbnail {
-		return status.Error(codes.FailedPrecondition, config.Msg.DocumentThumbnailDisabled)
+		return documentDisabledErr(config.Msg.DocumentThumbnailDisabled)
 	}
 
 	p := req.GetParams()
@@ -77,15 +83,21 @@ func (s *PreviewServer) GetDocumentThumbnail(req *pb.GetRequest, stream pb.Previ
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(p.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(p.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(p.GetShape())
+	shape, err := parseShape(p.GetShape())
+	if err != nil {
+		return err
+	}
 	langTag := parseGRPCLangTag(p.GetLangTag())
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -107,7 +119,7 @@ func (s *PreviewServer) GetDocumentThumbnail(req *pb.GetRequest, stream pb.Previ
 // Config-gated by ServiceEnableDocumentPreview.
 func (s *PreviewServer) PostDocumentPreview(stream pb.PreviewService_PostDocumentPreviewServer) error {
 	if !s.cfg.ServiceEnableDocumentPreview {
-		return status.Error(codes.FailedPrecondition, config.Msg.DocumentPreviewDisabled)
+		return documentDisabledErr(config.Msg.DocumentPreviewDisabled)
 	}
 
 	params, blob, err := recvUpload(stream)
@@ -142,7 +154,7 @@ func (s *PreviewServer) PostDocumentPreview(stream pb.PreviewService_PostDocumen
 // Config-gated by ServiceEnableDocumentThumbnail.
 func (s *PreviewServer) PostDocumentThumbnail(stream pb.PreviewService_PostDocumentThumbnailServer) error {
 	if !s.cfg.ServiceEnableDocumentThumbnail {
-		return status.Error(codes.FailedPrecondition, config.Msg.DocumentThumbnailDisabled)
+		return documentDisabledErr(config.Msg.DocumentThumbnailDisabled)
 	}
 
 	params, blob, err := recvUpload(stream)
@@ -153,12 +165,18 @@ func (s *PreviewServer) PostDocumentThumbnail(stream pb.PreviewService_PostDocum
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(params.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(params.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(params.GetShape())
+	shape, err := parseShape(params.GetShape())
+	if err != nil {
+		return err
+	}
 	langTag := parseGRPCLangTag(params.GetLangTag())
 
 	pdfBytes, err := s.docToPDFWithLang(stream.Context(), blob, langTag)

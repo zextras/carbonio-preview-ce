@@ -6,13 +6,12 @@ package grpc
 
 import (
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 var areaRegex = regexp.MustCompile(`^[0-9]+x[0-9]+$`)
@@ -41,34 +40,40 @@ func validateServiceType(st string) (string, error) {
 }
 
 // parseGRPCArea parses the area string (e.g. "320x240") into width and height.
+// Returns 422 FAILED_PRECONDITION on invalid input, mirroring REST errValidation (HTTP 422).
 func parseGRPCArea(area string) (int, int, error) {
 	if !areaRegex.MatchString(area) {
-		return 0, 0, status.Errorf(codes.InvalidArgument, "area must be WxH (e.g. 320x240), got %q", area)
+		return 0, 0, toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("area must be WxH (e.g. 320x240), got %q", area))
 	}
 	parts := strings.SplitN(area, "x", 2)
 	w, err1 := strconv.Atoi(parts[0])
 	h, err2 := strconv.Atoi(parts[1])
 	if err1 != nil || err2 != nil || w < 0 || h < 0 {
-		return 0, 0, status.Errorf(codes.InvalidArgument, "invalid area dimensions: %q", area)
+		return 0, 0, toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("invalid area dimensions: %q", area))
 	}
 	return w, h, nil
 }
 
-// defaultOutputFormat returns "jpeg" when the field is empty.
+// defaultOutputFormats holds the accepted output_format values.
+// Mirrors server.validOutputFormats.
 var validOutputFormats = map[string]bool{
 	"jpeg": true,
 	"png":  true,
 	"gif":  true,
 }
 
-func defaultOutputFormat(f string) string {
+// parseOutputFormat returns the effective output format.
+// Empty → "jpeg" (proto3 zero value = unset, mirrors REST default).
+// Non-empty invalid → 422 FAILED_PRECONDITION, mirroring REST parseOutputFormat (HTTP 422).
+func parseOutputFormat(f string) (string, error) {
 	if f == "" {
-		return "jpeg"
+		return "jpeg", nil
 	}
 	if !validOutputFormats[f] {
-		return "jpeg"
+		return "", toStatus(http.StatusUnprocessableEntity,
+			fmt.Sprintf("output_format must be one of jpeg|png|gif, got %q", f))
 	}
-	return f
+	return f, nil
 }
 
 // validQualities mirrors server.validQualities.
@@ -84,14 +89,14 @@ var validQualities = map[string]bool{
 // bucket string, mirroring server.parseQuality exactly:
 //   - empty string → "medium" (proto3 zero value = unset)
 //   - valid bucket → passed through unchanged
-//   - anything else → INVALID_ARGUMENT
+//   - anything else → 422 FAILED_PRECONDITION (mirrors REST HTTP 422)
 func parseGRPCQuality(q string) (string, error) {
 	if q == "" {
 		return "medium", nil
 	}
 	if !validQualities[q] {
-		return "", status.Errorf(codes.InvalidArgument,
-			"quality must be one of lowest|low|medium|high|highest, got %q", q)
+		return "", toStatus(http.StatusUnprocessableEntity,
+			fmt.Sprintf("quality must be one of lowest|low|medium|high|highest, got %q", q))
 	}
 	return q, nil
 }
@@ -114,7 +119,8 @@ func parseCropMode(crop bool) string {
 //	first_page 0  → default 1 (proto3 zero value = unset)
 //	last_page  0  → default 0 (means "to end")
 //
-// Returns INVALID_ARGUMENT if the page combination is invalid:
+// Returns 422 FAILED_PRECONDITION if the page combination is invalid,
+// mirroring REST errDetail(w, StatusUnprocessableEntity, …):
 //
 //	first_page >= 1 AND (first_page <= last_page OR last_page == 0)
 func parseGRPCPages(firstPage, lastPage int32) (int, int, error) {
@@ -124,8 +130,8 @@ func parseGRPCPages(firstPage, lastPage int32) (int, int, error) {
 		fp = 1
 	}
 	if fp < 1 || (lp != 0 && fp > lp) {
-		return 0, 0, status.Errorf(codes.InvalidArgument,
-			"invalid page range: first_page=%d last_page=%d", firstPage, lastPage)
+		return 0, 0, toStatus(http.StatusUnprocessableEntity,
+			fmt.Sprintf("invalid page range: first_page=%d last_page=%d", firstPage, lastPage))
 	}
 	return fp, lp, nil
 }
@@ -140,15 +146,23 @@ func parseGRPCLangTag(langTag string) string {
 	return langTag
 }
 
-// defaultShape returns "rectangular" when the field is empty or unknown.
+// validShapes mirrors server.validShapes.
 var validShapes = map[string]bool{
 	"rounded":     true,
 	"rectangular": true,
 }
 
-func defaultShape(s string) string {
-	if s == "" || !validShapes[s] {
-		return "rectangular"
+// parseShape returns the effective shape value.
+// Empty → "rectangular" (proto3 zero value = unset, mirrors REST default).
+// Non-empty invalid → 422 FAILED_PRECONDITION, mirroring REST parseShape (HTTP 422).
+// "rounded" forces PNG output in the caller (mirrors REST renderPDFThumbnail behaviour).
+func parseShape(s string) (string, error) {
+	if s == "" {
+		return "rectangular", nil
 	}
-	return s
+	if !validShapes[s] {
+		return "", toStatus(http.StatusUnprocessableEntity,
+			fmt.Sprintf("shape must be one of rectangular|rounded, got %q", s))
+	}
+	return s, nil
 }

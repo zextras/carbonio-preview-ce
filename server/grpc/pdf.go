@@ -31,7 +31,7 @@ func (s *PreviewServer) GetPdfPreview(req *pb.GetRequest, stream pb.PreviewServi
 		return err
 	}
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -60,14 +60,20 @@ func (s *PreviewServer) GetPdfThumbnail(req *pb.GetRequest, stream pb.PreviewSer
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(p.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(p.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(p.GetShape())
+	shape, err := parseShape(p.GetShape())
+	if err != nil {
+		return err
+	}
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -112,12 +118,18 @@ func (s *PreviewServer) PostPdfThumbnail(stream pb.PreviewService_PostPdfThumbna
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(params.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(params.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(params.GetShape())
+	shape, err := parseShape(params.GetShape())
+	if err != nil {
+		return err
+	}
 
 	out, ct, err := s.renderPDFThumbnail(blob, 0, width, height, outputFormat, quality, shape)
 	if err != nil {

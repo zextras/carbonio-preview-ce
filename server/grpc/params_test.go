@@ -39,7 +39,8 @@ func TestParseGRPCQuality_ValidBuckets(t *testing.T) {
 	}
 }
 
-func TestParseGRPCQuality_InvalidReturnsInvalidArgument(t *testing.T) {
+func TestParseGRPCQuality_InvalidReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid quality → gRPC must return FAILED_PRECONDITION.
 	cases := []string{"80", "high-quality", "MEDIUM", "0", "101"}
 	for _, q := range cases {
 		_, err := parseGRPCQuality(q)
@@ -52,8 +53,8 @@ func TestParseGRPCQuality_InvalidReturnsInvalidArgument(t *testing.T) {
 			t.Errorf("quality=%q: expected gRPC status error, got %T", q, err)
 			continue
 		}
-		if st.Code() != codes.InvalidArgument {
-			t.Errorf("quality=%q: want INVALID_ARGUMENT, got %s", q, st.Code())
+		if st.Code() != codes.FailedPrecondition {
+			t.Errorf("quality=%q: want FAILED_PRECONDITION (REST 422), got %s", q, st.Code())
 		}
 	}
 }
@@ -118,6 +119,7 @@ func TestParseGRPCPages_FirstPageOnlyOpenEnd(t *testing.T) {
 }
 
 func TestParseGRPCPages_InvalidFirstPageGreaterThanLast(t *testing.T) {
+	// REST returns HTTP 422 for invalid page range → gRPC must return FAILED_PRECONDITION.
 	_, _, err := parseGRPCPages(5, 3)
 	if err == nil {
 		t.Fatal("expected error for first>last, got nil")
@@ -126,8 +128,8 @@ func TestParseGRPCPages_InvalidFirstPageGreaterThanLast(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected gRPC status error, got %T", err)
 	}
-	if st.Code() != codes.InvalidArgument {
-		t.Errorf("want INVALID_ARGUMENT, got %s", st.Code())
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422), got %s", st.Code())
 	}
 }
 
@@ -137,8 +139,130 @@ func TestParseGRPCPages_InvalidNegativeFirstPage(t *testing.T) {
 		t.Fatal("expected error for negative first_page, got nil")
 	}
 	st, _ := status.FromError(err)
-	if st.Code() != codes.InvalidArgument {
-		t.Errorf("want INVALID_ARGUMENT, got %s", st.Code())
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422), got %s", st.Code())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseGRPCArea
+// ---------------------------------------------------------------------------
+
+func TestParseGRPCArea_InvalidReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid area → gRPC must return FAILED_PRECONDITION.
+	cases := []string{"320", "x240", "320x", "widthxheight", ""}
+	for _, a := range cases {
+		_, _, err := parseGRPCArea(a)
+		if err == nil {
+			t.Errorf("area=%q: expected error, got nil", a)
+			continue
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Errorf("area=%q: expected gRPC status error, got %T", a, err)
+			continue
+		}
+		if st.Code() != codes.FailedPrecondition {
+			t.Errorf("area=%q: want FAILED_PRECONDITION (REST 422), got %s", a, st.Code())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseOutputFormat
+// ---------------------------------------------------------------------------
+
+func TestParseOutputFormat_EmptyDefaultsJpeg(t *testing.T) {
+	got, err := parseOutputFormat("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "jpeg" {
+		t.Errorf("want %q, got %q", "jpeg", got)
+	}
+}
+
+func TestParseOutputFormat_ValidValues(t *testing.T) {
+	cases := []string{"jpeg", "png", "gif"}
+	for _, f := range cases {
+		got, err := parseOutputFormat(f)
+		if err != nil {
+			t.Errorf("output_format=%q: unexpected error: %v", f, err)
+			continue
+		}
+		if got != f {
+			t.Errorf("output_format=%q: want %q, got %q", f, f, got)
+		}
+	}
+}
+
+func TestParseOutputFormat_InvalidNonEmptyReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid output_format → gRPC must return FAILED_PRECONDITION.
+	// Notably, silently coercing to "jpeg" (old behaviour) is WRONG — must error.
+	cases := []string{"bmp", "webp", "JPEG", "jpg"}
+	for _, f := range cases {
+		_, err := parseOutputFormat(f)
+		if err == nil {
+			t.Errorf("output_format=%q: expected error, got nil", f)
+			continue
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Errorf("output_format=%q: expected gRPC status error, got %T", f, err)
+			continue
+		}
+		if st.Code() != codes.FailedPrecondition {
+			t.Errorf("output_format=%q: want FAILED_PRECONDITION (REST 422), got %s", f, st.Code())
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseShape
+// ---------------------------------------------------------------------------
+
+func TestParseShape_EmptyDefaultsRectangular(t *testing.T) {
+	got, err := parseShape("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "rectangular" {
+		t.Errorf("want %q, got %q", "rectangular", got)
+	}
+}
+
+func TestParseShape_ValidValues(t *testing.T) {
+	cases := []string{"rectangular", "rounded"}
+	for _, s := range cases {
+		got, err := parseShape(s)
+		if err != nil {
+			t.Errorf("shape=%q: unexpected error: %v", s, err)
+			continue
+		}
+		if got != s {
+			t.Errorf("shape=%q: want %q, got %q", s, s, got)
+		}
+	}
+}
+
+func TestParseShape_InvalidNonEmptyReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid shape → gRPC must return FAILED_PRECONDITION.
+	// Silently coercing to "rectangular" (old behaviour) is WRONG — must error.
+	cases := []string{"circle", "square", "ROUNDED"}
+	for _, s := range cases {
+		_, err := parseShape(s)
+		if err == nil {
+			t.Errorf("shape=%q: expected error, got nil", s)
+			continue
+		}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Errorf("shape=%q: expected gRPC status error, got %T", s, err)
+			continue
+		}
+		if st.Code() != codes.FailedPrecondition {
+			t.Errorf("shape=%q: want FAILED_PRECONDITION (REST 422), got %s", s, st.Code())
+		}
 	}
 }
 

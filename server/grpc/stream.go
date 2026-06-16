@@ -6,10 +6,12 @@ package grpc
 
 import (
 	"io"
+	"net/http"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/zextras/carbonio-preview-ce/config"
 	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
 )
 
@@ -114,6 +116,12 @@ func recvUpload(stream uploadReceiver) (*pb.PreviewParams, []byte, error) {
 				"upload exceeds maximum size of %d bytes", maxUploadBytes)
 		}
 		buf = append(buf, data.Data...)
+	}
+
+	// Reject zero-byte uploads upfront with 422 FAILED_PRECONDITION, mirroring
+	// REST readMultipartFile which returns FileNotValid for empty files (HTTP 422).
+	if len(buf) == 0 {
+		return nil, nil, toStatus(http.StatusUnprocessableEntity, config.Msg.FileNotValid)
 	}
 
 	return params, buf, nil

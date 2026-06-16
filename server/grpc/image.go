@@ -5,11 +5,9 @@
 package grpc
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/zextras/carbonio-preview-ce/config"
 	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
@@ -26,7 +24,10 @@ func (s *PreviewServer) GetImagePreview(req *pb.GetRequest, stream pb.PreviewSer
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(p.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(p.GetQuality())
 	if err != nil {
 		return err
@@ -34,7 +35,7 @@ func (s *PreviewServer) GetImagePreview(req *pb.GetRequest, stream pb.PreviewSer
 	// crop=true → center/cover, crop=false → scale-to-fit; mirrors REST parseCrop.
 	cropMode := parseCropMode(p.GetCrop())
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -59,14 +60,20 @@ func (s *PreviewServer) GetImageThumbnail(req *pb.GetRequest, stream pb.PreviewS
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(p.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(p.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(p.GetShape())
+	shape, err := parseShape(p.GetShape())
+	if err != nil {
+		return err
+	}
 
-	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, p.GetOwnerId())
 	if err != nil {
 		return storageErr(err)
 	}
@@ -91,7 +98,10 @@ func (s *PreviewServer) PostImagePreview(stream pb.PreviewService_PostImagePrevi
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(params.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(params.GetQuality())
 	if err != nil {
 		return err
@@ -118,12 +128,18 @@ func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThu
 	if err != nil {
 		return err
 	}
-	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	outputFormat, err := parseOutputFormat(params.GetOutputFormat())
+	if err != nil {
+		return err
+	}
 	quality, err := parseGRPCQuality(params.GetQuality())
 	if err != nil {
 		return err
 	}
-	shape := defaultShape(params.GetShape())
+	shape, err := parseShape(params.GetShape())
+	if err != nil {
+		return err
+	}
 
 	// Image thumbnails always use CENTER crop.
 	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, shape, "center")
@@ -140,18 +156,19 @@ func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThu
 // ---------------------------------------------------------------------------
 
 // parseGetParams validates the common Get RPC params: UUID, version, service_type.
+// Returns 422 FAILED_PRECONDITION on validation failure, mirroring REST errValidation (HTTP 422).
 func parseGetParams(p *pb.PreviewParams) (id string, version int, serviceType string, err error) {
 	id, err = validateUUID(p.GetFileId())
 	if err != nil {
-		return "", 0, "", status.Errorf(codes.InvalidArgument, "file_id: %v", err)
+		return "", 0, "", toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("file_id: %v", err))
 	}
 	version = int(p.GetVersion())
 	if version < 0 {
-		return "", 0, "", status.Errorf(codes.InvalidArgument, "version must be >= 0")
+		return "", 0, "", toStatus(http.StatusUnprocessableEntity, "version must be >= 0")
 	}
 	serviceType, err = validateServiceType(p.GetServiceType())
 	if err != nil {
-		return "", 0, "", status.Errorf(codes.InvalidArgument, "service_type: %v", err)
+		return "", 0, "", toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("service_type: %v", err))
 	}
 	return id, version, serviceType, nil
 }

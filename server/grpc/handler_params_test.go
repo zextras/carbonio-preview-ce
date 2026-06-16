@@ -163,7 +163,8 @@ func TestGetImagePreview_QualityEmptyDefaultsMedium(t *testing.T) {
 	}
 }
 
-func TestGetImagePreview_InvalidQualityReturnsInvalidArgument(t *testing.T) {
+func TestGetImagePreview_InvalidQualityReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid quality → gRPC must return FAILED_PRECONDITION.
 	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false)
 	conn, cleanup := connectTestServer(t, ps)
 	defer cleanup()
@@ -178,8 +179,8 @@ func TestGetImagePreview_InvalidQualityReturnsInvalidArgument(t *testing.T) {
 	}})
 	if err != nil {
 		st, ok := status.FromError(err)
-		if !ok || st.Code() != codes.InvalidArgument {
-			t.Fatalf("want INVALID_ARGUMENT, got %v", err)
+		if !ok || st.Code() != codes.FailedPrecondition {
+			t.Fatalf("want FAILED_PRECONDITION (REST 422), got %v", err)
 		}
 		return
 	}
@@ -191,8 +192,8 @@ func TestGetImagePreview_InvalidQualityReturnsInvalidArgument(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
 	}
-	if st.Code() != codes.InvalidArgument {
-		t.Errorf("want INVALID_ARGUMENT, got %s", st.Code())
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422), got %s", st.Code())
 	}
 }
 
@@ -386,5 +387,253 @@ func TestGetDocumentPreview_EmptyLangTagDefaultsEnUS(t *testing.T) {
 	}
 	if collaboraCap.langTag != "en-US" {
 		t.Errorf("langTag: want %q (default), got %q", "en-US", collaboraCap.langTag)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 2: document config-gate disabled → 400 INVALID_ARGUMENT (not 422)
+// ---------------------------------------------------------------------------
+
+func TestGetDocumentPreview_DisabledReturnsInvalidArgument(t *testing.T) {
+	// REST returns HTTP 400 when document preview is disabled (errBadRequest).
+	// gRPC must return INVALID_ARGUMENT (400), NOT FAILED_PRECONDITION (422).
+	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false /* docEnabled=false */)
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	stream, err := client.GetDocumentPreview(context.Background(), &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "44444444-4444-4444-4444-444444444444",
+		Version:     1,
+		ServiceType: "files",
+	}})
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.InvalidArgument {
+			t.Fatalf("want INVALID_ARGUMENT (REST 400), got %v", err)
+		}
+		return
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected error for disabled doc preview, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("want INVALID_ARGUMENT (REST 400), got %s", st.Code())
+	}
+}
+
+func TestGetDocumentThumbnail_DisabledReturnsInvalidArgument(t *testing.T) {
+	// REST returns HTTP 400 when document thumbnail is disabled (errBadRequest).
+	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false)
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	stream, err := client.GetDocumentThumbnail(context.Background(), &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "44444444-4444-4444-4444-444444444444",
+		Version:     1,
+		Area:        "100x100",
+		ServiceType: "files",
+	}})
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.InvalidArgument {
+			t.Fatalf("want INVALID_ARGUMENT (REST 400), got %v", err)
+		}
+		return
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected error for disabled doc thumbnail, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
+	}
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("want INVALID_ARGUMENT (REST 400), got %s", st.Code())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 3: empty upload → 422 FAILED_PRECONDITION (FileNotValid)
+// ---------------------------------------------------------------------------
+
+func TestPostImagePreview_EmptyUploadReturnsFailedPrecondition(t *testing.T) {
+	// REST rejects zero-byte uploads with HTTP 422 (FileNotValid).
+	// gRPC must return FAILED_PRECONDITION.
+	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false)
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	uploadStream, err := client.PostImagePreview(context.Background())
+	if err != nil {
+		t.Fatalf("PostImagePreview open: %v", err)
+	}
+
+	// Send metadata frame only — no data frames → empty blob.
+	if err := uploadStream.Send(&pb.UploadChunk{Payload: &pb.UploadChunk_Metadata{
+		Metadata: &pb.UploadMetadata{Params: &pb.PreviewParams{
+			Area:        "100x100",
+			ServiceType: "files",
+		}},
+	}}); err != nil {
+		t.Fatalf("Send metadata: %v", err)
+	}
+
+	// Close the send side to signal end-of-stream; then read the response.
+	if err := uploadStream.CloseSend(); err != nil {
+		t.Fatalf("CloseSend: %v", err)
+	}
+	_, recvErr := uploadStream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected FAILED_PRECONDITION for empty upload, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422 FileNotValid), got %s", st.Code())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 4: invalid output_format → 422 FAILED_PRECONDITION (not silent coerce)
+// ---------------------------------------------------------------------------
+
+func TestGetImagePreview_InvalidOutputFormatReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid output_format.
+	// Old gRPC behaviour silently coerced to "jpeg" — that is wrong.
+	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false)
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	stream, err := client.GetImagePreview(context.Background(), &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:       "11111111-1111-1111-1111-111111111111",
+		Version:      1,
+		Area:         "100x100",
+		ServiceType:  "files",
+		OutputFormat: "bmp", // invalid non-empty value
+	}})
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.FailedPrecondition {
+			t.Fatalf("want FAILED_PRECONDITION (REST 422), got %v", err)
+		}
+		return
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected FAILED_PRECONDITION for invalid output_format, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422), got %s", st.Code())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 5: invalid shape → 422 FAILED_PRECONDITION (not silent coerce)
+// ---------------------------------------------------------------------------
+
+func TestGetImageThumbnail_InvalidShapeReturnsFailedPrecondition(t *testing.T) {
+	// REST returns HTTP 422 for invalid shape.
+	// Old gRPC behaviour silently coerced to "rectangular" — that is wrong.
+	ps, _, _, _ := newCapturingServer(t, &fixedStore{blob: []byte("x")}, false)
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	stream, err := client.GetImageThumbnail(context.Background(), &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "11111111-1111-1111-1111-111111111111",
+		Version:     1,
+		Area:        "100x100",
+		ServiceType: "files",
+		Shape:       "circle", // invalid non-empty value
+	}})
+	if err != nil {
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.FailedPrecondition {
+			t.Fatalf("want FAILED_PRECONDITION (REST 422), got %v", err)
+		}
+		return
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected FAILED_PRECONDITION for invalid shape, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %T: %v", recvErr, recvErr)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("want FAILED_PRECONDITION (REST 422), got %s", st.Code())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 6: owner_id reaches storage
+// ---------------------------------------------------------------------------
+
+// capturingStore records the ownerID passed to RetrieveData.
+type capturingStore struct {
+	blob    []byte
+	ownerID string
+}
+
+func (c *capturingStore) RetrieveData(_ context.Context, _ string, _ int, _ string, ownerID string) (storage.Blob, error) {
+	c.ownerID = ownerID
+	return c.blob, nil
+}
+
+func TestGetImagePreview_OwnerIDReachesStorage(t *testing.T) {
+	// REST passes ownerID(r) (the "fileownerid" header) to RetrieveData.
+	// gRPC was hardcoding "" — it must now pass p.GetOwnerId().
+	store := &capturingStore{blob: []byte("imgdata")}
+
+	cfg := &config.Config{
+		ServiceEnableDocumentPreview:         false,
+		ServiceEnableDocumentThumbnail:       false,
+		ServiceDocsTimeout:                   15,
+		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
+		GRPCPort:                             "0",
+	}
+	sem := make(chan struct{}, 4)
+	ps := grpcserver.NewPreviewServer(store, cfg, sem)
+	ps.SetImageThumbnailFunc(func(_ chan struct{}, data []byte, _, _ int, _, _, _, _ string) ([]byte, error) {
+		return data, nil
+	})
+
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	const wantOwner = "owner-uuid-goes-here"
+	client := pb.NewPreviewServiceClient(conn)
+	stream, err := client.GetImagePreview(context.Background(), &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "11111111-1111-1111-1111-111111111111",
+		Version:     1,
+		Area:        "100x100",
+		ServiceType: "files",
+		OwnerId:     wantOwner,
+	}})
+	if err != nil {
+		t.Fatalf("GetImagePreview: %v", err)
+	}
+	if err := drainStream(stream); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if store.ownerID != wantOwner {
+		t.Errorf("ownerID: want %q, got %q", wantOwner, store.ownerID)
 	}
 }
