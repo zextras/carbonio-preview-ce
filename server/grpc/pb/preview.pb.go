@@ -41,16 +41,40 @@ const (
 )
 
 // Query parameters shared by all download RPCs and (via UploadMetadata) uploads.
+//
+// Per-RPC applicability:
+//
+//	crop          — image PREVIEW only (GetImagePreview / PostImagePreview);
+//	                thumbnails always use CENTER crop and ignore this field.
+//	first_page,
+//	last_page     — PDF and document PREVIEW only (GetPdfPreview,
+//	                GetDocumentPreview, Post equivalents); thumbnail RPCs ignore.
+//	lang_tag      — document endpoints only (GetDocumentPreview,
+//	                GetDocumentThumbnail, Post equivalents); other RPCs ignore.
+//	shape,
+//	output_format,
+//	quality,
+//	area          — all thumbnail RPCs and image preview; PDF/doc preview ignore.
 type PreviewParams struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"` // ignored for upload RPCs
-	Version       int32                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Area          string                 `protobuf:"bytes,3,opt,name=area,proto3" json:"area,omitempty"`                                     // e.g. "320x240"
-	OutputFormat  string                 `protobuf:"bytes,4,opt,name=output_format,json=outputFormat,proto3" json:"output_format,omitempty"` // image output_format / pdf+doc "format"
-	Quality       int32                  `protobuf:"varint,5,opt,name=quality,proto3" json:"quality,omitempty"`
-	Shape         string                 `protobuf:"bytes,6,opt,name=shape,proto3" json:"shape,omitempty"`
-	ServiceType   string                 `protobuf:"bytes,7,opt,name=service_type,json=serviceType,proto3" json:"service_type,omitempty"`
-	OwnerId       string                 `protobuf:"bytes,8,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"` // CE ignores; Advanced uses server-side for powerstore routing
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// --- identity (path params for GET RPCs) ---
+	FileId  string `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"` // UUID; ignored for upload RPCs
+	Version int32  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`            // ignored for upload RPCs
+	Area    string `protobuf:"bytes,3,opt,name=area,proto3" json:"area,omitempty"`                   // "WIDTHxHEIGHT" e.g. "320x240"; required for image + all thumbnails
+	// --- format controls ---
+	OutputFormat string `protobuf:"bytes,4,opt,name=output_format,json=outputFormat,proto3" json:"output_format,omitempty"` // "jpeg" | "png" | "gif"; default "jpeg"
+	Quality      string `protobuf:"bytes,5,opt,name=quality,proto3" json:"quality,omitempty"`                               // "lowest"|"low"|"medium"|"high"|"highest"; default "medium" (STRING bucket, not int)
+	Shape        string `protobuf:"bytes,6,opt,name=shape,proto3" json:"shape,omitempty"`                                   // "rounded" | "rectangular"; default "rectangular"; thumbnail only; "rounded" forces png
+	// --- routing ---
+	ServiceType string `protobuf:"bytes,7,opt,name=service_type,json=serviceType,proto3" json:"service_type,omitempty"` // "files" | "chats"; required for GET RPCs
+	OwnerId     string `protobuf:"bytes,8,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`             // UUID; was REST header "fileownerid"; CE ignores, Advanced uses for routing
+	// --- image preview only ---
+	Crop bool `protobuf:"varint,9,opt,name=crop,proto3" json:"crop,omitempty"` // true = cover/center-crop, false = scale-to-fit; image PREVIEW only (thumbnails hardcode their own)
+	// --- pdf + document PREVIEW page range ---
+	FirstPage int32 `protobuf:"varint,10,opt,name=first_page,json=firstPage,proto3" json:"first_page,omitempty"` // 1-based; 0 = server default (1)
+	LastPage  int32 `protobuf:"varint,11,opt,name=last_page,json=lastPage,proto3" json:"last_page,omitempty"`    // 0 = to end
+	// --- document conversion locale ---
+	LangTag       string `protobuf:"bytes,12,opt,name=lang_tag,json=langTag,proto3" json:"lang_tag,omitempty"` // IETF tag e.g. "en-US"; document endpoints only; default "en-US"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -113,11 +137,11 @@ func (x *PreviewParams) GetOutputFormat() string {
 	return ""
 }
 
-func (x *PreviewParams) GetQuality() int32 {
+func (x *PreviewParams) GetQuality() string {
 	if x != nil {
 		return x.Quality
 	}
-	return 0
+	return ""
 }
 
 func (x *PreviewParams) GetShape() string {
@@ -137,6 +161,34 @@ func (x *PreviewParams) GetServiceType() string {
 func (x *PreviewParams) GetOwnerId() string {
 	if x != nil {
 		return x.OwnerId
+	}
+	return ""
+}
+
+func (x *PreviewParams) GetCrop() bool {
+	if x != nil {
+		return x.Crop
+	}
+	return false
+}
+
+func (x *PreviewParams) GetFirstPage() int32 {
+	if x != nil {
+		return x.FirstPage
+	}
+	return 0
+}
+
+func (x *PreviewParams) GetLastPage() int32 {
+	if x != nil {
+		return x.LastPage
+	}
+	return 0
+}
+
+func (x *PreviewParams) GetLangTag() string {
+	if x != nil {
+		return x.LangTag
 	}
 	return ""
 }
@@ -451,16 +503,22 @@ var File_preview_proto protoreflect.FileDescriptor
 
 const file_preview_proto_rawDesc = "" +
 	"\n" +
-	"\rpreview.proto\x12\apreview\"\xe9\x01\n" +
+	"\rpreview.proto\x12\apreview\"\xd4\x02\n" +
 	"\rPreviewParams\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x05R\aversion\x12\x12\n" +
 	"\x04area\x18\x03 \x01(\tR\x04area\x12#\n" +
 	"\routput_format\x18\x04 \x01(\tR\foutputFormat\x12\x18\n" +
-	"\aquality\x18\x05 \x01(\x05R\aquality\x12\x14\n" +
+	"\aquality\x18\x05 \x01(\tR\aquality\x12\x14\n" +
 	"\x05shape\x18\x06 \x01(\tR\x05shape\x12!\n" +
 	"\fservice_type\x18\a \x01(\tR\vserviceType\x12\x19\n" +
-	"\bowner_id\x18\b \x01(\tR\aownerId\"<\n" +
+	"\bowner_id\x18\b \x01(\tR\aownerId\x12\x12\n" +
+	"\x04crop\x18\t \x01(\bR\x04crop\x12\x1d\n" +
+	"\n" +
+	"first_page\x18\n" +
+	" \x01(\x05R\tfirstPage\x12\x1b\n" +
+	"\tlast_page\x18\v \x01(\x05R\blastPage\x12\x19\n" +
+	"\blang_tag\x18\f \x01(\tR\alangTag\"<\n" +
 	"\n" +
 	"GetRequest\x12.\n" +
 	"\x06params\x18\x01 \x01(\v2\x16.preview.PreviewParamsR\x06params\"F\n" +

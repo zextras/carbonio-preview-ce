@@ -19,12 +19,14 @@ import (
 
 // GetPdfPreview implements PreviewService.GetPdfPreview.
 // Returns sliced PDF bytes (first_page..last_page) as a stream.
-// Page range is not exposed in PreviewParams (proto has no first/last_page);
-// this RPC always returns page 1 to end (full document). Fine-grained page
-// slicing can be added in a future proto revision.
+// first_page 0 → 1; last_page 0 → to end; mirrors REST parsePages defaults.
 func (s *PreviewServer) GetPdfPreview(req *pb.GetRequest, stream pb.PreviewService_GetPdfPreviewServer) error {
 	p := req.GetParams()
 	id, version, serviceType, err := parseGetParams(p)
+	if err != nil {
+		return err
+	}
+	firstPage, lastPage, err := parseGRPCPages(p.GetFirstPage(), p.GetLastPage())
 	if err != nil {
 		return err
 	}
@@ -34,8 +36,7 @@ func (s *PreviewServer) GetPdfPreview(req *pb.GetRequest, stream pb.PreviewServi
 		return storageErr(err)
 	}
 
-	// firstPage=1, lastPage=0 → full document (mirrors REST defaults).
-	sliced, err := s.pdfSlice(s.sem, blob, 1, 0)
+	sliced, err := s.pdfSlice(s.sem, blob, firstPage, lastPage)
 	if err != nil {
 		slog.Error("GetPdfPreview: PDFSlice", "err", err)
 		if errors.Is(err, render.ErrRenderUnavailable) {
@@ -60,7 +61,10 @@ func (s *PreviewServer) GetPdfThumbnail(req *pb.GetRequest, stream pb.PreviewSer
 		return err
 	}
 	outputFormat := defaultOutputFormat(p.GetOutputFormat())
-	quality := defaultQuality(p.GetQuality())
+	quality, err := parseGRPCQuality(p.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(p.GetShape())
 
 	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
@@ -77,12 +81,16 @@ func (s *PreviewServer) GetPdfThumbnail(req *pb.GetRequest, stream pb.PreviewSer
 
 // PostPdfPreview implements PreviewService.PostPdfPreview.
 func (s *PreviewServer) PostPdfPreview(stream pb.PreviewService_PostPdfPreviewServer) error {
-	_, blob, err := recvUpload(stream)
+	params, blob, err := recvUpload(stream)
+	if err != nil {
+		return err
+	}
+	firstPage, lastPage, err := parseGRPCPages(params.GetFirstPage(), params.GetLastPage())
 	if err != nil {
 		return err
 	}
 
-	sliced, err := s.pdfSlice(s.sem, blob, 1, 0)
+	sliced, err := s.pdfSlice(s.sem, blob, firstPage, lastPage)
 	if err != nil {
 		slog.Error("PostPdfPreview: PDFSlice", "err", err)
 		if errors.Is(err, render.ErrRenderUnavailable) {
@@ -105,7 +113,10 @@ func (s *PreviewServer) PostPdfThumbnail(stream pb.PreviewService_PostPdfThumbna
 		return err
 	}
 	outputFormat := defaultOutputFormat(params.GetOutputFormat())
-	quality := defaultQuality(params.GetQuality())
+	quality, err := parseGRPCQuality(params.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(params.GetShape())
 
 	out, ct, err := s.renderPDFThumbnail(blob, 0, width, height, outputFormat, quality, shape)

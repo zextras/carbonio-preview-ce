@@ -137,13 +137,13 @@ func TestRecvUpload_HappyPath(t *testing.T) {
 	payload := bytes.Repeat([]byte("a"), 100)
 
 	params := &pb.PreviewParams{
-		FileId:      "11111111-1111-1111-1111-111111111111",
-		Version:     1,
-		Area:        "320x240",
+		FileId:       "11111111-1111-1111-1111-111111111111",
+		Version:      1,
+		Area:         "320x240",
 		OutputFormat: "jpeg",
-		Quality:     80,
-		Shape:       "rectangular",
-		ServiceType: "files",
+		Quality:      "high",
+		Shape:        "rectangular",
+		ServiceType:  "files",
 	}
 
 	metaFrame := &pb.UploadChunk{Payload: &pb.UploadChunk_Metadata{

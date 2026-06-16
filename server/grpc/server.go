@@ -105,6 +105,11 @@ func (s *PreviewServer) SetPdfRasterizeFunc(fn func(sem chan struct{}, data []by
 	s.pdfRasterize = fn
 }
 
+// SetCollaboraConvertFunc replaces the collaboraConvert function. For testing only.
+func (s *PreviewServer) SetCollaboraConvertFunc(fn func(ctx context.Context, data []byte, langTag, docsEditorURL string, timeout time.Duration) ([]byte, error)) {
+	s.collaboraConvert = fn
+}
+
 // ListenAndServe starts the gRPC server on the address derived from cfg.
 // It blocks until the server is stopped. Intended to be run in a goroutine
 // alongside the HTTP server.

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -47,8 +48,36 @@ func (f *fixedStore) RetrieveData(_ context.Context, _ string, _ int, _ string, 
 // Test server factory
 // ---------------------------------------------------------------------------
 
-// newTestServerConn builds a fully in-process gRPC server with stubbed render
-// functions. Returns a live *grpc.ClientConn and a cleanup function.
+// connectTestServer wires a fully in-process gRPC connection to a
+// pre-configured PreviewServer (all render functions already stubbed).
+// Returns a live *grpc.ClientConn and a cleanup function.
+func connectTestServer(t *testing.T, ps *grpcserver.PreviewServer) (*grpc.ClientConn, func()) {
+	t.Helper()
+
+	srv, _ := grpcserver.GRPCServer(ps)
+
+	lis := bufconn.Listen(bufSize)
+	go func() { _ = srv.Serve(lis) }()
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+
+	return conn, func() {
+		conn.Close()
+		srv.Stop()
+	}
+}
+
+// newTestServerConn builds a fully in-process gRPC server with pass-through
+// stubbed render functions. Returns a live *grpc.ClientConn and a cleanup function.
 func newTestServerConn(t *testing.T, store storage.Client) (*grpc.ClientConn, func()) {
 	t.Helper()
 
@@ -73,27 +102,11 @@ func newTestServerConn(t *testing.T, store storage.Client) (*grpc.ClientConn, fu
 	ps.SetPdfRasterizeFunc(func(_ chan struct{}, data []byte, _, _, _ int, _, _, _ string) ([]byte, error) {
 		return data, nil
 	})
+	ps.SetCollaboraConvertFunc(func(_ context.Context, data []byte, _, _ string, _ time.Duration) ([]byte, error) {
+		return data, nil
+	})
 
-	srv, _ := grpcserver.GRPCServer(ps)
-
-	lis := bufconn.Listen(bufSize)
-	go func() { _ = srv.Serve(lis) }()
-
-	conn, err := grpc.NewClient(
-		"passthrough:///bufnet",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return lis.DialContext(ctx)
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatalf("grpc.NewClient: %v", err)
-	}
-
-	return conn, func() {
-		conn.Close()
-		srv.Stop()
-	}
+	return connectTestServer(t, ps)
 }
 
 // ---------------------------------------------------------------------------

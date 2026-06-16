@@ -71,33 +71,73 @@ func defaultOutputFormat(f string) string {
 	return f
 }
 
-// defaultQuality converts the proto int32 quality to the string expected by render.
-// The proto carries quality as int32 (0 = unset = default). Mapping:
-//
-//	0       → "medium"  (proto3 default / unset)
-//	1–20    → "lowest"
-//	21–40   → "low"
-//	41–70   → "medium"
-//	71–90   → "high"
-//	91–100  → "highest"
-//
-// This allows callers to express fine-grained quality while the render layer
-// still uses the five-bucket model.
-func defaultQuality(q int32) string {
-	switch {
-	case q == 0:
-		return "medium"
-	case q <= 20:
-		return "lowest"
-	case q <= 40:
-		return "low"
-	case q <= 70:
-		return "medium"
-	case q <= 90:
-		return "high"
-	default:
-		return "highest"
+// validQualities mirrors server.validQualities.
+var validQualities = map[string]bool{
+	"lowest":  true,
+	"low":     true,
+	"medium":  true,
+	"high":    true,
+	"highest": true,
+}
+
+// parseGRPCQuality validates the quality string field and returns the effective
+// bucket string, mirroring server.parseQuality exactly:
+//   - empty string → "medium" (proto3 zero value = unset)
+//   - valid bucket → passed through unchanged
+//   - anything else → INVALID_ARGUMENT
+func parseGRPCQuality(q string) (string, error) {
+	if q == "" {
+		return "medium", nil
 	}
+	if !validQualities[q] {
+		return "", status.Errorf(codes.InvalidArgument,
+			"quality must be one of lowest|low|medium|high|highest, got %q", q)
+	}
+	return q, nil
+}
+
+// parseCropMode converts the bool crop field to the cropMode string expected by
+// render.ImageThumbnail, mirroring server.parseCrop + the REST image handler:
+//
+//	crop=true  → "center"  (cover/center-crop)
+//	crop=false → "none"    (scale-to-fit)
+func parseCropMode(crop bool) string {
+	if crop {
+		return "center"
+	}
+	return "none"
+}
+
+// parseGRPCPages normalises the gRPC first_page / last_page fields, mirroring
+// server.parsePages:
+//
+//	first_page 0  → default 1 (proto3 zero value = unset)
+//	last_page  0  → default 0 (means "to end")
+//
+// Returns INVALID_ARGUMENT if the page combination is invalid:
+//
+//	first_page >= 1 AND (first_page <= last_page OR last_page == 0)
+func parseGRPCPages(firstPage, lastPage int32) (int, int, error) {
+	fp := int(firstPage)
+	lp := int(lastPage)
+	if fp == 0 {
+		fp = 1
+	}
+	if fp < 1 || (lp != 0 && fp > lp) {
+		return 0, 0, status.Errorf(codes.InvalidArgument,
+			"invalid page range: first_page=%d last_page=%d", firstPage, lastPage)
+	}
+	return fp, lp, nil
+}
+
+// parseGRPCLangTag returns the effective lang_tag, mirroring server.parseLangTag:
+//
+//	empty string → "en-US"
+func parseGRPCLangTag(langTag string) string {
+	if langTag == "" {
+		return "en-US"
+	}
+	return langTag
 }
 
 // defaultShape returns "rectangular" when the field is empty or unknown.

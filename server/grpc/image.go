@@ -27,9 +27,12 @@ func (s *PreviewServer) GetImagePreview(req *pb.GetRequest, stream pb.PreviewSer
 		return err
 	}
 	outputFormat := defaultOutputFormat(p.GetOutputFormat())
-	quality := defaultQuality(p.GetQuality())
-	// proto3 has no crop field; default to scale-to-fit (crop=false).
-	cropMode := "none"
+	quality, err := parseGRPCQuality(p.GetQuality())
+	if err != nil {
+		return err
+	}
+	// crop=true → center/cover, crop=false → scale-to-fit; mirrors REST parseCrop.
+	cropMode := parseCropMode(p.GetCrop())
 
 	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
 	if err != nil {
@@ -57,7 +60,10 @@ func (s *PreviewServer) GetImageThumbnail(req *pb.GetRequest, stream pb.PreviewS
 		return err
 	}
 	outputFormat := defaultOutputFormat(p.GetOutputFormat())
-	quality := defaultQuality(p.GetQuality())
+	quality, err := parseGRPCQuality(p.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(p.GetShape())
 
 	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
@@ -86,9 +92,12 @@ func (s *PreviewServer) PostImagePreview(stream pb.PreviewService_PostImagePrevi
 		return err
 	}
 	outputFormat := defaultOutputFormat(params.GetOutputFormat())
-	quality := defaultQuality(params.GetQuality())
-	// proto3 has no crop field; default to scale-to-fit.
-	cropMode := "none"
+	quality, err := parseGRPCQuality(params.GetQuality())
+	if err != nil {
+		return err
+	}
+	// crop=true → center/cover, crop=false → scale-to-fit; mirrors REST parseCrop.
+	cropMode := parseCropMode(params.GetCrop())
 
 	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, "rectangular", cropMode)
 	if err != nil {
@@ -110,7 +119,10 @@ func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThu
 		return err
 	}
 	outputFormat := defaultOutputFormat(params.GetOutputFormat())
-	quality := defaultQuality(params.GetQuality())
+	quality, err := parseGRPCQuality(params.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(params.GetShape())
 
 	// Image thumbnails always use CENTER crop.

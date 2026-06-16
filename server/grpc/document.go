@@ -32,18 +32,24 @@ func (s *PreviewServer) GetDocumentPreview(req *pb.GetRequest, stream pb.Preview
 		return err
 	}
 
+	firstPage, lastPage, err := parseGRPCPages(p.GetFirstPage(), p.GetLastPage())
+	if err != nil {
+		return err
+	}
+	langTag := parseGRPCLangTag(p.GetLangTag())
+
 	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
 	if err != nil {
 		return storageErr(err)
 	}
 
-	pdfBytes, err := s.docToPDF(stream.Context(), blob)
+	pdfBytes, err := s.docToPDFWithLang(stream.Context(), blob, langTag)
 	if err != nil {
 		slog.Error("GetDocumentPreview: convert", "err", err)
 		return toStatus(http.StatusBadGateway, config.Msg.StorageUnavailable)
 	}
 
-	sliced, err := s.pdfSlice(s.sem, pdfBytes, 1, 0)
+	sliced, err := s.pdfSlice(s.sem, pdfBytes, firstPage, lastPage)
 	if err != nil {
 		slog.Error("GetDocumentPreview: PDFSlice", "err", err)
 		if errors.Is(err, render.ErrRenderUnavailable) {
@@ -72,15 +78,19 @@ func (s *PreviewServer) GetDocumentThumbnail(req *pb.GetRequest, stream pb.Previ
 		return err
 	}
 	outputFormat := defaultOutputFormat(p.GetOutputFormat())
-	quality := defaultQuality(p.GetQuality())
+	quality, err := parseGRPCQuality(p.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(p.GetShape())
+	langTag := parseGRPCLangTag(p.GetLangTag())
 
 	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
 	if err != nil {
 		return storageErr(err)
 	}
 
-	pdfBytes, err := s.docToPDF(stream.Context(), blob)
+	pdfBytes, err := s.docToPDFWithLang(stream.Context(), blob, langTag)
 	if err != nil {
 		slog.Error("GetDocumentThumbnail: convert", "err", err)
 		return toStatus(http.StatusBadGateway, config.Msg.StorageUnavailable)
@@ -100,18 +110,23 @@ func (s *PreviewServer) PostDocumentPreview(stream pb.PreviewService_PostDocumen
 		return status.Error(codes.FailedPrecondition, config.Msg.DocumentPreviewDisabled)
 	}
 
-	_, blob, err := recvUpload(stream)
+	params, blob, err := recvUpload(stream)
 	if err != nil {
 		return err
 	}
+	firstPage, lastPage, err := parseGRPCPages(params.GetFirstPage(), params.GetLastPage())
+	if err != nil {
+		return err
+	}
+	langTag := parseGRPCLangTag(params.GetLangTag())
 
-	pdfBytes, err := s.docToPDF(stream.Context(), blob)
+	pdfBytes, err := s.docToPDFWithLang(stream.Context(), blob, langTag)
 	if err != nil {
 		slog.Error("PostDocumentPreview: convert", "err", err)
 		return toStatus(http.StatusBadGateway, config.Msg.StorageUnavailable)
 	}
 
-	sliced, err := s.pdfSlice(s.sem, pdfBytes, 1, 0)
+	sliced, err := s.pdfSlice(s.sem, pdfBytes, firstPage, lastPage)
 	if err != nil {
 		slog.Error("PostDocumentPreview: PDFSlice", "err", err)
 		if errors.Is(err, render.ErrRenderUnavailable) {
@@ -139,10 +154,14 @@ func (s *PreviewServer) PostDocumentThumbnail(stream pb.PreviewService_PostDocum
 		return err
 	}
 	outputFormat := defaultOutputFormat(params.GetOutputFormat())
-	quality := defaultQuality(params.GetQuality())
+	quality, err := parseGRPCQuality(params.GetQuality())
+	if err != nil {
+		return err
+	}
 	shape := defaultShape(params.GetShape())
+	langTag := parseGRPCLangTag(params.GetLangTag())
 
-	pdfBytes, err := s.docToPDF(stream.Context(), blob)
+	pdfBytes, err := s.docToPDFWithLang(stream.Context(), blob, langTag)
 	if err != nil {
 		slog.Error("PostDocumentThumbnail: convert", "err", err)
 		return toStatus(http.StatusBadGateway, config.Msg.StorageUnavailable)
@@ -155,10 +174,12 @@ func (s *PreviewServer) PostDocumentThumbnail(stream pb.PreviewService_PostDocum
 	return streamBlob(stream, ct, out)
 }
 
-// docToPDF calls collaboraConvert to turn document bytes into PDF.
-// Mirrors convertDocToPDF in the REST server package.
-func (s *PreviewServer) docToPDF(ctx context.Context, data []byte) ([]byte, error) {
+// docToPDFWithLang calls collaboraConvert to turn document bytes into PDF,
+// using the provided langTag (mirrors REST convertDocToPDF which receives
+// langTag from parseLangTag). Empty langTag is normalised to "en-US" by the
+// caller via parseGRPCLangTag before this function is called.
+func (s *PreviewServer) docToPDFWithLang(ctx context.Context, data []byte, langTag string) ([]byte, error) {
 	docsTimeout := time.Duration(s.cfg.ServiceDocsTimeout) * time.Second
 	docsURL := s.cfg.DocumentConversionFullConvertAddress + "/pdf"
-	return s.collaboraConvert(ctx, data, "en-US", docsURL, docsTimeout)
+	return s.collaboraConvert(ctx, data, langTag, docsURL, docsTimeout)
 }
