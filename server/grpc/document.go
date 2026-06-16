@@ -122,9 +122,14 @@ func (s *PreviewServer) PostDocumentPreview(stream pb.PreviewService_PostDocumen
 		return documentDisabledErr(config.Msg.DocumentPreviewDisabled)
 	}
 
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	firstPage, lastPage, err := parseGRPCPages(params.GetFirstPage(), params.GetLastPage())
 	if err != nil {
@@ -157,9 +162,14 @@ func (s *PreviewServer) PostDocumentThumbnail(stream pb.PreviewService_PostDocum
 		return documentDisabledErr(config.Msg.DocumentThumbnailDisabled)
 	}
 
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	width, height, err := parseGRPCArea(params.GetArea())
 	if err != nil {

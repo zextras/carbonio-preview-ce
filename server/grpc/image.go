@@ -89,9 +89,14 @@ func (s *PreviewServer) GetImageThumbnail(req *pb.GetRequest, stream pb.PreviewS
 
 // PostImagePreview implements PreviewService.PostImagePreview.
 func (s *PreviewServer) PostImagePreview(stream pb.PreviewService_PostImagePreviewServer) error {
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	width, height, err := parseGRPCArea(params.GetArea())
 	if err != nil {
@@ -119,9 +124,14 @@ func (s *PreviewServer) PostImagePreview(stream pb.PreviewService_PostImagePrevi
 
 // PostImageThumbnail implements PreviewService.PostImageThumbnail.
 func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThumbnailServer) error {
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	width, height, err := parseGRPCArea(params.GetArea())
 	if err != nil {

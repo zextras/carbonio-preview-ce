@@ -87,9 +87,14 @@ func (s *PreviewServer) GetPdfThumbnail(req *pb.GetRequest, stream pb.PreviewSer
 
 // PostPdfPreview implements PreviewService.PostPdfPreview.
 func (s *PreviewServer) PostPdfPreview(stream pb.PreviewService_PostPdfPreviewServer) error {
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	firstPage, lastPage, err := parseGRPCPages(params.GetFirstPage(), params.GetLastPage())
 	if err != nil {
@@ -110,9 +115,14 @@ func (s *PreviewServer) PostPdfPreview(stream pb.PreviewService_PostPdfPreviewSe
 
 // PostPdfThumbnail implements PreviewService.PostPdfThumbnail.
 func (s *PreviewServer) PostPdfThumbnail(stream pb.PreviewService_PostPdfThumbnailServer) error {
-	params, blob, err := recvUpload(stream)
+	result, params, err := recvUpload(stream, s.cfg.UploadMemoryThresholdBytes, s.cfg.UploadMaxBytes)
 	if err != nil {
 		return err
+	}
+	defer result.Cleanup()
+	blob, err := result.Bytes()
+	if err != nil {
+		return toStatus(http.StatusInternalServerError, "read upload: internal error")
 	}
 	width, height, err := parseGRPCArea(params.GetArea())
 	if err != nil {

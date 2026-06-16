@@ -85,6 +85,17 @@ type Config struct {
 	// The final deployed port is confirmed at package/deploy time.
 	GRPCPort string
 
+	// UploadMemoryThresholdBytes is the in-memory buffer budget for gRPC upload
+	// receive. Uploads larger than this spill to a temp file.
+	// Controlled by application config key "upload-memory-threshold-mb" (MiB → bytes).
+	// Default: 32 MiB (mirrors REST ParseMultipartForm budget).
+	UploadMemoryThresholdBytes int64
+
+	// UploadMaxBytes is an optional hard cap on total gRPC upload size.
+	// 0 means unlimited (default, matches REST behaviour).
+	// Controlled by application config key "upload-max-mb" (MiB → bytes).
+	UploadMaxBytes int64
+
 	// Derived feature flag
 	AreDocsEnabled bool
 
@@ -186,11 +197,24 @@ func Load() error {
 	var cacheMaxMB int
 	cacheMaxMB, parseErr = appNonNegativeInt(r, "cache-max-mb", parseErr)
 
+	var uploadMemThreshMB int
+	uploadMemThreshMB, parseErr = appPositiveInt(r, "upload-memory-threshold-mb", parseErr)
+
+	var uploadMaxMB int
+	uploadMaxMB, parseErr = appNonNegativeInt(r, "upload-max-mb", parseErr)
+
 	if parseErr != nil {
 		return parseErr
 	}
 
 	c.CacheMaxBytes = int64(cacheMaxMB) * 1024 * 1024
+
+	if uploadMemThreshMB > 0 {
+		c.UploadMemoryThresholdBytes = int64(uploadMemThreshMB) * 1024 * 1024
+	} else {
+		c.UploadMemoryThresholdBytes = 32 << 20 // 32 MiB default
+	}
+	c.UploadMaxBytes = int64(uploadMaxMB) * 1024 * 1024 // 0 stays 0 (unlimited)
 
 	// ── gRPC port (application layer, KV: carbonio-preview/grpc-port) ─────────
 	if v, ok := r.Application.Get("grpc-port"); ok && v != "" {

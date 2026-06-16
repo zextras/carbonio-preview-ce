@@ -253,6 +253,22 @@ func registerCEKeys() {
 			Default:     "10001",
 			Description: "Listen port for the gRPC server (runs alongside the REST server on a separate port). The final deployed port is confirmed at package/deploy time.",
 		},
+		{
+			Key:       "upload-memory-threshold-mb",
+			Namespace: NamespaceApplication,
+			Default:   "32",
+			Description: "Memory budget (MiB) for gRPC upload receive buffering. " +
+				"Uploads exceeding this threshold spill to a temp file. " +
+				"Mirrors REST ParseMultipartForm memory budget. Default: 32.",
+		},
+		{
+			Key:       "upload-max-mb",
+			Namespace: NamespaceApplication,
+			Default:   "0",
+			Description: "Hard cap (MiB) on total gRPC upload size. " +
+				"0 (default) means unlimited — matches REST behaviour. " +
+				"Set a positive value for an ops safety valve.",
+		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
