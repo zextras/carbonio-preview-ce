@@ -32,5 +32,6 @@ Overridable by Consul KV
 | `carbonio-preview/cache-max-mb` | `256` |
 | `carbonio-preview/enable-document-preview` | `true` |
 | `carbonio-preview/enable-document-thumbnail` | `false` |
-| `carbonio-preview/grpc-port` | `10001` |
+| `carbonio-preview/upload-max-mb` | `0` |
+| `carbonio-preview/upload-memory-threshold-mb` | `32` |
 

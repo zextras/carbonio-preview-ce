@@ -60,7 +60,6 @@ func newCapturingServer(t *testing.T, store storage.Client, docEnabled bool) (
 		ServiceEnableDocumentThumbnail:       docEnabled,
 		ServiceDocsTimeout:                   15,
 		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
-		GRPCPort:                             "0",
 	}
 
 	sem := make(chan struct{}, 4)
@@ -607,7 +606,6 @@ func TestGetImagePreview_OwnerIDReachesStorage(t *testing.T) {
 		ServiceEnableDocumentThumbnail:       false,
 		ServiceDocsTimeout:                   15,
 		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
-		GRPCPort:                             "0",
 	}
 	sem := make(chan struct{}, 4)
 	ps := grpcserver.NewPreviewServer(store, cfg, sem)

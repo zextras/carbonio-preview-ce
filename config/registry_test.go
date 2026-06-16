@@ -267,13 +267,12 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 
 	// Spot-check: known application keys that must appear in alphabetical order.
-	// Order: cache-max-mb < docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < grpc-port < timeout-in-seconds
+	// Order: cache-max-mb < docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < timeout-in-seconds
 	appExpected := []string{
 		"cache-max-mb",
 		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
-		"grpc-port",
 		"timeout-in-seconds",
 	}
 	appKeys := keys[firstAppIdx:]

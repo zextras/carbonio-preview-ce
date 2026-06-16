@@ -79,12 +79,6 @@ type Config struct {
 	DocumentConversionFullServiceAddress string
 	DocumentConversionFullConvertAddress string
 
-	// GRPCPort is the listen port for the gRPC server.
-	// Controlled by application config key "grpc-port" (Consul KV carbonio-preview/grpc-port)
-	// or env APPLICATION_CONFIG_GRPC_PORT. Default: "10001".
-	// The final deployed port is confirmed at package/deploy time.
-	GRPCPort string
-
 	// UploadMemoryThresholdBytes is the in-memory buffer budget for gRPC upload
 	// receive. Uploads larger than this spill to a temp file.
 	// Controlled by application config key "upload-memory-threshold-mb" (MiB → bytes).
@@ -215,18 +209,6 @@ func Load() error {
 		c.UploadMemoryThresholdBytes = 32 << 20 // 32 MiB default
 	}
 	c.UploadMaxBytes = int64(uploadMaxMB) * 1024 * 1024 // 0 stays 0 (unlimited)
-
-	// ── gRPC port (application layer, KV: carbonio-preview/grpc-port) ─────────
-	if v, ok := r.Application.Get("grpc-port"); ok && v != "" {
-		// validate it's a valid port string
-		port, aerr := strconv.Atoi(v)
-		if aerr != nil || port < 1 || port > 65535 {
-			return fmt.Errorf("config: key %q has invalid value %q: must be a valid port number (1-65535)", "grpc-port", v)
-		}
-		c.GRPCPort = v
-	} else {
-		c.GRPCPort = "10001"
-	}
 
 	// ── Hardcoded endpoint constants (not operator-configurable) ──────────────
 	c.StorageDownloadAPI = storageDownloadAPI

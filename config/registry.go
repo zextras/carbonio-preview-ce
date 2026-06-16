@@ -248,12 +248,6 @@ func registerCEKeys() {
 			Description: "Maximum size (MiB) of the in-process rendered-output cache. 0 disables the cache.",
 		},
 		{
-			Key:         "grpc-port",
-			Namespace:   NamespaceApplication,
-			Default:     "10001",
-			Description: "Listen port for the gRPC server (runs alongside the REST server on a separate port). The final deployed port is confirmed at package/deploy time.",
-		},
-		{
 			Key:       "upload-memory-threshold-mb",
 			Namespace: NamespaceApplication,
 			Default:   "32",

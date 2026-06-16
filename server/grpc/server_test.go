@@ -96,7 +96,6 @@ func newTestServerConn(t *testing.T, store storage.Client) (*grpc.ClientConn, fu
 		ServiceEnableDocumentThumbnail:       false,
 		ServiceDocsTimeout:                   15,
 		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
-		GRPCPort:                             "0",
 	}
 
 	sem := make(chan struct{}, 4)

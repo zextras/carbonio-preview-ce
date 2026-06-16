@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package grpc provides the gRPC transport layer for carbonio-preview-ce.
-// It implements PreviewService (defined in proto/preview.proto) and wires a
-// grpc.Server alongside the existing HTTP server — both share the same
-// render/storage pipeline.
+// It implements PreviewService (defined in proto/preview.proto). gRPC and
+// REST share the same port (default 10000) via cmux multiplexing in package
+// server — both share the same render/storage pipeline.
 //
 // # Design
 //
@@ -14,21 +14,10 @@
 // pattern used by the REST handlers in package server. Production code sets
 // them to the real render.* functions; tests swap them for stubs without
 // linking against CGO.
-//
-// # Port
-//
-// The gRPC port is driven by config key "grpc-port" (application layer,
-// Consul KV carbonio-preview/grpc-port). The default is 10001, distinct from
-// the REST port (default 10000). The final deployed port is confirmed at
-// package/deploy time and overridden via Consul KV or env
-// APPLICATION_CONFIG_GRPC_PORT.
 package grpc
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
-	"net"
 	"time"
 
 	"google.golang.org/grpc"
@@ -75,9 +64,8 @@ func NewPreviewServer(store storage.Client, cfg *config.Config, sem chan struct{
 // GRPCServer builds and returns a configured *grpc.Server with PreviewService
 // and the standard gRPC health service registered.
 //
-// The health service starts as NOT_SERVING; ListenAndServe flips it to SERVING
-// only after the TCP listener is successfully bound, so health probes reflect
-// actual readiness.
+// The health service starts as NOT_SERVING; the caller (server.Run via cmux)
+// flips it to SERVING after the shared TCP listener is successfully bound.
 //
 // maxRecvMsgSize is set to chunkSize*2 (128 KB) — large enough for any single
 // chunk frame while preventing accidental unbounded allocations from rogue clients.
@@ -90,7 +78,7 @@ func GRPCServer(ps *PreviewServer) (*grpc.Server, *health.Server) {
 
 	healthSvc := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(srv, healthSvc)
-	// Start NOT_SERVING; ListenAndServe will flip to SERVING after bind succeeds.
+	// Start NOT_SERVING; server.Run flips to SERVING after the listener is bound.
 	healthSvc.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 	// Register server reflection so grpcurl and health probing tools work.
@@ -120,21 +108,3 @@ func (s *PreviewServer) SetCollaboraConvertFunc(fn func(ctx context.Context, dat
 	s.collaboraConvert = fn
 }
 
-// ListenAndServe starts the gRPC server on the address derived from cfg.
-// It blocks until the server is stopped. Intended to be run in a goroutine
-// alongside the HTTP server.
-//
-// healthSvc is flipped to SERVING only after the TCP listener is bound
-// successfully. On bind failure the function returns an error and healthSvc
-// remains NOT_SERVING (the process will os.Exit via the caller).
-func ListenAndServe(srv *grpc.Server, cfg *config.Config, healthSvc *health.Server) error {
-	addr := fmt.Sprintf("%s:%s", cfg.ServiceIP, cfg.GRPCPort)
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("grpc: listen %s: %w", addr, err)
-	}
-	// Listener is bound — flip health status to SERVING before accepting RPCs.
-	healthSvc.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
-	slog.Info("gRPC server listening", "addr", addr)
-	return srv.Serve(lis)
-}

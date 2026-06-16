@@ -1,57 +1,28 @@
 # gRPC Consul Service Configuration Notes
 
-This document records the decisions made when adding the gRPC server alongside
-the existing REST server. It is a coexistence-phase document: the REST server
-stays alive and the HTTP health check stays intact until the REST→gRPC
-migration is complete in a later phase.
+This document records the single-port coexistence architecture for
+carbonio-preview-ce: gRPC + REST + health are all multiplexed on a SINGLE port
+(default 10000) via `github.com/soheilhy/cmux`. This matches the Carbonio
+precedent set by carbonio-user-management and carbonio-videorecorder
+(`use-separate-server=false`).
 
-## Default gRPC port
+## Single port
 
-The gRPC server listens on port **10001** by default (REST is on 10000).
-This is the default encoded in the registry (`config/registry.go`,
-key `grpc-port`, `NamespaceApplication`). The final deployed port is
-confirmed at package/deploy time and overridden via:
+All traffic (gRPC, REST, health) shares `cfg.ServiceIP:cfg.ServicePort`
+(default `127.78.0.6:10000`). The separate `grpc-port` config key (formerly
+default 10001) has been removed. The cmux multiplexer routes:
+- `content-type: application/grpc` + HTTP/2 settings → native `grpc.Server`
+- everything else → `http.Server` (REST mux + health endpoints)
 
-- Consul KV: `carbonio-preview/grpc-port`
-- Environment: `APPLICATION_CONFIG_GRPC_PORT`
+The `GRPCPort` config field is gone. Consumer mesh upstreams use the standard
+single `{destination_name=carbonio-preview, local_bind_port}` block forwarding
+to port 10000.
 
-No change to `carbonio-preview.hcl` is needed for the coexistence phase —
-the existing `port = 10000` line refers to the REST service port used by
-Consul Connect for mesh routing.
+## Service mesh protocol progression
 
-## Health checks (coexistence phase)
+`service-protocol.json` follows a three-phase progression:
 
-During coexistence both health checks run in PARALLEL:
-
-1. **HTTP health check** (existing, must NOT be removed):
-   ```hcl
-   check {
-     http     = "http://127.78.0.6:10000/health/live/"
-     method   = "GET"
-     timeout  = "1s"
-     interval = "5s"
-   }
-   ```
-
-2. **gRPC health check** (NEW — add to carbonio-preview.hcl when deploying gRPC):
-   ```hcl
-   check {
-     grpc              = "127.78.0.6:10001"
-     grpc_use_tls      = false
-     timeout           = "1s"
-     interval          = "5s"
-   }
-   ```
-   This probes `grpc.health.v1.Health/Check` (overall service status).
-   The gRPC server sets status to SERVING immediately after render init.
-
-   **Do NOT replace** the HTTP check with the gRPC check in this phase.
-   Add it alongside.
-
-## Service mesh protocol (service-protocol.json)
-
-`service-protocol.json` MUST remain `"protocol": "http"` during coexistence:
-
+### Now (coexistence phase — REST + gRPC)
 ```json
 {
   "kind": "service-defaults",
@@ -59,20 +30,47 @@ During coexistence both health checks run in PARALLEL:
   "protocol": "http"
 }
 ```
+Keep `http` while REST consumers are live. REST routes through the Envoy mesh
+normally (HTTP/1.1). gRPC can be tested directly or via a separate upstream.
+Both share port 10000.
 
-The protocol flips to `"grpc"` ONLY when the REST server is removed in a
-later migration phase. Until then the sidecar proxy routes HTTP traffic
-and gRPC traffic bypasses the mesh (direct port 10001 or via a separate
-service registration).
+### Phase 8 — consumer migration (REST still alive, gRPC primary)
+Switch to `"protocol": "tcp"` so the sidecar proxy tunnels raw bytes (both
+HTTP/2 gRPC and HTTP/1.1 REST pass through). Consul intentions become
+service-level (the `{files,wsc,mailbox}` allow-list continues to work).
+HTTP health check stays on the same port (`/health/live/`), hit directly
+(not through the mesh proxy).
 
-## Intentions
+### Phase 9 — after REST removal (gRPC only)
+Switch to `"protocol": "grpc"` once REST endpoints are gone, matching
+carbonio-user-management and carbonio-videorecorder. Update `carbonio-preview.hcl`
+health check to the gRPC probe:
+```hcl
+check {
+  grpc         = "127.78.0.6:10000"
+  grpc_use_tls = false
+  timeout      = "1s"
+  interval     = "5s"
+}
+```
 
-`intentions.json` is unchanged — intentions apply at the service level, not
-per-protocol. No update needed during coexistence.
+## Health checks (current — coexistence)
 
-## Future: when REST is removed
+Single HTTP health check remains unchanged:
+```hcl
+check {
+  http     = "http://127.78.0.6:10000/health/live/"
+  method   = "GET"
+  timeout  = "1s"
+  interval = "5s"
+}
+```
 
-1. Flip `service-protocol.json` → `"protocol": "grpc"`
-2. Update `carbonio-preview.hcl` `port` to the gRPC port
-3. Remove the HTTP health check, keep only the gRPC one
-4. Update the sidecar proxy `port` in the `check` block
+The gRPC health service (`grpc.health.v1.Health/Check`) is also available on
+the same port 10000 for direct probing (e.g. grpcurl).
+
+## No more separate gRPC port
+
+The `carbonio-preview/grpc-port` Consul KV key and `APPLICATION_CONFIG_GRPC_PORT`
+env var are **removed**. If they exist in KV from a prior deployment, they are
+inert and can be deleted.
