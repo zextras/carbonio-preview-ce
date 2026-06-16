@@ -89,6 +89,22 @@ func GRPCServer(ps *PreviewServer) (*grpc.Server, *health.Server) {
 	return srv, healthSvc
 }
 
+// SetImageThumbnailFunc replaces the imageThumbnail render function.
+// For testing only — allows tests to stub out CGO-dependent render calls.
+func (s *PreviewServer) SetImageThumbnailFunc(fn func(sem chan struct{}, data []byte, width, height int, outputFormat, quality, shape, cropMode string) ([]byte, error)) {
+	s.imageThumbnail = fn
+}
+
+// SetPdfSliceFunc replaces the pdfSlice render function. For testing only.
+func (s *PreviewServer) SetPdfSliceFunc(fn func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error)) {
+	s.pdfSlice = fn
+}
+
+// SetPdfRasterizeFunc replaces the pdfRasterize render function. For testing only.
+func (s *PreviewServer) SetPdfRasterizeFunc(fn func(sem chan struct{}, data []byte, page, width, height int, outputFormat, quality, shape string) ([]byte, error)) {
+	s.pdfRasterize = fn
+}
+
 // ListenAndServe starts the gRPC server on the address derived from cfg.
 // It blocks until the server is stopped. Intended to be run in a goroutine
 // alongside the HTTP server.
