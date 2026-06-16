@@ -5,7 +5,6 @@
 package grpc
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -154,32 +153,6 @@ func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThu
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-// parseGetParams validates the common Get RPC params: UUID, version, service_type.
-// Returns 422 FAILED_PRECONDITION on validation failure, mirroring REST errValidation (HTTP 422).
-func parseGetParams(p *pb.PreviewParams) (id string, version int, serviceType string, err error) {
-	id, err = validateUUID(p.GetFileId())
-	if err != nil {
-		return "", 0, "", toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("file_id: %v", err))
-	}
-	version = int(p.GetVersion())
-	if version < 0 {
-		return "", 0, "", toStatus(http.StatusUnprocessableEntity, "version must be >= 0")
-	}
-	serviceType, err = validateServiceType(p.GetServiceType())
-	if err != nil {
-		return "", 0, "", toStatus(http.StatusUnprocessableEntity, fmt.Sprintf("service_type: %v", err))
-	}
-	return id, version, serviceType, nil
-}
-
-// storageErr translates storage errors to gRPC status errors.
-func storageErr(err error) error {
-	if isNotFound(err) {
-		return toStatus(http.StatusNotFound, config.Msg.ItemNotFound)
-	}
-	return toStatus(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-}
 
 // contentTypeForFormat mirrors server.contentTypeForFormat for use in the grpc package.
 func contentTypeForFormat(f string) string {

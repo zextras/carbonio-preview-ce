@@ -5,7 +5,9 @@
 package grpc
 
 import (
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"google.golang.org/grpc/codes"
@@ -86,9 +88,15 @@ func streamBlob(stream downloadSender, mime string, blob []byte) error {
 // Returns the parsed PreviewParams and the full assembled blob.
 func recvUpload(stream uploadReceiver) (*pb.PreviewParams, []byte, error) {
 	// Read first frame — must be metadata.
+	// io.EOF means the client closed the send side without sending any frame —
+	// treat as a malformed (empty) stream → INVALID_ARGUMENT.
+	// Any other error is a transport/server fault → INTERNAL.
 	first, err := stream.Recv()
 	if err != nil {
-		return nil, nil, status.Errorf(codes.InvalidArgument, "recv metadata frame: %v", err)
+		if errors.Is(err, io.EOF) {
+			return nil, nil, status.Errorf(codes.InvalidArgument, "upload stream contained no frames")
+		}
+		return nil, nil, status.Errorf(codes.Internal, "recv metadata frame: internal error")
 	}
 	meta, ok := first.Payload.(*pb.UploadChunk_Metadata)
 	if !ok {
@@ -105,7 +113,8 @@ func recvUpload(stream uploadReceiver) (*pb.PreviewParams, []byte, error) {
 			break
 		}
 		if err != nil {
-			return nil, nil, status.Errorf(codes.Internal, "recv data frame: %v", err)
+			slog.Warn("recvUpload: recv data frame error", "err", err)
+			return nil, nil, status.Errorf(codes.Internal, "recv data frame: internal error")
 		}
 		data, ok := frame.Payload.(*pb.UploadChunk_Data)
 		if !ok {

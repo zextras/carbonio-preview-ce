@@ -12,6 +12,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,10 +55,18 @@ func (f *fixedStore) RetrieveData(_ context.Context, _ string, _ int, _ string, 
 func connectTestServer(t *testing.T, ps *grpcserver.PreviewServer) (*grpc.ClientConn, func()) {
 	t.Helper()
 
-	srv, _ := grpcserver.GRPCServer(ps)
+	srv, healthSvc := grpcserver.GRPCServer(ps)
 
 	lis := bufconn.Listen(bufSize)
-	go func() { _ = srv.Serve(lis) }()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = srv.Serve(lis)
+	}()
+	// Flip health to SERVING immediately after starting the in-process listener.
+	healthSvc.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 
 	conn, err := grpc.NewClient(
 		"passthrough:///bufnet",
@@ -73,6 +82,7 @@ func connectTestServer(t *testing.T, ps *grpcserver.PreviewServer) (*grpc.Client
 	return conn, func() {
 		conn.Close()
 		srv.Stop()
+		wg.Wait() // join the Serve goroutine before the test exits
 	}
 }
 

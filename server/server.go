@@ -67,6 +67,7 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
+	// sem is intentionally shared between HTTP and gRPC to bound TOTAL render concurrency.
 	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
 
 	// Build the public request handler (semaphore + mux + logging).
@@ -81,8 +82,9 @@ func (s *Server) Run() {
 	}
 
 	// Build and start the gRPC server on a separate port alongside HTTP.
+	// sem is shared with HTTP (see above) to bound TOTAL render concurrency.
 	ps := grpcserver.NewPreviewServer(s.store, s.cfg, sem)
-	grpcSrv, _ := grpcserver.GRPCServer(ps)
+	grpcSrv, healthSvc := grpcserver.GRPCServer(ps)
 
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
@@ -107,7 +109,7 @@ func (s *Server) Run() {
 	}()
 
 	go func() {
-		if err := grpcserver.ListenAndServe(grpcSrv, s.cfg); err != nil {
+		if err := grpcserver.ListenAndServe(grpcSrv, s.cfg, healthSvc); err != nil {
 			slog.Error("Run: serve gRPC", "err", err)
 			os.Exit(1)
 		}
@@ -121,8 +123,15 @@ func (s *Server) Run() {
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: HTTP shutdown", "err", err)
 	}
-	// GracefulStop waits for in-flight RPCs to complete (up to the same 10s window).
-	grpcSrv.GracefulStop()
+	// GracefulStop waits for in-flight RPCs to complete; force-stop after 10s.
+	done := make(chan struct{})
+	go func() { grpcSrv.GracefulStop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		slog.Warn("Run: gRPC graceful stop timed out, forcing stop")
+		grpcSrv.Stop()
+	}
 }
 
 // Handler builds and returns the server's HTTP request handler: the render
