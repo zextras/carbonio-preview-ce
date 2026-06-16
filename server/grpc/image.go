@@ -1,0 +1,165 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package grpc
+
+import (
+	"log/slog"
+	"net/http"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/zextras/carbonio-preview-ce/config"
+	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
+)
+
+// GetImagePreview implements PreviewService.GetImagePreview.
+func (s *PreviewServer) GetImagePreview(req *pb.GetRequest, stream pb.PreviewService_GetImagePreviewServer) error {
+	p := req.GetParams()
+	id, version, serviceType, err := parseGetParams(p)
+	if err != nil {
+		return err
+	}
+	width, height, err := parseGRPCArea(p.GetArea())
+	if err != nil {
+		return err
+	}
+	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	quality := defaultQuality(p.GetQuality())
+	// proto3 has no crop field; default to scale-to-fit (crop=false).
+	cropMode := "none"
+
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	if err != nil {
+		return storageErr(err)
+	}
+
+	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, "rectangular", cropMode)
+	if err != nil {
+		slog.Error("GetImagePreview: render", "err", err)
+		return toStatus(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+
+	return streamBlob(stream, contentTypeForFormat(outputFormat), out)
+}
+
+// GetImageThumbnail implements PreviewService.GetImageThumbnail.
+func (s *PreviewServer) GetImageThumbnail(req *pb.GetRequest, stream pb.PreviewService_GetImageThumbnailServer) error {
+	p := req.GetParams()
+	id, version, serviceType, err := parseGetParams(p)
+	if err != nil {
+		return err
+	}
+	width, height, err := parseGRPCArea(p.GetArea())
+	if err != nil {
+		return err
+	}
+	outputFormat := defaultOutputFormat(p.GetOutputFormat())
+	quality := defaultQuality(p.GetQuality())
+	shape := defaultShape(p.GetShape())
+
+	blob, err := s.store.RetrieveData(stream.Context(), id, version, serviceType, "")
+	if err != nil {
+		return storageErr(err)
+	}
+
+	// Image thumbnails always use CENTER crop (per Python spec).
+	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, shape, "center")
+	if err != nil {
+		slog.Error("GetImageThumbnail: render", "err", err)
+		return toStatus(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+
+	return streamBlob(stream, contentTypeForFormat(outputFormat), out)
+}
+
+// PostImagePreview implements PreviewService.PostImagePreview.
+func (s *PreviewServer) PostImagePreview(stream pb.PreviewService_PostImagePreviewServer) error {
+	params, blob, err := recvUpload(stream)
+	if err != nil {
+		return err
+	}
+	width, height, err := parseGRPCArea(params.GetArea())
+	if err != nil {
+		return err
+	}
+	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	quality := defaultQuality(params.GetQuality())
+	// proto3 has no crop field; default to scale-to-fit.
+	cropMode := "none"
+
+	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, "rectangular", cropMode)
+	if err != nil {
+		slog.Error("PostImagePreview: render", "err", err)
+		return toStatus(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+
+	return streamBlob(stream, contentTypeForFormat(outputFormat), out)
+}
+
+// PostImageThumbnail implements PreviewService.PostImageThumbnail.
+func (s *PreviewServer) PostImageThumbnail(stream pb.PreviewService_PostImageThumbnailServer) error {
+	params, blob, err := recvUpload(stream)
+	if err != nil {
+		return err
+	}
+	width, height, err := parseGRPCArea(params.GetArea())
+	if err != nil {
+		return err
+	}
+	outputFormat := defaultOutputFormat(params.GetOutputFormat())
+	quality := defaultQuality(params.GetQuality())
+	shape := defaultShape(params.GetShape())
+
+	// Image thumbnails always use CENTER crop.
+	out, err := s.imageThumbnail(s.sem, blob, width, height, outputFormat, quality, shape, "center")
+	if err != nil {
+		slog.Error("PostImageThumbnail: render", "err", err)
+		return toStatus(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+
+	return streamBlob(stream, contentTypeForFormat(outputFormat), out)
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+// parseGetParams validates the common Get RPC params: UUID, version, service_type.
+func parseGetParams(p *pb.PreviewParams) (id string, version int, serviceType string, err error) {
+	id, err = validateUUID(p.GetFileId())
+	if err != nil {
+		return "", 0, "", status.Errorf(codes.InvalidArgument, "file_id: %v", err)
+	}
+	version = int(p.GetVersion())
+	if version < 0 {
+		return "", 0, "", status.Errorf(codes.InvalidArgument, "version must be >= 0")
+	}
+	serviceType, err = validateServiceType(p.GetServiceType())
+	if err != nil {
+		return "", 0, "", status.Errorf(codes.InvalidArgument, "service_type: %v", err)
+	}
+	return id, version, serviceType, nil
+}
+
+// storageErr translates storage errors to gRPC status errors.
+func storageErr(err error) error {
+	if isNotFound(err) {
+		return toStatus(http.StatusNotFound, config.Msg.ItemNotFound)
+	}
+	return toStatus(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+}
+
+// contentTypeForFormat mirrors server.contentTypeForFormat for use in the grpc package.
+func contentTypeForFormat(f string) string {
+	switch f {
+	case "png":
+		return "image/png"
+	case "gif":
+		return "image/gif"
+	default:
+		return "image/jpeg"
+	}
+}

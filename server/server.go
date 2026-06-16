@@ -18,6 +18,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
+	grpcserver "github.com/zextras/carbonio-preview-ce/server/grpc"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -66,8 +67,10 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
+	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
+
 	// Build the public request handler (semaphore + mux + logging).
-	handler := s.Handler()
+	handler := loggingMiddleware(s.buildMux(sem))
 
 	addr := fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.ServicePort)
 	srv := &http.Server{
@@ -77,11 +80,16 @@ func (s *Server) Run() {
 		WriteTimeout: time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 	}
 
+	// Build and start the gRPC server on a separate port alongside HTTP.
+	ps := grpcserver.NewPreviewServer(s.store, s.cfg, sem)
+	grpcSrv, _ := grpcserver.GRPCServer(ps)
+
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
 
 	slog.Info("carbonio-preview starting",
-		"addr", addr,
+		"http_addr", addr,
+		"grpc_addr", fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.GRPCPort),
 		"render_concurrency", s.cfg.RenderConcurrency,
 		"pdf_workers", s.cfg.PDFWorkers,
 		"vips_concurrency", s.cfg.VIPSConcurrency,
@@ -93,7 +101,14 @@ func (s *Server) Run() {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("Run: serve", "err", err)
+			slog.Error("Run: serve HTTP", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		if err := grpcserver.ListenAndServe(grpcSrv, s.cfg); err != nil {
+			slog.Error("Run: serve gRPC", "err", err)
 			os.Exit(1)
 		}
 	}()
@@ -104,8 +119,10 @@ func (s *Server) Run() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		slog.Warn("Run: shutdown", "err", err)
+		slog.Warn("Run: HTTP shutdown", "err", err)
 	}
+	// GracefulStop waits for in-flight RPCs to complete (up to the same 10s window).
+	grpcSrv.GracefulStop()
 }
 
 // Handler builds and returns the server's HTTP request handler: the render

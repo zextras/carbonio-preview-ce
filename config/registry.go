@@ -247,6 +247,12 @@ func registerCEKeys() {
 			Default:     "256",
 			Description: "Maximum size (MiB) of the in-process rendered-output cache. 0 disables the cache.",
 		},
+		{
+			Key:         "grpc-port",
+			Namespace:   NamespaceApplication,
+			Default:     "10001",
+			Description: "Listen port for the gRPC server (runs alongside the REST server on a separate port). The final deployed port is confirmed at package/deploy time.",
+		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
