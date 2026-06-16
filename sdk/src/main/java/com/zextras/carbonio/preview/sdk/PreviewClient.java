@@ -5,12 +5,14 @@ package com.zextras.carbonio.preview.sdk;
 
 import com.zextras.carbonio.preview.sdk.grpc.GetRequest;
 import com.zextras.carbonio.preview.sdk.grpc.PreviewChunk;
+import com.zextras.carbonio.preview.sdk.grpc.PreviewChunkStream;
 import com.zextras.carbonio.preview.sdk.grpc.PreviewServiceGrpc;
 import com.zextras.carbonio.preview.sdk.grpc.UploadChunk;
 import com.zextras.carbonio.preview.sdk.grpc.UploadMetadata;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.Status;
+import io.grpc.StatusException;
 import io.grpc.StatusRuntimeException;
 import io.grpc.health.v1.HealthCheckRequest;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -104,10 +106,41 @@ public final class PreviewClient implements Closeable {
     return GetRequest.newBuilder().setParams(query.toProto()).build();
   }
 
+  /**
+   * Wraps a live server-streaming call in a {@link PreviewChunkStream} (generated helper) and
+   * builds a {@link PreviewResponse} from the typed metadata.
+   *
+   * <p>Error translation at the SDK boundary:
+   * <ul>
+   *   <li>{@link IllegalStateException} from the constructor (bad/missing first frame) →
+   *       {@link PreviewException} with {@link Status.Code#INTERNAL}.</li>
+   *   <li>{@link StatusRuntimeException} from the stub layer (e.g. NOT_FOUND before the stream
+   *       even opens) → {@link PreviewException} preserving the gRPC status code.</li>
+   *   <li>Mid-stream {@link IOException} thrown by the {@code InputStream} read methods of
+   *       {@link PreviewChunkStream} carries a {@link StatusException} as its cause; the
+   *       {@link TranslatingInputStream} wrapper re-throws it as
+   *       {@code IOException(new PreviewException(status, cause))} so consumers receive a
+   *       consistently-typed cause regardless of which read call hits the error.</li>
+   * </ul>
+   */
   private PreviewResponse download(BlockingClientCall<?, PreviewChunk> call) {
     try {
-      ChunkIteratorInputStream stream = new ChunkIteratorInputStream(call);
-      return new PreviewResponse(stream, stream.getLength(), stream.getMimeType());
+      PreviewChunkStream stream = new PreviewChunkStream(call);
+      InputStream translating = new TranslatingInputStream(stream);
+      return new PreviewResponse(
+          translating,
+          stream.getMetadata().getLength(),
+          stream.getMetadata().getMimeType());
+    } catch (IllegalStateException e) {
+      // The generated PreviewChunkStream constructor throws IllegalStateException for two cases:
+      // 1. A gRPC error before any frame (cause = StatusException) — preserve that gRPC status.
+      // 2. A genuine protocol violation (no cause or non-gRPC cause) — report as INTERNAL.
+      Throwable cause = e.getCause();
+      if (cause instanceof StatusException se) {
+        throw new PreviewException(se.getStatus(), se);
+      }
+      throw new PreviewException(
+          Status.INTERNAL.withDescription(e.getMessage()).withCause(e));
     } catch (StatusRuntimeException e) {
       throw new PreviewException(e.getStatus(), e);
     }
@@ -206,9 +239,12 @@ public final class PreviewClient implements Closeable {
       throw new PreviewException(Status.INTERNAL.withDescription(t.getMessage()).withCause(t));
     }
 
-    // Wrap the collected chunks as an iterator-backed stream
-    ChunkIteratorInputStream stream = new ChunkIteratorInputStream(chunks.iterator());
-    return new PreviewResponse(stream, stream.getLength(), stream.getMimeType());
+    // Wrap the collected chunks as the generated iterator-backed stream
+    PreviewChunkStream stream = new PreviewChunkStream(chunks.iterator());
+    return new PreviewResponse(
+        stream,
+        stream.getMetadata().getLength(),
+        stream.getMetadata().getMimeType());
   }
 
   // -------------------------------------------------------------------------
@@ -249,6 +285,61 @@ public final class PreviewClient implements Closeable {
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       channel.shutdownNow();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Inner helpers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Wraps a {@link PreviewChunkStream} and translates its mid-stream {@link IOException}s into
+   * {@code IOException(PreviewException)} so that the SDK's public error contract is preserved:
+   * callers always see a {@link PreviewException} as the cause of any mid-stream gRPC failure.
+   *
+   * <p>The generated {@link PreviewChunkStream} throws {@link IOException} whose cause is a
+   * {@link StatusException} when the underlying gRPC call fails. This wrapper catches that and
+   * re-throws as {@code new IOException(new PreviewException(status, statusEx))}, matching the
+   * error shape that was previously produced by the hand-written {@code ChunkIteratorInputStream}.
+   */
+  private static final class TranslatingInputStream extends InputStream {
+
+    private final PreviewChunkStream delegate;
+
+    TranslatingInputStream(PreviewChunkStream delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public int read() throws IOException {
+      try {
+        return delegate.read();
+      } catch (IOException e) {
+        throw translate(e);
+      }
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws IOException {
+      try {
+        return delegate.read(b, off, len);
+      } catch (IOException e) {
+        throw translate(e);
+      }
+    }
+
+    @Override
+    public void close() {
+      delegate.close();
+    }
+
+    private static IOException translate(IOException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof StatusException se) {
+        return new IOException(new PreviewException(se.getStatus(), se));
+      }
+      // Plain protocol-violation string (no StatusException cause) — wrap as-is
+      return e;
     }
   }
 }
