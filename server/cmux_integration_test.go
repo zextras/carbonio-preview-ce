@@ -5,7 +5,9 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -28,9 +30,9 @@ import (
 func TestCmux_SinglePort_GRPCAndHTTP(t *testing.T) {
 	// --- wire up grpc server ---
 	cfg := &config.Config{
-		ServiceEnableDocumentPreview:        false,
-		ServiceEnableDocumentThumbnail:      false,
-		ServiceDocsTimeout:                  15,
+		ServiceEnableDocumentPreview:         false,
+		ServiceEnableDocumentThumbnail:       false,
+		ServiceDocsTimeout:                   15,
 		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
 	}
 	sem := make(chan struct{}, 4)
@@ -120,4 +122,8 @@ type fixedStoreForCmux struct{}
 
 func (f *fixedStoreForCmux) RetrieveData(_ context.Context, _ string, _ int, _ string, _ string) (storage.Blob, error) {
 	return []byte("data"), nil
+}
+
+func (f *fixedStoreForCmux) RetrieveDataStreaming(_ context.Context, _ string, _ int, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader([]byte("data"))), nil
 }

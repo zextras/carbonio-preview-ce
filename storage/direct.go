@@ -105,6 +105,40 @@ func (c *DirectClient) RetrieveData(
 	}
 }
 
+// RetrieveDataStreaming is the streaming variant of RetrieveData. It performs
+// the identical GET but returns resp.Body so the caller can read a prefix and
+// close early. The body MUST be closed by the caller.
+func (c *DirectClient) RetrieveDataStreaming(
+	ctx context.Context,
+	fileID string,
+	version int,
+	serviceType string,
+	_ string, // ownerID ignored in CE
+) (io.ReadCloser, error) {
+	reqURL, err := buildURL(c.downloadURL, fileID, version, serviceType)
+	if err != nil {
+		return nil, fmt.Errorf("%w: building URL: %v", ErrUnavailable, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		resp.Body.Close()
+		return nil, ErrNotFound
+	case resp.StatusCode >= 200 && resp.StatusCode < 400:
+		return resp.Body, nil
+	default:
+		resp.Body.Close()
+		return nil, fmt.Errorf("%w: storage returned HTTP %d", ErrUnavailable, resp.StatusCode)
+	}
+}
+
 // buildURL assembles the full download URL with query parameters.
 func buildURL(base, fileID string, version int, serviceType string) (string, error) {
 	u, err := url.Parse(base)

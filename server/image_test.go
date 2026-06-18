@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,13 @@ func (m *mockStore) RetrieveData(
 	m.lastVersion = version
 	m.lastServiceType = serviceType
 	return m.blob, m.err
+}
+
+func (m *mockStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _, _ string) (io.ReadCloser, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return io.NopCloser(bytes.NewReader(m.blob)), nil
 }
 
 // ---- render stubs ----

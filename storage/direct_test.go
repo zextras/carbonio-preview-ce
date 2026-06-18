@@ -298,6 +298,41 @@ func TestRetrieveData_BuildURLError(t *testing.T) {
 
 var _ io.ReadCloser = errReader{}
 
+func TestRetrieveDataStreaming_HappyPath(t *testing.T) {
+	want := []byte("the-blob-bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(want)
+	}))
+	defer srv.Close()
+
+	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	rc, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
+	if err != nil {
+		t.Fatalf("RetrieveDataStreaming: %v", err)
+	}
+	defer rc.Close()
+	got, _ := io.ReadAll(rc)
+	if string(got) != string(want) {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestRetrieveDataStreaming_404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	_, err := client.RetrieveDataStreaming(context.Background(), "x", 1, "files", "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
 // TestRetrieveData_2xxVariants verifies that non-200 success codes (201, 206,
 // 302) are also treated as successful.
 func TestRetrieveData_2xxVariants(t *testing.T) {

@@ -7,7 +7,10 @@
 // package.
 package storage
 
-import "context"
+import (
+	"context"
+	"io"
+)
 
 // Blob is an alias for raw file content retrieved from storage.
 type Blob = []byte
@@ -25,4 +28,12 @@ type Client interface {
 	//   ErrNotFound   — storage returned HTTP 404
 	//   ErrUnavailable — storage was unreachable or returned any other error
 	RetrieveData(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (Blob, error)
+
+	// RetrieveDataStreaming fetches the same blob as RetrieveData but returns a
+	// streaming body the caller reads incrementally. Closing the returned
+	// ReadCloser (or cancelling ctx) aborts the in-flight HTTP transfer. Used by
+	// the video path to avoid buffering whole videos in memory.
+	//
+	// Same error contract as RetrieveData (ErrNotFound / ErrUnavailable).
+	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, error)
 }

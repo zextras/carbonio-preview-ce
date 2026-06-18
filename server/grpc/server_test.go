@@ -45,6 +45,13 @@ func (f *fixedStore) RetrieveData(_ context.Context, _ string, _ int, _ string, 
 	return f.blob, nil
 }
 
+func (f *fixedStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _, _ string) (io.ReadCloser, error) {
+	if f.notFound {
+		return nil, storage.ErrNotFound
+	}
+	return io.NopCloser(bytes.NewReader(f.blob)), nil
+}
+
 // ---------------------------------------------------------------------------
 // Test server factory
 // ---------------------------------------------------------------------------

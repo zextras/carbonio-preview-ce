@@ -11,6 +11,7 @@
 package grpc_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -594,6 +595,11 @@ type capturingStore struct {
 func (c *capturingStore) RetrieveData(_ context.Context, _ string, _ int, _ string, ownerID string) (storage.Blob, error) {
 	c.ownerID = ownerID
 	return c.blob, nil
+}
+
+func (c *capturingStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _, ownerID string) (io.ReadCloser, error) {
+	c.ownerID = ownerID
+	return io.NopCloser(bytes.NewReader(c.blob)), nil
 }
 
 func TestGetImagePreview_OwnerIDReachesStorage(t *testing.T) {
