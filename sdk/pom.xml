@@ -34,6 +34,19 @@ SPDX-License-Identifier: AGPL-3.0-only
     </repository>
   </repositories>
 
+  <distributionManagement>
+    <snapshotRepository>
+      <id>zextras-java-sdk</id>
+      <name>Zextras private repository</name>
+      <url>https://zextras.jfrog.io/artifactory/maven-snapshot</url>
+    </snapshotRepository>
+    <repository>
+      <id>zextras-java-sdk</id>
+      <name>Zextras private repository</name>
+      <url>https://zextras.jfrog.io/artifactory/public-maven-repo</url>
+    </repository>
+  </distributionManagement>
+
   <dependencies>
     <!-- Runtime channel transport (plaintext ManagedChannel) -->
     <dependency>
