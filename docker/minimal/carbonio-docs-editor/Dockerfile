@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 FROM docker.io/library/ubuntu:22.04
 
 USER root

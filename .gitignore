@@ -6,7 +6,6 @@
 *.rpm
 .coverage
 .idea
-LICENSES
 __pycache__
 app/core/resources/config.ini
 app/core/resources/messages.ini
