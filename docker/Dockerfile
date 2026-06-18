@@ -92,6 +92,14 @@ FROM debian:bookworm-slim
 # Install runtime: libvips42 pulls in the full vips + glib runtime closure.
 # libstdc++6 is needed for C++ symbols from pdfium and vips-cpp.
 # ca-certificates is needed for any outbound HTTPS the binary makes.
+#
+# Video first-frame extraction needs ffmpeg at /opt/zextras/common/bin/ffmpeg,
+# provided by the Zextras-published "carbonio-ffmpeg" package — declared as a
+# runtime dependency in package/preview/PKGBUILD and installed by the .deb/.rpm
+# on the VM. It is NOT installed in this image (repo.zextras.io is 403 from CI
+# buildx), mirroring carbonio-videoserver / carbonio-videorecorder. Video
+# preview is therefore exercised on the real VM and in local/dev tests where an
+# ffmpeg binary is present (video tests skip gracefully when it is absent).
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         libvips42 \
