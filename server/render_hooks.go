@@ -16,9 +16,11 @@ package server
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/render"
+	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // imageThumbnailFunc is the seam for render.ImageThumbnail.
@@ -29,6 +31,12 @@ var imageThumbnailFunc = func(
 	outputFormat, quality, shape, cropMode string,
 ) ([]byte, error) {
 	return render.ImageThumbnail(sem, data, width, height, outputFormat, quality, shape, cropMode)
+}
+
+// videoFirstFrameFunc is the seam for video.ExtractFirstFramePNG. Tests override
+// it to avoid spawning ffmpeg; production uses the real extractor.
+var videoFirstFrameFunc = func(ctx context.Context, r io.Reader, maxBytes int64) ([]byte, error) {
+	return video.ExtractFirstFramePNG(ctx, r, maxBytes)
 }
 
 // pdfSliceFunc is the seam for render.PDFSlice.
