@@ -18,6 +18,7 @@ package grpc
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -26,9 +27,10 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/zextras/carbonio-preview-ce/config"
-	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
 	"github.com/zextras/carbonio-preview-ce/render"
+	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
 	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // PreviewServer implements pb.PreviewServiceServer.
@@ -36,28 +38,30 @@ import (
 type PreviewServer struct {
 	pb.UnimplementedPreviewServiceServer
 
-	store   storage.Client
-	cfg     *config.Config
-	sem     chan struct{}
+	store storage.Client
+	cfg   *config.Config
+	sem   chan struct{}
 
 	// injectable render functions (mirrors render_hooks.go in package server).
-	imageThumbnail    func(sem chan struct{}, data []byte, width, height int, outputFormat, quality, shape, cropMode string) ([]byte, error)
-	pdfSlice          func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error)
-	pdfRasterize      func(sem chan struct{}, data []byte, page, width, height int, outputFormat, quality, shape string) ([]byte, error)
-	collaboraConvert  func(ctx context.Context, data []byte, langTag, docsEditorURL string, timeout time.Duration) ([]byte, error)
+	imageThumbnail   func(sem chan struct{}, data []byte, width, height int, outputFormat, quality, shape, cropMode string) ([]byte, error)
+	pdfSlice         func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error)
+	pdfRasterize     func(sem chan struct{}, data []byte, page, width, height int, outputFormat, quality, shape string) ([]byte, error)
+	collaboraConvert func(ctx context.Context, data []byte, langTag, docsEditorURL string, timeout time.Duration) ([]byte, error)
+	videoFirstFrame  func(ctx context.Context, r io.Reader, maxBytes int64) ([]byte, error)
 }
 
 // NewPreviewServer constructs a PreviewServer wired to the production render
 // functions. store and cfg must not be nil.
 func NewPreviewServer(store storage.Client, cfg *config.Config, sem chan struct{}) *PreviewServer {
 	return &PreviewServer{
-		store:  store,
-		cfg:    cfg,
-		sem:    sem,
+		store:            store,
+		cfg:              cfg,
+		sem:              sem,
 		imageThumbnail:   render.ImageThumbnail,
 		pdfSlice:         render.PDFSlice,
 		pdfRasterize:     render.PDFRasterize,
 		collaboraConvert: render.CollaboraConvert,
+		videoFirstFrame:  video.ExtractFirstFramePNG,
 	}
 }
 
@@ -108,3 +112,7 @@ func (s *PreviewServer) SetCollaboraConvertFunc(fn func(ctx context.Context, dat
 	s.collaboraConvert = fn
 }
 
+// SetVideoFirstFrameFunc replaces the videoFirstFrame function. For testing only.
+func (s *PreviewServer) SetVideoFirstFrameFunc(fn func(ctx context.Context, r io.Reader, maxBytes int64) ([]byte, error)) {
+	s.videoFirstFrame = fn
+}

@@ -44,6 +44,8 @@ const (
 	PreviewService_GetPdfThumbnail_FullMethodName       = "/preview.PreviewService/GetPdfThumbnail"
 	PreviewService_GetDocumentPreview_FullMethodName    = "/preview.PreviewService/GetDocumentPreview"
 	PreviewService_GetDocumentThumbnail_FullMethodName  = "/preview.PreviewService/GetDocumentThumbnail"
+	PreviewService_GetVideoPreview_FullMethodName       = "/preview.PreviewService/GetVideoPreview"
+	PreviewService_GetVideoThumbnail_FullMethodName     = "/preview.PreviewService/GetVideoThumbnail"
 	PreviewService_PostImagePreview_FullMethodName      = "/preview.PreviewService/PostImagePreview"
 	PreviewService_PostImageThumbnail_FullMethodName    = "/preview.PreviewService/PostImageThumbnail"
 	PreviewService_PostPdfPreview_FullMethodName        = "/preview.PreviewService/PostPdfPreview"
@@ -63,6 +65,8 @@ type PreviewServiceClient interface {
 	GetPdfThumbnail(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error)
 	GetDocumentPreview(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error)
 	GetDocumentThumbnail(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error)
+	GetVideoPreview(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error)
+	GetVideoThumbnail(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error)
 	// ---- Uploads: client-streaming in, server-streaming out (mailbox only) ----
 	PostImagePreview(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error)
 	PostImageThumbnail(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error)
@@ -194,9 +198,47 @@ func (c *previewServiceClient) GetDocumentThumbnail(ctx context.Context, in *Get
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PreviewService_GetDocumentThumbnailClient = grpc.ServerStreamingClient[PreviewChunk]
 
+func (c *previewServiceClient) GetVideoPreview(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[6], PreviewService_GetVideoPreview_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetRequest, PreviewChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PreviewService_GetVideoPreviewClient = grpc.ServerStreamingClient[PreviewChunk]
+
+func (c *previewServiceClient) GetVideoThumbnail(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PreviewChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[7], PreviewService_GetVideoThumbnail_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetRequest, PreviewChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PreviewService_GetVideoThumbnailClient = grpc.ServerStreamingClient[PreviewChunk]
+
 func (c *previewServiceClient) PostImagePreview(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[6], PreviewService_PostImagePreview_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[8], PreviewService_PostImagePreview_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +251,7 @@ type PreviewService_PostImagePreviewClient = grpc.BidiStreamingClient[UploadChun
 
 func (c *previewServiceClient) PostImageThumbnail(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[7], PreviewService_PostImageThumbnail_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[9], PreviewService_PostImageThumbnail_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +264,7 @@ type PreviewService_PostImageThumbnailClient = grpc.BidiStreamingClient[UploadCh
 
 func (c *previewServiceClient) PostPdfPreview(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[8], PreviewService_PostPdfPreview_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[10], PreviewService_PostPdfPreview_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +277,7 @@ type PreviewService_PostPdfPreviewClient = grpc.BidiStreamingClient[UploadChunk,
 
 func (c *previewServiceClient) PostPdfThumbnail(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[9], PreviewService_PostPdfThumbnail_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[11], PreviewService_PostPdfThumbnail_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +290,7 @@ type PreviewService_PostPdfThumbnailClient = grpc.BidiStreamingClient[UploadChun
 
 func (c *previewServiceClient) PostDocumentPreview(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[10], PreviewService_PostDocumentPreview_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[12], PreviewService_PostDocumentPreview_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +303,7 @@ type PreviewService_PostDocumentPreviewClient = grpc.BidiStreamingClient[UploadC
 
 func (c *previewServiceClient) PostDocumentThumbnail(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UploadChunk, PreviewChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[11], PreviewService_PostDocumentThumbnail_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PreviewService_ServiceDesc.Streams[13], PreviewService_PostDocumentThumbnail_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +325,8 @@ type PreviewServiceServer interface {
 	GetPdfThumbnail(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error
 	GetDocumentPreview(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error
 	GetDocumentThumbnail(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error
+	GetVideoPreview(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error
+	GetVideoThumbnail(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error
 	// ---- Uploads: client-streaming in, server-streaming out (mailbox only) ----
 	PostImagePreview(grpc.BidiStreamingServer[UploadChunk, PreviewChunk]) error
 	PostImageThumbnail(grpc.BidiStreamingServer[UploadChunk, PreviewChunk]) error
@@ -317,6 +361,12 @@ func (UnimplementedPreviewServiceServer) GetDocumentPreview(*GetRequest, grpc.Se
 }
 func (UnimplementedPreviewServiceServer) GetDocumentThumbnail(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error {
 	return status.Error(codes.Unimplemented, "method GetDocumentThumbnail not implemented")
+}
+func (UnimplementedPreviewServiceServer) GetVideoPreview(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error {
+	return status.Error(codes.Unimplemented, "method GetVideoPreview not implemented")
+}
+func (UnimplementedPreviewServiceServer) GetVideoThumbnail(*GetRequest, grpc.ServerStreamingServer[PreviewChunk]) error {
+	return status.Error(codes.Unimplemented, "method GetVideoThumbnail not implemented")
 }
 func (UnimplementedPreviewServiceServer) PostImagePreview(grpc.BidiStreamingServer[UploadChunk, PreviewChunk]) error {
 	return status.Error(codes.Unimplemented, "method PostImagePreview not implemented")
@@ -423,6 +473,28 @@ func _PreviewService_GetDocumentThumbnail_Handler(srv interface{}, stream grpc.S
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PreviewService_GetDocumentThumbnailServer = grpc.ServerStreamingServer[PreviewChunk]
 
+func _PreviewService_GetVideoPreview_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PreviewServiceServer).GetVideoPreview(m, &grpc.GenericServerStream[GetRequest, PreviewChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PreviewService_GetVideoPreviewServer = grpc.ServerStreamingServer[PreviewChunk]
+
+func _PreviewService_GetVideoThumbnail_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PreviewServiceServer).GetVideoThumbnail(m, &grpc.GenericServerStream[GetRequest, PreviewChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PreviewService_GetVideoThumbnailServer = grpc.ServerStreamingServer[PreviewChunk]
+
 func _PreviewService_PostImagePreview_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(PreviewServiceServer).PostImagePreview(&grpc.GenericServerStream[UploadChunk, PreviewChunk]{ServerStream: stream})
 }
@@ -501,6 +573,16 @@ var PreviewService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "GetDocumentThumbnail",
 			Handler:       _PreviewService_GetDocumentThumbnail_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "GetVideoPreview",
+			Handler:       _PreviewService_GetVideoPreview_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "GetVideoThumbnail",
+			Handler:       _PreviewService_GetVideoThumbnail_Handler,
 			ServerStreams: true,
 		},
 		{

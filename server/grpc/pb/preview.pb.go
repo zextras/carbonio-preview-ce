@@ -534,14 +534,16 @@ const file_preview_proto_rawDesc = "" +
 	"\vUploadChunk\x125\n" +
 	"\bmetadata\x18\x01 \x01(\v2\x17.preview.UploadMetadataH\x00R\bmetadata\x12\x14\n" +
 	"\x04data\x18\x02 \x01(\fH\x00R\x04dataB\t\n" +
-	"\apayload2\xc4\x06\n" +
+	"\apayload2\xc8\a\n" +
 	"\x0ePreviewService\x12?\n" +
 	"\x0fGetImagePreview\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12A\n" +
 	"\x11GetImageThumbnail\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12=\n" +
 	"\rGetPdfPreview\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12?\n" +
 	"\x0fGetPdfThumbnail\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12B\n" +
 	"\x12GetDocumentPreview\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12D\n" +
-	"\x14GetDocumentThumbnail\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12C\n" +
+	"\x14GetDocumentThumbnail\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12?\n" +
+	"\x0fGetVideoPreview\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12A\n" +
+	"\x11GetVideoThumbnail\x12\x13.preview.GetRequest\x1a\x15.preview.PreviewChunk0\x01\x12C\n" +
 	"\x10PostImagePreview\x12\x14.preview.UploadChunk\x1a\x15.preview.PreviewChunk(\x010\x01\x12E\n" +
 	"\x12PostImageThumbnail\x12\x14.preview.UploadChunk\x1a\x15.preview.PreviewChunk(\x010\x01\x12A\n" +
 	"\x0ePostPdfPreview\x12\x14.preview.UploadChunk\x1a\x15.preview.PreviewChunk(\x010\x01\x12C\n" +
@@ -582,26 +584,30 @@ var file_preview_proto_depIdxs = []int32{
 	1,  // 7: preview.PreviewService.GetPdfThumbnail:input_type -> preview.GetRequest
 	1,  // 8: preview.PreviewService.GetDocumentPreview:input_type -> preview.GetRequest
 	1,  // 9: preview.PreviewService.GetDocumentThumbnail:input_type -> preview.GetRequest
-	5,  // 10: preview.PreviewService.PostImagePreview:input_type -> preview.UploadChunk
-	5,  // 11: preview.PreviewService.PostImageThumbnail:input_type -> preview.UploadChunk
-	5,  // 12: preview.PreviewService.PostPdfPreview:input_type -> preview.UploadChunk
-	5,  // 13: preview.PreviewService.PostPdfThumbnail:input_type -> preview.UploadChunk
-	5,  // 14: preview.PreviewService.PostDocumentPreview:input_type -> preview.UploadChunk
-	5,  // 15: preview.PreviewService.PostDocumentThumbnail:input_type -> preview.UploadChunk
-	3,  // 16: preview.PreviewService.GetImagePreview:output_type -> preview.PreviewChunk
-	3,  // 17: preview.PreviewService.GetImageThumbnail:output_type -> preview.PreviewChunk
-	3,  // 18: preview.PreviewService.GetPdfPreview:output_type -> preview.PreviewChunk
-	3,  // 19: preview.PreviewService.GetPdfThumbnail:output_type -> preview.PreviewChunk
-	3,  // 20: preview.PreviewService.GetDocumentPreview:output_type -> preview.PreviewChunk
-	3,  // 21: preview.PreviewService.GetDocumentThumbnail:output_type -> preview.PreviewChunk
-	3,  // 22: preview.PreviewService.PostImagePreview:output_type -> preview.PreviewChunk
-	3,  // 23: preview.PreviewService.PostImageThumbnail:output_type -> preview.PreviewChunk
-	3,  // 24: preview.PreviewService.PostPdfPreview:output_type -> preview.PreviewChunk
-	3,  // 25: preview.PreviewService.PostPdfThumbnail:output_type -> preview.PreviewChunk
-	3,  // 26: preview.PreviewService.PostDocumentPreview:output_type -> preview.PreviewChunk
-	3,  // 27: preview.PreviewService.PostDocumentThumbnail:output_type -> preview.PreviewChunk
-	16, // [16:28] is the sub-list for method output_type
-	4,  // [4:16] is the sub-list for method input_type
+	1,  // 10: preview.PreviewService.GetVideoPreview:input_type -> preview.GetRequest
+	1,  // 11: preview.PreviewService.GetVideoThumbnail:input_type -> preview.GetRequest
+	5,  // 12: preview.PreviewService.PostImagePreview:input_type -> preview.UploadChunk
+	5,  // 13: preview.PreviewService.PostImageThumbnail:input_type -> preview.UploadChunk
+	5,  // 14: preview.PreviewService.PostPdfPreview:input_type -> preview.UploadChunk
+	5,  // 15: preview.PreviewService.PostPdfThumbnail:input_type -> preview.UploadChunk
+	5,  // 16: preview.PreviewService.PostDocumentPreview:input_type -> preview.UploadChunk
+	5,  // 17: preview.PreviewService.PostDocumentThumbnail:input_type -> preview.UploadChunk
+	3,  // 18: preview.PreviewService.GetImagePreview:output_type -> preview.PreviewChunk
+	3,  // 19: preview.PreviewService.GetImageThumbnail:output_type -> preview.PreviewChunk
+	3,  // 20: preview.PreviewService.GetPdfPreview:output_type -> preview.PreviewChunk
+	3,  // 21: preview.PreviewService.GetPdfThumbnail:output_type -> preview.PreviewChunk
+	3,  // 22: preview.PreviewService.GetDocumentPreview:output_type -> preview.PreviewChunk
+	3,  // 23: preview.PreviewService.GetDocumentThumbnail:output_type -> preview.PreviewChunk
+	3,  // 24: preview.PreviewService.GetVideoPreview:output_type -> preview.PreviewChunk
+	3,  // 25: preview.PreviewService.GetVideoThumbnail:output_type -> preview.PreviewChunk
+	3,  // 26: preview.PreviewService.PostImagePreview:output_type -> preview.PreviewChunk
+	3,  // 27: preview.PreviewService.PostImageThumbnail:output_type -> preview.PreviewChunk
+	3,  // 28: preview.PreviewService.PostPdfPreview:output_type -> preview.PreviewChunk
+	3,  // 29: preview.PreviewService.PostPdfThumbnail:output_type -> preview.PreviewChunk
+	3,  // 30: preview.PreviewService.PostDocumentPreview:output_type -> preview.PreviewChunk
+	3,  // 31: preview.PreviewService.PostDocumentThumbnail:output_type -> preview.PreviewChunk
+	18, // [18:32] is the sub-list for method output_type
+	4,  // [4:18] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name

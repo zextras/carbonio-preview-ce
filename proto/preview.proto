@@ -32,6 +32,8 @@ service PreviewService {
   rpc GetPdfThumbnail      (GetRequest)  returns (stream PreviewChunk);
   rpc GetDocumentPreview   (GetRequest)  returns (stream PreviewChunk);
   rpc GetDocumentThumbnail (GetRequest)  returns (stream PreviewChunk);
+  rpc GetVideoPreview      (GetRequest)  returns (stream PreviewChunk);
+  rpc GetVideoThumbnail    (GetRequest)  returns (stream PreviewChunk);
 
   // ---- Uploads: client-streaming in, server-streaming out (mailbox only) ----
   rpc PostImagePreview      (stream UploadChunk) returns (stream PreviewChunk);
