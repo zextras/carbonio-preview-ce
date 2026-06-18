@@ -33,12 +33,6 @@ dt3_pipeline(
                 --exclude='package' \
                 --exclude='*.pyc' \
                 --exclude='__pycache__' \
-                --exclude='sdk' \
-                --exclude='app' \
-                --exclude='tests' \
-                --exclude='coverage.out' \
-                --exclude='coverage.html' \
-                --exclude='carbonio-preview' \
                 .
         ''',
     ],
