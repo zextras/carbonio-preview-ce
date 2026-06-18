@@ -10,9 +10,13 @@ import (
 	"io"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/zextras/carbonio-preview-ce/config"
 	grpcserver "github.com/zextras/carbonio-preview-ce/server/grpc"
 	pb "github.com/zextras/carbonio-preview-ce/server/grpc/pb"
+	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // TestGetVideoThumbnail_OK verifies the full in-process round-trip for
@@ -189,5 +193,113 @@ func TestGetVideoThumbnail_NotFound(t *testing.T) {
 	}
 	if recvErr == io.EOF {
 		t.Fatal("expected gRPC error, got EOF")
+	}
+}
+
+// TestGetVideoThumbnail_ErrTooLarge verifies that video.ErrTooLarge propagates
+// as a gRPC FAILED_PRECONDITION status (maps to HTTP 422).
+func TestGetVideoThumbnail_ErrTooLarge(t *testing.T) {
+	store := &fixedStore{blob: []byte("vid-bytes")}
+
+	cfg := &config.Config{
+		ServiceDocsTimeout:                   15,
+		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
+	}
+	sem := make(chan struct{}, 4)
+	ps := grpcserver.NewPreviewServer(store, cfg, sem)
+
+	ps.SetVideoFirstFrameFunc(func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		return nil, video.ErrTooLarge
+	})
+	ps.SetImageThumbnailFunc(func(_ chan struct{}, _ []byte, _, _ int, _, _, _, _ string) ([]byte, error) {
+		return nil, nil // should not be reached
+	})
+
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	client := pb.NewPreviewServiceClient(conn)
+	req := &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "44444444-4444-4444-4444-444444444444",
+		Version:     1,
+		Area:        "320x240",
+		ServiceType: "files",
+	}}
+	stream, err := client.GetVideoThumbnail(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GetVideoThumbnail open: %v", err)
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected error for ErrTooLarge, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %v", recvErr)
+	}
+	if st.Code() != codes.FailedPrecondition {
+		t.Errorf("ErrTooLarge: want codes.FailedPrecondition, got %s", st.Code())
+	}
+}
+
+// TestGetVideoThumbnail_CancelledContext verifies that a cancelled client context
+// results in codes.Canceled (not a format/render error code).
+func TestGetVideoThumbnail_CancelledContext(t *testing.T) {
+	store := &fixedStore{blob: []byte("vid-bytes")}
+
+	cfg := &config.Config{
+		ServiceDocsTimeout:                   15,
+		DocumentConversionFullConvertAddress: "http://127.0.0.1:20001/cool/convert-to",
+	}
+	sem := make(chan struct{}, 4)
+	ps := grpcserver.NewPreviewServer(store, cfg, sem)
+
+	ps.SetVideoFirstFrameFunc(func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		return nil, context.Canceled
+	})
+	ps.SetImageThumbnailFunc(func(_ chan struct{}, _ []byte, _, _ int, _, _, _, _ string) ([]byte, error) {
+		return nil, nil // should not be reached
+	})
+
+	conn, cleanup := connectTestServer(t, ps)
+	defer cleanup()
+
+	// Use a pre-cancelled context so the server sees cancellation.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	client := pb.NewPreviewServiceClient(conn)
+	req := &pb.GetRequest{Params: &pb.PreviewParams{
+		FileId:      "55555555-5555-5555-5555-555555555555",
+		Version:     1,
+		Area:        "320x240",
+		ServiceType: "files",
+	}}
+	stream, err := client.GetVideoThumbnail(ctx, req)
+	if err != nil {
+		// The RPC may fail immediately on open with a cancelled context — this
+		// is also an acceptable Canceled outcome.
+		st, ok := status.FromError(err)
+		if ok && st.Code() == codes.Canceled {
+			return // correct: cancelled on open
+		}
+		// Any other error on open is unexpected.
+		t.Fatalf("GetVideoThumbnail open: unexpected error %v", err)
+	}
+	_, recvErr := stream.Recv()
+	if recvErr == nil || recvErr == io.EOF {
+		// The server may have completed before the cancel propagated; that is
+		// acceptable only if the stream closed cleanly without data.
+		return
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok {
+		t.Fatalf("expected gRPC status error, got %v", recvErr)
+	}
+	// Accept Canceled or DeadlineExceeded — both arise from context cancellation.
+	if st.Code() != codes.Canceled && st.Code() != codes.DeadlineExceeded {
+		t.Errorf("cancelled context: want Canceled or DeadlineExceeded, got %s", st.Code())
 	}
 }

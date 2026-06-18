@@ -34,6 +34,12 @@ type Client interface {
 	// ReadCloser (or cancelling ctx) aborts the in-flight HTTP transfer. Used by
 	// the video path to avoid buffering whole videos in memory.
 	//
+	// Timeout layering: the storage http.Client.Timeout bounds receiving the
+	// response HEADERS (connection + server processing). The response BODY is
+	// read incrementally by the caller under the caller's ctx — cancelling ctx
+	// (e.g. because the request deadline expired or the client disconnected)
+	// aborts the in-flight body read immediately via the underlying transport.
+	//
 	// Same error contract as RetrieveData (ErrNotFound / ErrUnavailable).
 	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, error)
 }

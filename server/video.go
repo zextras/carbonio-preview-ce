@@ -50,9 +50,18 @@ func routeVideo(w http.ResponseWriter, r *http.Request, base string, cfg *config
 // retrieveFirstFrame streams the blob and extracts frame 0 as PNG. Shared by
 // both handlers. Maps storage + extraction errors to HTTP responses; returns
 // false if it already wrote the response.
+//
+// When the client disconnects or the request deadline passes, r.Context().Err()
+// is non-nil. In that case retrieveFirstFrame returns (nil, false) silently
+// without writing any error response: the client is already gone, writing would
+// be a no-op, and the error is not actionable noise in the log.
 func retrieveFirstFrame(w http.ResponseWriter, r *http.Request, id string, version int, serviceType string, store storage.Client) ([]byte, bool) {
 	rc, err := store.RetrieveDataStreaming(r.Context(), id, version, serviceType, ownerID(r))
 	if err != nil {
+		// Silent path: client cancelled before or during storage fetch.
+		if r.Context().Err() != nil {
+			return nil, false
+		}
 		if errors.Is(err, storage.ErrNotFound) {
 			errNotFound(w, config.Msg.ItemNotFound)
 			return nil, false
@@ -64,6 +73,10 @@ func retrieveFirstFrame(w http.ResponseWriter, r *http.Request, id string, versi
 
 	frame, err := videoFirstFrameFunc(r.Context(), rc, video.MaxBytes)
 	if err != nil {
+		// Silent path: client cancelled during the long download+extract operation.
+		if r.Context().Err() != nil {
+			return nil, false
+		}
 		if errors.Is(err, video.ErrTooLarge) {
 			errDetail(w, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 			return nil, false

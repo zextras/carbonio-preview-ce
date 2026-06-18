@@ -15,6 +15,12 @@ import (
 // runFFmpegFirstFrame runs ffmpeg on a seekable input file and returns the
 // first video frame encoded as PNG. -an drops audio; -frames:v 1 makes ffmpeg
 // exit after the first frame. Output goes to stdout (pipe:1).
+//
+// Timeout layering: ctx is the end-to-end budget propagated from the HTTP/gRPC
+// request (covers both the preceding download and this ffmpeg run). video.Timeout
+// is an additional INNER cap applied only to the ffmpeg subprocess via a nested
+// context.WithTimeout — so a slow ffmpeg is killed by the inner deadline even if
+// the outer request deadline has not yet fired.
 func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()

@@ -47,7 +47,26 @@ func releaseSem() { <-sem }
 //
 // A seekable temp file (not a pipe) is mandatory: moov-at-end MP4 requires
 // backward seeks ffmpeg cannot do over a pipe.
+//
+// The semaphore slot (capacity video.MaxConcurrent) is acquired BEFORE
+// creating the temp file, so it bounds the entire download+extract operation,
+// not just the ffmpeg subprocess. This prevents a burst of requests from each
+// writing up to MaxBytes to their own temp file simultaneously. Excess requests
+// block here on the context-aware acquireSem and are unblocked immediately on
+// context cancellation.
+//
+// ctx is the end-to-end budget for the whole operation: it is propagated to
+// both the streaming body read (via the caller's io.Reader) and the ffmpeg
+// subprocess. video.Timeout is an additional inner cap applied to the ffmpeg
+// run only (see runFFmpegFirstFrame).
 func ExtractFirstFramePNG(ctx context.Context, r io.Reader, maxBytes int64) ([]byte, error) {
+	// Acquire the concurrency slot BEFORE touching disk so the semaphore bounds
+	// the full download+extract operation (not just ffmpeg).
+	if err := acquireSem(ctx); err != nil {
+		return nil, err
+	}
+	defer releaseSem()
+
 	tmp, err := os.CreateTemp("", "carbonio-preview-video-*.bin")
 	if err != nil {
 		return nil, err
@@ -66,11 +85,6 @@ func ExtractFirstFramePNG(ctx context.Context, r io.Reader, maxBytes int64) ([]b
 	if err := tmp.Sync(); err != nil {
 		return nil, err
 	}
-
-	if err := acquireSem(ctx); err != nil {
-		return nil, err
-	}
-	defer releaseSem()
 
 	return runFFmpegFirstFrame(ctx, tmp.Name())
 }

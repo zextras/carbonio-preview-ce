@@ -16,14 +16,27 @@ import (
 )
 
 // firstFrame streams the blob from storage and extracts frame 0 as PNG bytes.
+//
+// When the caller's context is cancelled or its deadline passes, firstFrame
+// returns ctx.Err() directly. gRPC maps context.Canceled → codes.Canceled and
+// context.DeadlineExceeded → codes.DeadlineExceeded without logging — the
+// client is already gone and the cancellation is not an extraction error.
 func (s *PreviewServer) firstFrame(ctx context.Context, id string, version int, serviceType, ownerID string) ([]byte, error) {
 	rc, err := s.store.RetrieveDataStreaming(ctx, id, version, serviceType, ownerID)
 	if err != nil {
+		// Silent path: client cancelled before or during storage fetch.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, storageErr(err)
 	}
 	defer rc.Close()
 	frame, err := s.videoFirstFrame(ctx, rc, video.MaxBytes)
 	if err != nil {
+		// Silent path: client cancelled during the long download+extract operation.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if errors.Is(err, video.ErrTooLarge) {
 			return nil, toStatus(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		}

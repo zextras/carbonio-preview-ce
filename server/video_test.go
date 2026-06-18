@@ -17,6 +17,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // fakeStore returns canned bytes for both retrieve methods.
@@ -230,6 +231,60 @@ func TestVideoRoute_UnmatchedPath(t *testing.T) {
 
 	rec := doRequest(mux, http.MethodGet, "/preview/video/extra/junk/segments/here/too/")
 	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+}
+
+func TestVideoGetThumbnail_ErrTooLarge(t *testing.T) {
+	cfg := testCfg()
+	c := cache.New(1 << 20)
+	sem := make(chan struct{}, 1)
+
+	origExtract := videoFirstFrameFunc
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		return nil, video.ErrTooLarge
+	}
+	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
+
+	rr := httptest.NewRecorder()
+	id := "11111111-1111-1111-1111-111111111111"
+	req := httptest.NewRequest(http.MethodGet,
+		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+
+	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+
+	assertStringDetail(t, rr, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+}
+
+func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
+	cfg := testCfg()
+	c := cache.New(1 << 20)
+	sem := make(chan struct{}, 1)
+
+	origExtract := videoFirstFrameFunc
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		return nil, context.Canceled
+	}
+	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
+
+	rr := httptest.NewRecorder()
+	id := "11111111-1111-1111-1111-111111111111"
+	baseReq := httptest.NewRequest(http.MethodGet,
+		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	ctx, cancel := context.WithCancel(baseReq.Context())
+	cancel() // cancel immediately so r.Context().Err() != nil
+	req := baseReq.WithContext(ctx)
+
+	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+
+	// A cancelled client must NOT produce a 400 response and must not panic.
+	// The recorder default code is 200 (not yet written), so we just assert it is not 400.
+	if rr.Code == http.StatusBadRequest {
+		t.Errorf("cancelled context: got 400, want silent return (no error response written)")
+	}
+	if rr.Body.Len() != 0 {
+		t.Errorf("cancelled context: expected empty body, got %q", rr.Body.String())
+	}
 }
 
 func TestVideoGetThumbnail_Cache(t *testing.T) {
