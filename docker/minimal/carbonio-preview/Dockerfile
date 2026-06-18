@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # syntax=docker/dockerfile:1.4
 
 # Stage 1: runs natively on BUILDPLATFORM (amd64 CI builder) — no QEMU.
