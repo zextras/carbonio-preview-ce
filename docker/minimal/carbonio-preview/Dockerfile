@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1.25
 
 # Stage 1: runs natively on BUILDPLATFORM (amd64 CI builder) — no QEMU.
 # Cross-fetches the Python wheels and the libcairo2 runtime closure for
