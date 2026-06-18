@@ -180,6 +180,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
 	registerImageRoutes(mux, s.cfg, s.store, s.cache, sem)
+	registerVideoRoutes(mux, s.cfg, s.store, s.cache, sem)
 	registerPDFRoutes(mux, s.cfg, s.store, s.cache, sem)
 	registerDocumentRoutes(mux, s.cfg, s.store, s.cache, sem)
 	registerHealthRoutes(mux, s.cfg)
