@@ -1,6 +1,5 @@
 {
-  "branches": ["pre-release"],
-  "repositoryUrl": "https://github.com/zextras/carbonio-preview-ce",
+  "branches": ["devel"],
   "tagFormat": "v${version}",
   "plugins": [
     [
@@ -46,7 +45,7 @@
       "@semantic-release/git",
       {
         "assets": ["setup.py", "CHANGELOG.md", "package/preview/PKGBUILD"],
-        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        "message": "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
       }
     ]
   ]
