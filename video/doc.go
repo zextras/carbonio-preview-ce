@@ -9,7 +9,10 @@
 // phone/screen-recording layout) cannot be decoded from a non-seekable pipe.
 package video
 
-import "time"
+import (
+	"runtime"
+	"time"
+)
 
 // Tunables. main() may override these from config after config.Load(),
 // mirroring render.ImageMinRes.
@@ -24,4 +27,10 @@ var (
 	MaxBytes int64 = 100 << 20 // 100 MiB
 	// Timeout bounds a single ffmpeg invocation.
 	Timeout = 20 * time.Second
+	// MaxConcurrent bounds the number of ffmpeg subprocesses that may run
+	// simultaneously. Each video request forks one ffmpeg process before the
+	// libvips render semaphore is acquired, so without this cap a burst of
+	// requests can exhaust file-descriptors and RAM. main() may override this
+	// before the first call to ExtractFirstFramePNG.
+	MaxConcurrent = runtime.NumCPU()
 )

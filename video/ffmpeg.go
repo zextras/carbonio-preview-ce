@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"time"
 )
 
 // runFFmpegFirstFrame runs ffmpeg on a seekable input file and returns the
@@ -20,12 +21,14 @@ func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) 
 
 	cmd := exec.CommandContext(ctx, FFmpegPath,
 		"-hide_banner", "-loglevel", "error", "-nostdin",
+		"-threads", "1",
 		"-i", inputPath,
 		"-an",
 		"-frames:v", "1",
 		"-f", "image2pipe", "-c:v", "png",
 		"pipe:1",
 	)
+	cmd.WaitDelay = Timeout + 2*time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 

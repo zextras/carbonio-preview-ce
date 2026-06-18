@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 	"testing"
 )
 
@@ -105,4 +106,68 @@ func TestExtractFirstFramePNG_NotAVideo(t *testing.T) {
 	if err == nil {
 		t.Fatalf("want error for non-video input, got nil")
 	}
+}
+
+// resetSem resets the package-level semaphore so tests can override MaxConcurrent.
+// Must only be called from test goroutines, never concurrently with ExtractFirstFramePNG.
+func resetSem(n int) {
+	semOnce = sync.Once{}
+	sem = nil
+	MaxConcurrent = n
+}
+
+// TestSemaphore_CancelledContextUnblocksWaiter verifies that a goroutine waiting
+// for a semaphore slot returns promptly when its context is cancelled.
+// This is deterministic: we hold the single slot ourselves, cancel the context,
+// then assert the caller returned a context error — no timing dependency.
+func TestSemaphore_CancelledContextUnblocksWaiter(t *testing.T) {
+	resetSem(1)
+
+	// Fill the only slot manually so the next acquirer must wait.
+	ctx := context.Background()
+	if err := acquireSem(ctx); err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	err := acquireSem(cancelled)
+	if err == nil {
+		releaseSem() // clean up if we somehow got in
+		t.Fatal("want context error, got nil")
+	}
+	if err != context.Canceled {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	releaseSem() // release the slot we held at the start
+}
+
+// TestSemaphore_MaxConcurrentOverride verifies that setting MaxConcurrent=2
+// allows exactly 2 concurrent acquirers and blocks a third until one releases.
+// Deterministic: uses a pre-cancelled context for the overflow attempt.
+func TestSemaphore_MaxConcurrentOverride(t *testing.T) {
+	resetSem(2)
+
+	ctx := context.Background()
+	if err := acquireSem(ctx); err != nil {
+		t.Fatalf("slot 1: %v", err)
+	}
+	if err := acquireSem(ctx); err != nil {
+		releaseSem()
+		t.Fatalf("slot 2: %v", err)
+	}
+
+	// A third acquire on a cancelled context must fail immediately.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := acquireSem(cancelled); err == nil {
+		releaseSem()
+		releaseSem()
+		releaseSem()
+		t.Fatal("third acquire should have been blocked/rejected")
+	}
+
+	releaseSem()
+	releaseSem()
 }
