@@ -105,7 +105,7 @@ func overrideMessages(cfg *ini.File, m *Messages) {
 		secVal  = "validation"
 	)
 
-	// Key names match the actual keys in package/preview/messages.ini (lowercase).
+	// Key names match the actual keys in package/messages.ini (lowercase).
 	m.StorageUnavailable = msgStr(cfg, secHard, "storage_unavailable_string", m.StorageUnavailable)
 	m.GenericErrorStorage = msgStr(cfg, secHard, "generic_error_with_storage", m.GenericErrorStorage)
 	m.ItemNotFound = msgStr(cfg, secHard, "item_not_found", m.ItemNotFound)

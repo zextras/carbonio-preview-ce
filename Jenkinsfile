@@ -23,11 +23,10 @@ dt3_pipeline(
     mavenPublish: ['sdk'],
     nonJavaSdkPublish: true,
     packaging: [
-        pkgbuildPath: 'package/preview/PKGBUILD',
         addCarbonioRepos: true,
         preBuildScript: '''
             set -e
-            tar czf package/preview/carbonio-preview-ce-src.tar.gz \
+            tar czf package/carbonio-preview-ce-src.tar.gz \
                 --exclude='.git' \
                 --exclude='venv' \
                 --exclude='package' \

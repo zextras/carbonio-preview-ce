@@ -6,7 +6,7 @@
     "skipDeps": ["pending-setups", "service-discover", "service-discover-base"],
     "projects": [
         {
-            "name": "preview"
+            "name": "package"
         }
     ]
 }

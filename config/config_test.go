@@ -543,7 +543,7 @@ func TestMessages(t *testing.T) {
 }
 
 // TestMessagesIniOverrideWithRealKeys writes a temp messages.ini using the ACTUAL
-// lowercase key names from package/preview/messages.ini and verifies that
+// lowercase key names from package/messages.ini and verifies that
 // overrideMessages picks them up correctly.
 func TestMessagesIniOverrideWithRealKeys(t *testing.T) {
 	const iniContent = `[hard_errors]

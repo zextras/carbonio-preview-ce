@@ -95,7 +95,7 @@ FROM debian:bookworm-slim
 #
 # Video first-frame extraction needs ffmpeg at /opt/zextras/common/bin/ffmpeg,
 # provided by the Zextras-published "carbonio-ffmpeg" package — declared as a
-# runtime dependency in package/preview/PKGBUILD and installed by the .deb/.rpm
+# runtime dependency in package/PKGBUILD and installed by the .deb/.rpm
 # on the VM. It is NOT installed in this image (repo.zextras.io is 403 from CI
 # buildx), mirroring carbonio-videoserver / carbonio-videorecorder. Video
 # preview is therefore exercised on the real VM and in local/dev tests where an
