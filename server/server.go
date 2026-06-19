@@ -120,12 +120,12 @@ func (s *Server) Handler() http.Handler {
 }
 
 // buildMux assembles the public HTTP mux with all route groups.
-// Image and health ops are registered under huma (code-first OpenAPI).
-// PDF, document, and video remain on legacy stdlib handlers for this pilot.
+// All resource operations (image, health, pdf, document, video) are registered
+// under huma (code-first OpenAPI).
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Register image + health under huma (pilot scope).
+	// Register all operations under huma.
 	api := newHumaAPI(mux)
 	RegisterOperations(api, Deps{
 		Cfg:   s.cfg,
@@ -133,11 +133,6 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 		Cache: s.cache,
 		Sem:   sem,
 	})
-
-	// Legacy handlers for pdf, document, video (not yet migrated to huma).
-	registerVideoRoutes(mux, s.cfg, s.store, s.cache, sem)
-	registerPDFRoutes(mux, s.cfg, s.store, s.cache, sem)
-	registerDocumentRoutes(mux, s.cfg, s.store, s.cache, sem)
 
 	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).
 	registerDocRoutes(mux)
