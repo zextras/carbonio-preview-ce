@@ -1,5 +1,5 @@
 {
   "kind": "service-defaults",
   "name": "carbonio-preview",
-  "protocol": "http"
+  "protocol": "tcp"
 }
