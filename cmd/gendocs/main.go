@@ -4,14 +4,22 @@
 
 // Command gendocs synchronises the OpenAPI specification artefacts.
 //
-// The source of truth for the API contract is docs/openapi.yaml (human-editable
-// YAML, checked into version control). This generator:
+// During the pilot phase it performs two tasks:
 //
-//  1. Reads docs/openapi.yaml and converts it to JSON.
-//  2. Writes docs/openapi.json (canonical JSON copy).
-//  3. Copies docs/openapi.json to server/static/openapi.json so that the
-//     go:embed directive in server/docs.go can embed it without cross-package
-//     path restrictions (go:embed does not allow ../.. paths).
+//  1. Generates the huma code-first spec (image + health ops) via
+//     RegisterOperations → DowngradeYAML and writes it to
+//     docs/openapi.huma-pilot.yaml for inspection.
+//     This file does NOT overwrite the authoritative docs/openapi.yaml.
+//
+//  2. Reads the existing docs/openapi.json (the authoritative JSON copy,
+//     last generated from docs/openapi.yaml) and re-emits it to
+//     server/static/openapi.json so that the go:embed directive in
+//     server/docs.go picks up the latest canonical spec without requiring
+//     python3 or PyYAML.
+//
+// After full migration (all ops under huma) task 2 will be replaced by a
+// direct DowngradeYAML/Downgrade write to docs/openapi.yaml, docs/openapi.json,
+// and server/static/openapi.json.
 //
 // Invoke via go:generate in server/docs.go:
 //
@@ -20,50 +28,41 @@
 // Or directly from the repo root:
 //
 //	go run ./cmd/gendocs
-//
-// The generator requires Python 3 with PyYAML (python3 -c "import yaml").
-// On Debian/Ubuntu: apt install python3-yaml.
-// This is a build-time only dependency — it is NOT required at runtime.
 package main
 
 import (
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
+
+	"github.com/zextras/carbonio-preview-ce/server"
 )
 
 func main() {
 	root := repoRoot()
 
-	yamlPath := filepath.Join(root, "docs", "openapi.yaml")
-	docsJSONPath := filepath.Join(root, "docs", "openapi.json")
+	pilotYAMLPath := filepath.Join(root, "docs", "openapi.huma-pilot.yaml")
+	canonicalJSONPath := filepath.Join(root, "docs", "openapi.json")
 	staticJSONPath := filepath.Join(root, "server", "static", "openapi.json")
 
-	// Convert YAML to JSON via Python3+PyYAML (lightweight build-time dep).
-	// We use Python because adding a Go YAML library just for this generator
-	// would pull an unnecessary runtime dependency into go.mod.
-	jsonBytes := yamlToJSON(yamlPath)
-
-	// Pretty-print the JSON for readability and stable diffs.
-	var obj interface{}
-	if err := json.Unmarshal(jsonBytes, &obj); err != nil {
-		log.Fatalf("gendocs: json.Unmarshal: %v", err)
+	// ── Task 1: generate huma pilot spec ────────────────────────────────────
+	pilotYAML := generatePilotSpec()
+	if err := os.WriteFile(pilotYAMLPath, pilotYAML, 0o644); err != nil {
+		log.Fatalf("gendocs: write %s: %v", pilotYAMLPath, err)
 	}
-	pretty, err := json.MarshalIndent(obj, "", "  ")
+	log.Printf("gendocs: wrote pilot spec to %s", pilotYAMLPath)
+
+	// ── Task 2: copy canonical JSON → server/static (no python3 needed) ─────
+	canonicalJSON, err := os.ReadFile(canonicalJSONPath)
 	if err != nil {
-		log.Fatalf("gendocs: json.MarshalIndent: %v", err)
+		log.Fatalf("gendocs: read %s: %v (run python3 yamlToJSON first or commit docs/openapi.json)", canonicalJSONPath, err)
 	}
-	pretty = append(pretty, '\n')
-
-	// Write docs/openapi.json
-	if err := os.WriteFile(docsJSONPath, pretty, 0o644); err != nil {
-		log.Fatalf("gendocs: write %s: %v", docsJSONPath, err)
-	}
-	log.Printf("gendocs: wrote %s", docsJSONPath)
-
-	// Write server/static/openapi.json (go:embed target).
+	pretty := prettyJSON(canonicalJSON)
 	if err := os.MkdirAll(filepath.Dir(staticJSONPath), 0o755); err != nil {
 		log.Fatalf("gendocs: mkdir %s: %v", filepath.Dir(staticJSONPath), err)
 	}
@@ -73,20 +72,54 @@ func main() {
 	log.Printf("gendocs: wrote %s", staticJSONPath)
 }
 
-// yamlToJSON converts a YAML file to JSON bytes using python3 + PyYAML.
-// Exits with a descriptive error if python3 or PyYAML is not available.
-func yamlToJSON(yamlPath string) []byte {
-	script := `import sys, yaml, json; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))`
-	out, err := exec.Command("python3", "-c", script, yamlPath).Output()
-	if err != nil {
-		var stderr []byte
-		if ee, ok := err.(*exec.ExitError); ok {
-			stderr = ee.Stderr
-		}
-		log.Fatalf("gendocs: python3 yaml→json conversion failed: %v\nstderr: %s\n"+
-			"Ensure python3 and PyYAML are installed (apt install python3-yaml).", err, stderr)
+// generatePilotSpec builds a throwaway huma API, registers image + health
+// operations (the pilot scope), and returns the OAS 3.0.3 YAML bytes.
+// The config is built from scratch to avoid the SchemaLinkTransformer that
+// huma.DefaultConfig installs — it would inject $schema fields into responses.
+func generatePilotSpec() []byte {
+	mux := http.NewServeMux()
+	registry := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
+	cfg := huma.Config{
+		OpenAPI: &huma.OpenAPI{
+			OpenAPI: "3.1.0",
+			Info: &huma.Info{
+				Title:       "preview",
+				Version:     "latest",
+				Description: "Preview service.",
+			},
+			Components: &huma.Components{
+				Schemas: registry,
+			},
+		},
+		OpenAPIPath:   "",
+		DocsPath:      "",
+		SchemasPath:   "",
+		Formats:       huma.DefaultFormats,
+		DefaultFormat: "application/json",
 	}
-	return out
+	api := humago.New(mux, cfg)
+
+	// Pass nil Deps — handlers are never invoked in gendocs mode.
+	server.RegisterOperations(api, server.Deps{})
+
+	yamlBytes, err := api.OpenAPI().DowngradeYAML()
+	if err != nil {
+		log.Fatalf("gendocs: DowngradeYAML: %v", err)
+	}
+	return yamlBytes
+}
+
+// prettyJSON re-encodes raw JSON bytes with indentation for stable diffs.
+func prettyJSON(raw []byte) []byte {
+	var obj interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		log.Fatalf("gendocs: JSON unmarshal: %v", err)
+	}
+	out, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		log.Fatalf("gendocs: JSON marshal: %v", err)
+	}
+	return append(out, '\n')
 }
 
 // repoRoot returns the directory containing go.mod, searching upward from cwd.

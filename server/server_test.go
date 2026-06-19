@@ -110,16 +110,18 @@ func TestLoggingMiddleware_CapturesNon200(t *testing.T) {
 	}
 }
 
-// TestLoggingMiddleware_Captures404 drives an unmatched path (404 written via
-// writeJSON) through the wrapper, covering the WriteHeader status-capture for a
-// 404 response.
+// TestLoggingMiddleware_Captures404 drives an unmatched path through the
+// wrapper, covering the WriteHeader status-capture for a 404 response.
+// Note: huma registers trailing-slash patterns as subtree matches in Go 1.22
+// ServeMux, so extra segments under /preview/image/... now route to the handler.
+// We use a path prefix that has no registered route at all.
 func TestLoggingMiddleware_Captures404(t *testing.T) {
 	store := &mockStore{}
 	s := New(testCfg(), store, nil)
 	ts := httptest.NewServer(loggingMiddleware(s.buildMux(nil)))
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/preview/image/" + validUUID + "/1/100x100/extra/junk/")
+	resp, err := http.Get(ts.URL + "/completely/unknown/path/")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}

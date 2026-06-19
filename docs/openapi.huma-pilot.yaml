@@ -1,0 +1,619 @@
+components:
+  schemas:
+    FastAPIError:
+      additionalProperties: false
+      type: object
+    FormFile:
+      additionalProperties: false
+      properties:
+        ContentType:
+          type: string
+        Filename:
+          type: string
+        IsSet:
+          type: boolean
+        Size:
+          format: int64
+          type: integer
+      required:
+        - ContentType
+        - IsSet
+        - Size
+        - Filename
+      type: object
+    HealthDependency:
+      additionalProperties: false
+      properties:
+        live:
+          type: boolean
+        name:
+          type: string
+        ready:
+          type: boolean
+        type:
+          type: string
+      required:
+        - name
+        - ready
+        - live
+        - type
+      type: object
+    HealthResponse:
+      additionalProperties: false
+      properties:
+        dependencies:
+          items:
+            $ref: "#/components/schemas/HealthDependency"
+          nullable: true
+          type: array
+        ready:
+          type: boolean
+      required:
+        - ready
+        - dependencies
+      type: object
+info:
+  description: Preview service.
+  title: preview
+  version: latest
+openapi: 3.0.3
+paths:
+  /health/:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Error
+      summary: Health Summary
+      tags:
+        - health
+  /health/live/:
+    get:
+      operationId: getHealthLive
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Error
+      summary: Liveness Probe
+      tags:
+        - health
+  /health/ready/:
+    get:
+      operationId: getHealthReady
+      responses:
+        "200":
+          description: OK
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Readiness Probe
+      tags:
+        - health
+  /preview/image/{area}/:
+    post:
+      operationId: postImagePreview
+      parameters:
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Crop to fill (true) or scale to fit (false)
+          explode: false
+          in: query
+          name: crop
+          schema:
+            default: false
+            description: Crop to fill (true) or scale to fit (false)
+            type: boolean
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Image file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Post Image Preview
+      tags:
+        - image
+  /preview/image/{area}/thumbnail/:
+    post:
+      operationId: postImageThumbnail
+      parameters:
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Image file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Post Image Thumbnail
+      tags:
+        - image
+  /preview/image/{id}/{version}/{area}/:
+    get:
+      operationId: getImagePreview
+      parameters:
+        - description: UUID of the image (UUID1–UUID4)
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the image (UUID1–UUID4)
+            format: uuid
+            type: string
+        - description: Version of the image (non-negative integer)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version of the image (non-negative integer)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Crop to fill (true) or scale to fit (false)
+          explode: false
+          in: query
+          name: crop
+          schema:
+            default: false
+            description: Crop to fill (true) or scale to fit (false)
+            type: boolean
+        - description: File owner ID for Advanced storage routing
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID for Advanced storage routing
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Image Preview
+      tags:
+        - image
+  /preview/image/{id}/{version}/{area}/thumbnail/:
+    get:
+      operationId: getImageThumbnail
+      parameters:
+        - description: UUID of the image (UUID1–UUID4)
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the image (UUID1–UUID4)
+            format: uuid
+            type: string
+        - description: Version of the image (non-negative integer)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version of the image (non-negative integer)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: File owner ID for Advanced storage routing
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID for Advanced storage routing
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Image Thumbnail
+      tags:
+        - image
