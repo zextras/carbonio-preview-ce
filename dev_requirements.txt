@@ -10,7 +10,7 @@ pre-commit~=4.0.1
 
 respx~=0.22.0
 
-pytest~=8.4.2
+pytest~=9.1.1
 pytest-mockito~=0.0.4
 
 types-Pillow~=10.2.0.20240822
