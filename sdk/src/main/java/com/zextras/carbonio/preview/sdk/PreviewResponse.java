@@ -8,9 +8,9 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * Immutable response from a preview RPC call.
+ * Immutable response from a preview REST call.
  *
- * <p>Callers MUST close this object when done to release the underlying gRPC stream/resources.
+ * <p>Callers MUST close this object when done to release the underlying HTTP connection.
  */
 public final class PreviewResponse implements Closeable {
 
@@ -24,22 +24,22 @@ public final class PreviewResponse implements Closeable {
     this.mimeType = mimeType;
   }
 
-  /** The response body as a stream. Lazy — bytes are pulled from the gRPC stream on read. */
+  /** The response body as a stream. Bytes are pulled from the HTTP response on read. */
   public InputStream getContent() {
     return content;
   }
 
-  /** Total byte length as advertised by the server's PreviewMetadata frame. */
+  /** Total byte length as reported by the server's {@code Content-Length} header, or -1 if unknown. */
   public long getLength() {
     return length;
   }
 
-  /** MIME type as advertised by the server's PreviewMetadata frame. */
+  /** MIME type as reported by the server's {@code Content-Type} header. */
   public String getMimeType() {
     return mimeType;
   }
 
-  /** Closes the underlying content stream, cancelling the gRPC call if still in progress. */
+  /** Closes the underlying content stream, releasing the HTTP connection. */
   @Override
   public void close() throws IOException {
     content.close();
