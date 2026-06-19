@@ -3,232 +3,193 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
-import com.zextras.carbonio.preview.sdk.grpc.GetRequest;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewChunk;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewChunkStream;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewServiceGrpc;
-import com.zextras.carbonio.preview.sdk.grpc.UploadChunk;
-import com.zextras.carbonio.preview.sdk.grpc.UploadMetadata;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.Status;
-import io.grpc.StatusException;
-import io.grpc.StatusRuntimeException;
-import io.grpc.health.v1.HealthCheckRequest;
-import io.grpc.health.v1.HealthCheckResponse;
-import io.grpc.health.v1.HealthGrpc;
-import io.grpc.stub.BlockingClientCall;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublishers;
+import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
+import java.nio.charset.StandardCharsets;
 
 /**
- * Blocking gRPC client for the Carbonio Preview CE service.
+ * Thin REST client for the Carbonio Preview CE service.
  *
- * <p>Construct via {@link #atURL(String)} for a plaintext channel, or pass your own
- * {@link ManagedChannel} (useful for TLS or in-process testing).
+ * <p>Construct via {@link #atURL(String)} for the common case, or pass your own
+ * {@link HttpClient} (useful for testing or TLS customisation).
  *
- * <p>All methods are thread-safe; the underlying channel is shared.
+ * <h3>Binary streaming</h3>
+ * <p>The openapi-generator {@code java/native} library returns {@code File} objects for binary
+ * download endpoints because it writes the response body to a temp file before returning. That is
+ * unacceptable for backend-to-backend streaming (unnecessary disk I/O + temp-file lifecycle).
+ * This wrapper bypasses the generated binary-download path entirely: it assembles the request URL
+ * from {@link Query} fields and issues the HTTP call itself using
+ * {@link BodyHandlers#ofInputStream()}, streaming bytes directly without touching disk.
+ *
+ * <p>For multipart POST (upload) endpoints the same bypass applies: the wrapper serialises the
+ * {@link InputStream} content as a {@code multipart/form-data} body using a hand-written
+ * boundary encoder and {@link BodyPublishers#ofInputStream()}, avoiding the temp-file path that
+ * the generated multipart helper would take.
+ *
+ * <p>All methods are thread-safe; the underlying {@link HttpClient} is shared.
  */
 public final class PreviewClient implements Closeable {
 
-  private static final int UPLOAD_CHUNK_SIZE = 64 * 1024; // 64 KB
+  private static final String MULTIPART_BOUNDARY = "PreviewClientBoundary1234567890";
 
-  private final ManagedChannel channel;
-  private final PreviewServiceGrpc.PreviewServiceBlockingV2Stub blockingV2Stub;
-  private final HealthGrpc.HealthBlockingStub healthStub;
+  private final String baseUrl;
+  private final HttpClient http;
 
   /**
-   * Creates a client backed by the given channel.
-   * The caller is responsible for shutting it down via {@link #close()}.
+   * Creates a client connected to {@code baseUrl}.
+   *
+   * @param baseUrl base URL of the service, e.g. {@code "http://localhost:20003"}.
+   *                Must NOT have a trailing slash.
+   * @param http    the {@link HttpClient} to use
    */
-  public PreviewClient(ManagedChannel channel) {
-    this.channel = channel;
-    this.blockingV2Stub = PreviewServiceGrpc.newBlockingV2Stub(channel);
-    this.healthStub = HealthGrpc.newBlockingStub(channel);
+  public PreviewClient(String baseUrl, HttpClient http) {
+    // Normalise: strip trailing slash
+    this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    this.http = http;
   }
 
   /**
-   * Creates a client connected to {@code target} using a plaintext (no TLS) channel.
+   * Creates a client backed by a default {@link HttpClient} configured to use HTTP/1.1.
    *
-   * <p>The created {@link ManagedChannel} is owned by this {@code PreviewClient} and will
-   * be shut down when {@link #close()} is called. Callers must not use the channel directly.
+   * <p>HTTP/1.1 is used explicitly because the Go preview service speaks HTTP/1.1, and
+   * because {@link java.net.http.HttpClient} with HTTP/2 + chunked streaming (unknown
+   * content-length) triggers RST_STREAM cancellation on some server stacks.
    *
-   * @param target gRPC target string, e.g. {@code "localhost:8080"} or {@code "preview-service:8080"}
+   * @param baseUrl base URL, e.g. {@code "http://localhost:20003"}
    */
-  public static PreviewClient atURL(String target) {
-    ManagedChannel channel = ManagedChannelBuilder
-        .forTarget(target)
-        .usePlaintext()
-        .build();
-    return new PreviewClient(channel);
+  public static PreviewClient atURL(String baseUrl) {
+    return new PreviewClient(baseUrl,
+        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
   }
 
   // -------------------------------------------------------------------------
-  // Downloads
+  // GET downloads
   // -------------------------------------------------------------------------
 
   public PreviewResponse getPreviewOfImage(Query query) {
-    return download(blockingV2Stub.getImagePreview(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/image/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/"
+        + buildImageQueryString(query, false);
+    return doGet(url);
   }
 
   public PreviewResponse getThumbnailOfImage(Query query) {
-    return download(blockingV2Stub.getImageThumbnail(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/image/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/thumbnail/"
+        + buildImageThumbnailQueryString(query);
+    return doGet(url);
   }
 
   public PreviewResponse getPreviewOfPdf(Query query) {
-    return download(blockingV2Stub.getPdfPreview(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/pdf/" + enc(query.getFileId())
+        + "/" + query.getVersion() + "/"
+        + buildPdfQueryString(query);
+    return doGet(url);
   }
 
   public PreviewResponse getThumbnailOfPdf(Query query) {
-    return download(blockingV2Stub.getPdfThumbnail(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/pdf/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/thumbnail/"
+        + buildImageThumbnailQueryString(query);
+    return doGet(url);
   }
 
   public PreviewResponse getPreviewOfDocument(Query query) {
-    return download(blockingV2Stub.getDocumentPreview(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/document/" + enc(query.getFileId())
+        + "/" + query.getVersion() + "/"
+        + buildDocumentQueryString(query);
+    return doGet(url);
   }
 
   public PreviewResponse getThumbnailOfDocument(Query query) {
-    return download(blockingV2Stub.getDocumentThumbnail(buildGetRequest(query)));
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/document/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/thumbnail/"
+        + buildDocumentThumbnailQueryString(query);
+    return doGet(url);
   }
 
-  private GetRequest buildGetRequest(Query query) {
-    Objects.requireNonNull(query.getFileId(), "fileId is required for GET queries");
-    return GetRequest.newBuilder().setParams(query.toProto()).build();
+  /** Get video preview (first-frame image) — new endpoint, no gRPC equivalent. */
+  public PreviewResponse getPreviewOfVideo(Query query) {
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/video/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/"
+        + buildVideoQueryString(query, false);
+    return doGet(url);
   }
 
-  /**
-   * Wraps a live server-streaming call in a {@link PreviewChunkStream} (generated helper) and
-   * builds a {@link PreviewResponse} from the typed metadata.
-   *
-   * <p>Error translation at the SDK boundary:
-   * <ul>
-   *   <li>{@link IllegalStateException} from the constructor (bad/missing first frame) →
-   *       {@link PreviewException} with {@link Status.Code#INTERNAL}.</li>
-   *   <li>{@link StatusRuntimeException} from the stub layer (e.g. NOT_FOUND before the stream
-   *       even opens) → {@link PreviewException} preserving the gRPC status code.</li>
-   *   <li>Mid-stream {@link IOException} thrown by the {@code InputStream} read methods of
-   *       {@link PreviewChunkStream} carries a {@link StatusException} as its cause; the
-   *       {@link TranslatingInputStream} wrapper re-throws it as
-   *       {@code IOException(new PreviewException(status, cause))} so consumers receive a
-   *       consistently-typed cause regardless of which read call hits the error.</li>
-   * </ul>
-   */
-  private PreviewResponse download(BlockingClientCall<?, PreviewChunk> call) {
-    try {
-      PreviewChunkStream stream = new PreviewChunkStream(call);
-      InputStream translating = new TranslatingInputStream(stream);
-      return new PreviewResponse(
-          translating,
-          stream.getMetadata().getLength(),
-          stream.getMetadata().getMimeType());
-    } catch (IllegalStateException e) {
-      // The generated PreviewChunkStream constructor throws IllegalStateException for two cases:
-      // 1. A gRPC error before any frame (cause = StatusException) — preserve that gRPC status.
-      // 2. A genuine protocol violation (no cause or non-gRPC cause) — report as INTERNAL.
-      Throwable cause = e.getCause();
-      if (cause instanceof StatusException se) {
-        throw new PreviewException(se.getStatus(), se);
-      }
-      throw new PreviewException(
-          Status.INTERNAL.withDescription(e.getMessage()).withCause(e));
-    } catch (StatusRuntimeException e) {
-      throw new PreviewException(e.getStatus(), e);
-    }
+  /** Get video thumbnail — new endpoint, no gRPC equivalent. */
+  public PreviewResponse getThumbnailOfVideo(Query query) {
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/video/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/thumbnail/"
+        + buildVideoQueryString(query, true);
+    return doGet(url);
   }
 
   // -------------------------------------------------------------------------
-  // Uploads (bidi-streaming: client sends upload frames, server streams response)
+  // POST uploads (multipart/form-data)
   // -------------------------------------------------------------------------
 
   public PreviewResponse postPreviewOfImage(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postImagePreview());
+    String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/"
+        + buildImageQueryString(query, false);
+    return doPost(url, content);
   }
 
   public PreviewResponse postThumbnailOfImage(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postImageThumbnail());
+    String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/thumbnail/"
+        + buildImageThumbnailQueryString(query);
+    return doPost(url, content);
   }
 
   public PreviewResponse postPreviewOfPdf(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postPdfPreview());
+    String url = baseUrl + "/preview/pdf/" + buildPdfUploadQueryString(query);
+    return doPost(url, content);
   }
 
   public PreviewResponse postThumbnailOfPdf(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postPdfThumbnail());
+    String url = baseUrl + "/preview/pdf/" + enc(query.getArea()) + "/thumbnail/"
+        + buildImageThumbnailQueryString(query);
+    return doPost(url, content);
   }
 
   public PreviewResponse postPreviewOfDocument(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postDocumentPreview());
+    String url = baseUrl + "/preview/document/" + buildDocumentUploadQueryString(query);
+    return doPost(url, content);
   }
 
   public PreviewResponse postThumbnailOfDocument(InputStream content, Query query) {
-    return upload(content, query, stub -> stub.postDocumentThumbnail());
-  }
-
-  @FunctionalInterface
-  private interface UploadCallFactory {
-    BlockingClientCall<UploadChunk, PreviewChunk> open(
-        PreviewServiceGrpc.PreviewServiceBlockingV2Stub stub);
-  }
-
-  /**
-   * Sends all upload frames eagerly (metadata + content chunks + halfClose), then wraps
-   * the SAME bidi {@link BlockingClientCall} in a {@link PreviewChunkStream} for lazy
-   * response reading — matching the download path exactly.
-   *
-   * <p>Send ordering is safe: the Go server drains the full upload before emitting any
-   * response frames, so sending all request frames before reading the response cannot deadlock.
-   *
-   * <p>Error handling:
-   * <ul>
-   *   <li>Send-side {@link StatusException} / {@link InterruptedException} / {@link IOException}
-   *       → cancel the call and throw {@link PreviewException}.</li>
-   *   <li>Receive-side errors propagate via {@link PreviewChunkStream} / {@link TranslatingInputStream}
-   *       as {@code IOException(PreviewException)} on read, or as {@link PreviewException} from the
-   *       {@link PreviewChunkStream} constructor (first frame missing / gRPC error before metadata).</li>
-   * </ul>
-   */
-  private PreviewResponse upload(InputStream content, Query query, UploadCallFactory factory) {
-    BlockingClientCall<UploadChunk, PreviewChunk> call = factory.open(blockingV2Stub);
-
-    // --- Send side: eagerly stream all upload frames, then half-close ---
-    try {
-      // Frame 1: metadata
-      call.write(UploadChunk.newBuilder()
-          .setMetadata(UploadMetadata.newBuilder().setParams(query.toProto()).build())
-          .build());
-
-      // Frames 2..N: content in 64 KB chunks; always close the caller's InputStream
-      byte[] buf = new byte[UPLOAD_CHUNK_SIZE];
-      int n;
-      try {
-        while ((n = content.read(buf)) != -1) {
-          call.write(UploadChunk.newBuilder()
-              .setData(com.google.protobuf.ByteString.copyFrom(buf, 0, n))
-              .build());
-        }
-      } finally {
-        try { content.close(); } catch (IOException ignored) {}
-      }
-
-      call.halfClose();
-    } catch (StatusException e) {
-      call.cancel("upload send error", e);
-      throw new PreviewException(e.getStatus(), e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      call.cancel("upload interrupted", e);
-      throw new PreviewException(Status.CANCELLED.withDescription("Upload interrupted").withCause(e));
-    } catch (IOException e) {
-      call.cancel("I/O error reading upload content", e);
-      throw new PreviewException(
-          Status.INTERNAL.withDescription("I/O error reading upload content").withCause(e));
-    }
-
-    // --- Receive side: same lazy path as download(BlockingClientCall) ---
-    return download(call);
+    String url = baseUrl + "/preview/document/" + enc(query.getArea()) + "/thumbnail/"
+        + buildDocumentThumbnailQueryString(query);
+    return doPost(url, content);
   }
 
   // -------------------------------------------------------------------------
@@ -236,16 +197,18 @@ public final class PreviewClient implements Closeable {
   // -------------------------------------------------------------------------
 
   /**
-   * Queries the gRPC health endpoint for the service named {@code ""} (overall server health).
-   *
-   * @return {@code true} if the server reports {@code SERVING}; {@code false} on any error or
-   *         non-serving status
+   * Checks {@code GET /health/ready/} and returns {@code true} when the server responds with
+   * HTTP 200. Returns {@code false} on any error or non-200 status.
    */
   public boolean healthReady() {
     try {
-      HealthCheckResponse resp = healthStub.check(
-          HealthCheckRequest.newBuilder().setService("").build());
-      return resp.getStatus() == HealthCheckResponse.ServingStatus.SERVING;
+      HttpResponse<Void> resp = http.send(
+          HttpRequest.newBuilder()
+              .uri(URI.create(baseUrl + "/health/ready/"))
+              .GET()
+              .build(),
+          BodyHandlers.discarding());
+      return resp.statusCode() == 200;
     } catch (Exception e) {
       return false;
     }
@@ -256,74 +219,285 @@ public final class PreviewClient implements Closeable {
   // -------------------------------------------------------------------------
 
   /**
-   * Shuts down the underlying channel, waiting up to 5 seconds for in-flight calls to complete.
+   * No-op: {@link HttpClient} is not {@link Closeable}. Included for API parity with the old
+   * gRPC {@link PreviewClient} which had to shut down a {@code ManagedChannel}.
    */
-  public void shutdown() throws InterruptedException {
-    channel.shutdown().awaitTermination(5, TimeUnit.SECONDS);
-  }
-
   @Override
   public void close() throws IOException {
+    // java.net.http.HttpClient does not require explicit shutdown.
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal HTTP execution
+  // -------------------------------------------------------------------------
+
+  /**
+   * Issues a GET request and returns a streaming {@link PreviewResponse}.
+   *
+   * <p>The response body is NOT read eagerly — it is streamed to the caller via
+   * {@link BodyHandlers#ofInputStream()}. The caller must close the returned
+   * {@link PreviewResponse} to release the connection.
+   */
+  private PreviewResponse doGet(String url) {
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(url))
+        .GET()
+        .build();
+    return execute(request);
+  }
+
+  /**
+   * Issues a multipart/form-data POST and returns a streaming {@link PreviewResponse}.
+   *
+   * <p>The {@code content} InputStream is serialised as a {@code multipart/form-data} part
+   * named {@code "file"} using a hard-coded boundary. The part content-type defaults to
+   * {@code application/octet-stream}; the server does not validate it.
+   *
+   * <p>We write the boundary preamble as bytes, then pipe {@code content} directly through
+   * {@link BodyPublishers#ofInputStream()} — the body is streamed without buffering the whole
+   * file in memory.
+   *
+   * <p>NOTE: {@code java.net.http.HttpClient} with {@code ofInputStream()} cannot know the
+   * content-length in advance, so the request is sent chunked or with a large-enough buffer
+   * depending on the JVM. The preview server accepts this without issue.
+   */
+  private PreviewResponse doPost(String url, InputStream content) {
+    byte[] preamble = (
+        "--" + MULTIPART_BOUNDARY + "\r\n"
+        + "Content-Disposition: form-data; name=\"file\"; filename=\"file\"\r\n"
+        + "Content-Type: application/octet-stream\r\n"
+        + "\r\n"
+    ).getBytes(StandardCharsets.UTF_8);
+
+    byte[] epilogue = (
+        "\r\n--" + MULTIPART_BOUNDARY + "--\r\n"
+    ).getBytes(StandardCharsets.UTF_8);
+
+    InputStream multipartBody = new SequencedInputStream(preamble, content, epilogue);
+
+    HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(url))
+        .header("Content-Type", "multipart/form-data; boundary=" + MULTIPART_BOUNDARY)
+        .POST(BodyPublishers.ofInputStream(() -> multipartBody))
+        .build();
+    return execute(request);
+  }
+
+  private PreviewResponse execute(HttpRequest request) {
+    HttpResponse<InputStream> response;
     try {
-      shutdown();
+      response = http.send(request, BodyHandlers.ofInputStream());
+    } catch (IOException e) {
+      throw new PreviewException(0, "I/O error sending request to " + request.uri(), e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      channel.shutdownNow();
+      throw new PreviewException(0, "Request interrupted", e);
+    }
+
+    int status = response.statusCode();
+    if (status == 200) {
+      String contentType = response.headers().firstValue("Content-Type").orElse("");
+      String mimeType = contentType.contains(";")
+          ? contentType.substring(0, contentType.indexOf(';')).trim()
+          : contentType.trim();
+      long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+      return new PreviewResponse(response.body(), contentLength, mimeType);
+    }
+
+    // Non-200: consume and discard the error body to release the connection
+    try {
+      response.body().close();
+    } catch (IOException ignored) { /* best-effort */ }
+    throw new PreviewException(status, "Server returned HTTP " + status + " for " + request.uri());
+  }
+
+  // -------------------------------------------------------------------------
+  // Query-string builders
+  // -------------------------------------------------------------------------
+
+  private String buildImageQueryString(Query q, boolean thumbnailMode) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    appendOptional(sb, "quality", q.getQuality());
+    appendOptional(sb, "output_format", q.getOutputFormat());
+    if (!thumbnailMode) {
+      appendOptional(sb, "crop", q.isCrop() ? "true" : null);
+    }
+    return sb.toString();
+  }
+
+  private String buildImageThumbnailQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    appendOptional(sb, "service_type", q.getServiceType());
+    appendOptional(sb, "shape", q.getShape());
+    appendOptional(sb, "quality", q.getQuality());
+    appendOptional(sb, "output_format", q.getOutputFormat());
+    return sb.toString();
+  }
+
+  private String buildPdfQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
+    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
+    return sb.toString();
+  }
+
+  private String buildPdfUploadQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
+    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
+    return sb.toString();
+  }
+
+  private String buildDocumentQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
+    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
+    appendOptional(sb, "lang_tag", q.getLangTag());
+    return sb.toString();
+  }
+
+  private String buildDocumentUploadQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
+    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
+    appendOptional(sb, "lang_tag", q.getLangTag());
+    return sb.toString();
+  }
+
+  private String buildDocumentThumbnailQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    appendOptional(sb, "service_type", q.getServiceType());
+    appendOptional(sb, "shape", q.getShape());
+    appendOptional(sb, "quality", q.getQuality());
+    appendOptional(sb, "output_format", q.getOutputFormat());
+    appendOptional(sb, "lang_tag", q.getLangTag());
+    return sb.toString();
+  }
+
+  private String buildVideoQueryString(Query q, boolean thumbnailMode) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    if (thumbnailMode) {
+      appendOptional(sb, "shape", q.getShape());
+    } else {
+      appendOptional(sb, "crop", q.isCrop() ? "true" : null);
+    }
+    appendOptional(sb, "quality", q.getQuality());
+    appendOptional(sb, "output_format", q.getOutputFormat());
+    return sb.toString();
+  }
+
+  private static void appendRequired(StringBuilder sb, String key, String value) {
+    if (value == null || value.isEmpty()) return;
+    // sb starts with "?" so always use "&" if there is already a param
+    if (sb.length() > 1) sb.append('&');
+    sb.append(enc(key)).append('=').append(enc(value));
+  }
+
+  private static void appendOptional(StringBuilder sb, String key, String value) {
+    if (value == null || value.isEmpty()) return;
+    if (sb.length() > 1) sb.append('&');
+    sb.append(enc(key)).append('=').append(enc(value));
+  }
+
+  private static String enc(String value) {
+    if (value == null) return "";
+    return URLEncoder.encode(value, StandardCharsets.UTF_8);
+  }
+
+  private static void requireFileId(Query query) {
+    if (query.getFileId() == null || query.getFileId().isEmpty()) {
+      throw new IllegalArgumentException("fileId is required for GET requests");
     }
   }
 
   // -------------------------------------------------------------------------
-  // Inner helpers
+  // Helper: concatenate preamble + content + epilogue as a single InputStream
   // -------------------------------------------------------------------------
 
   /**
-   * Wraps a {@link PreviewChunkStream} and translates its mid-stream {@link IOException}s into
-   * {@code IOException(PreviewException)} so that the SDK's public error contract is preserved:
-   * callers always see a {@link PreviewException} as the cause of any mid-stream gRPC failure.
-   *
-   * <p>The generated {@link PreviewChunkStream} throws {@link IOException} whose cause is a
-   * {@link StatusException} when the underlying gRPC call fails. This wrapper catches that and
-   * re-throws as {@code new IOException(new PreviewException(status, statusEx))}, matching the
-   * error shape that was previously produced by the hand-written {@code ChunkIteratorInputStream}.
+   * Concatenates three byte sources into a single InputStream without buffering:
+   * a fixed-size byte array preamble, a streaming content body, and a fixed-size epilogue.
    */
-  private static final class TranslatingInputStream extends InputStream {
+  private static final class SequencedInputStream extends InputStream {
 
-    private final PreviewChunkStream delegate;
+    private int phase = 0; // 0 = preamble, 1 = content, 2 = epilogue, 3 = done
+    private int preamblePos = 0;
+    private int epiloguePos = 0;
 
-    TranslatingInputStream(PreviewChunkStream delegate) {
-      this.delegate = delegate;
+    private final byte[] preamble;
+    private final InputStream content;
+    private final byte[] epilogue;
+
+    SequencedInputStream(byte[] preamble, InputStream content, byte[] epilogue) {
+      this.preamble = preamble;
+      this.content = content;
+      this.epilogue = epilogue;
     }
 
     @Override
     public int read() throws IOException {
-      try {
-        return delegate.read();
-      } catch (IOException e) {
-        throw translate(e);
+      while (true) {
+        switch (phase) {
+          case 0 -> {
+            if (preamblePos < preamble.length) return preamble[preamblePos++] & 0xFF;
+            phase = 1;
+          }
+          case 1 -> {
+            int b = content.read();
+            if (b != -1) return b;
+            phase = 2;
+          }
+          case 2 -> {
+            if (epiloguePos < epilogue.length) return epilogue[epiloguePos++] & 0xFF;
+            phase = 3;
+          }
+          default -> { return -1; }
+        }
       }
     }
 
     @Override
-    public int read(byte[] b, int off, int len) throws IOException {
-      try {
-        return delegate.read(b, off, len);
-      } catch (IOException e) {
-        throw translate(e);
+    public int read(byte[] buf, int off, int len) throws IOException {
+      if (len == 0) return 0;
+      while (true) {
+        switch (phase) {
+          case 0 -> {
+            int avail = preamble.length - preamblePos;
+            if (avail > 0) {
+              int n = Math.min(avail, len);
+              System.arraycopy(preamble, preamblePos, buf, off, n);
+              preamblePos += n;
+              return n;
+            }
+            phase = 1;
+          }
+          case 1 -> {
+            int n = content.read(buf, off, len);
+            if (n != -1) return n;
+            phase = 2;
+          }
+          case 2 -> {
+            int avail = epilogue.length - epiloguePos;
+            if (avail > 0) {
+              int n = Math.min(avail, len);
+              System.arraycopy(epilogue, epiloguePos, buf, off, n);
+              epiloguePos += n;
+              return n;
+            }
+            phase = 3;
+          }
+          default -> { return -1; }
+        }
       }
     }
 
     @Override
-    public void close() {
-      delegate.close();
-    }
-
-    private static IOException translate(IOException e) {
-      Throwable cause = e.getCause();
-      if (cause instanceof StatusException se) {
-        return new IOException(new PreviewException(se.getStatus(), se));
-      }
-      // Plain protocol-violation string (no StatusException cause) — wrap as-is
-      return e;
+    public void close() throws IOException {
+      content.close();
     }
   }
 }

@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
-import com.zextras.carbonio.preview.sdk.grpc.PreviewParams;
-
 /**
  * Immutable value object carrying all preview query parameters.
  * Build via {@link QueryBuilder}.
@@ -51,25 +49,4 @@ public final class Query {
   public int getFirstPage() { return firstPage; }
   public int getLastPage() { return lastPage; }
   public String getLangTag() { return langTag; }
-
-  /**
-   * Converts this query to a {@link PreviewParams} protobuf message.
-   * Null/empty string fields are left at the proto default (empty string).
-   */
-  public PreviewParams toProto() {
-    PreviewParams.Builder b = PreviewParams.newBuilder();
-    if (fileId != null) b.setFileId(fileId);
-    b.setVersion(version);
-    if (area != null) b.setArea(area);
-    if (outputFormat != null) b.setOutputFormat(outputFormat);
-    if (quality != null) b.setQuality(quality);
-    if (shape != null) b.setShape(shape);
-    if (serviceType != null) b.setServiceType(serviceType);
-    if (ownerId != null) b.setOwnerId(ownerId);
-    b.setCrop(crop);
-    b.setFirstPage(firstPage);
-    b.setLastPage(lastPage);
-    if (langTag != null) b.setLangTag(langTag);
-    return b.build();
-  }
 }

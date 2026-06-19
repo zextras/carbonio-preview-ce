@@ -3,41 +3,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
-import io.grpc.Status;
-import io.grpc.Status.Code;
-
 /**
- * Unchecked exception thrown by {@link PreviewClient} when the server returns a gRPC error status.
+ * Unchecked exception thrown by {@link PreviewClient} when the server returns an HTTP error.
  *
- * <h3>Status code mapping to the old HTTP-SDK conventions</h3>
+ * <h3>HTTP status code semantics</h3>
  * <ul>
- *   <li>{@link Code#NOT_FOUND} – item does not exist (old SDK: ItemNotFound / HTTP 404)</li>
- *   <li>{@link Code#FAILED_PRECONDITION} – semantic validation failed (old SDK: ValidationError / HTTP 422)</li>
- *   <li>{@link Code#INVALID_ARGUMENT} – malformed or missing request parameter (old SDK: BadRequest / HTTP 400)</li>
- *   <li>{@link Code#INTERNAL} – unexpected server-side failure (old SDK: InternalServerError / HTTP 500)</li>
+ *   <li>400 – malformed or missing request parameter (was: INVALID_ARGUMENT)</li>
+ *   <li>404 – item does not exist (was: NOT_FOUND)</li>
+ *   <li>422 – semantic validation failed (was: FAILED_PRECONDITION)</li>
+ *   <li>500/502/503 – unexpected server-side failure (was: INTERNAL)</li>
  * </ul>
  */
 public final class PreviewException extends RuntimeException {
 
-  private final Status status;
+  private final int httpStatus;
 
-  public PreviewException(Status status) {
-    super(status.getDescription() != null ? status.getDescription() : status.getCode().name());
-    this.status = status;
+  public PreviewException(int httpStatus, String message) {
+    super(message);
+    this.httpStatus = httpStatus;
   }
 
-  public PreviewException(Status status, Throwable cause) {
-    super(status.getDescription() != null ? status.getDescription() : status.getCode().name(), cause);
-    this.status = status;
+  public PreviewException(int httpStatus, String message, Throwable cause) {
+    super(message, cause);
+    this.httpStatus = httpStatus;
   }
 
-  /** The full gRPC {@link Status} returned by the server. */
-  public Status getStatus() {
-    return status;
+  /** The HTTP status code returned by the server. */
+  public int getHttpStatus() {
+    return httpStatus;
   }
 
-  /** Convenience accessor for the status code. */
-  public Code getCode() {
-    return status.getCode();
+  /** Convenience: true when the server returned a 404. */
+  public boolean isNotFound() {
+    return httpStatus == 404;
+  }
+
+  /** Convenience: true when the server returned a 400 or 422. */
+  public boolean isBadRequest() {
+    return httpStatus == 400 || httpStatus == 422;
   }
 }

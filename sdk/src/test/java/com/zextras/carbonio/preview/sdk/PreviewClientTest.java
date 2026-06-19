@@ -3,607 +3,391 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
-import com.google.protobuf.ByteString;
-import com.zextras.carbonio.preview.sdk.grpc.GetRequest;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewChunk;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewMetadata;
-import com.zextras.carbonio.preview.sdk.grpc.PreviewServiceGrpc;
-import com.zextras.carbonio.preview.sdk.grpc.UploadChunk;
-import io.grpc.Context;
-import io.grpc.ManagedChannel;
-import io.grpc.Server;
-import io.grpc.Status;
-import io.grpc.health.v1.HealthCheckRequest;
-import io.grpc.health.v1.HealthCheckResponse;
-import io.grpc.health.v1.HealthGrpc;
-import io.grpc.inprocess.InProcessChannelBuilder;
-import io.grpc.inprocess.InProcessServerBuilder;
-import io.grpc.stub.StreamObserver;
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Integration-style unit tests for {@link PreviewClient} backed by WireMock.
+ *
+ * <p>Each test stubs a specific endpoint and verifies the wrapper's URL construction,
+ * query-string building, binary streaming, and error mapping.
+ */
 class PreviewClientTest {
 
-  private static final String SERVER_NAME = "preview-test-" + System.nanoTime();
-  private static final byte[] CONTENT_BYTES = "hello preview world".getBytes(StandardCharsets.UTF_8);
-  private static final String MIME = "image/jpeg";
-  private static final long LENGTH = CONTENT_BYTES.length;
+  private static final byte[] IMAGE_BYTES = "fake-image-content".getBytes(StandardCharsets.UTF_8);
+  private static final String MIME_JPEG = "image/jpeg";
 
-  private Server server;
-  private ManagedChannel channel;
+  private WireMockServer wireMock;
   private PreviewClient client;
 
-  // Captures upload bytes for assertions
-  private final AtomicReference<byte[]> lastUploadBytes = new AtomicReference<>();
-
-
   @BeforeEach
-  void setUp() throws IOException {
-    server = InProcessServerBuilder.forName(SERVER_NAME)
-        .directExecutor()
-        .addService(new FakePreviewService())
-        .addService(new FakeHealthService())
-        .build()
-        .start();
-
-    channel = InProcessChannelBuilder.forName(SERVER_NAME)
-        .directExecutor()
-        .build();
-
-    client = new PreviewClient(channel);
+  void setUp() {
+    wireMock = new WireMockServer(WireMockConfiguration.wireMockConfig().dynamicPort());
+    wireMock.start();
+    WireMock.configureFor("localhost", wireMock.port());
+    client = PreviewClient.atURL("http://localhost:" + wireMock.port());
   }
 
   @AfterEach
-  void tearDown() throws Exception {
+  void tearDown() throws IOException {
     client.close();
-    server.shutdown();
-    server.awaitTermination();
+    wireMock.stop();
   }
 
-  // ---- Download round-trip ----
+  // ── GET downloads ────────────────────────────────────────────────────────────
 
   @Test
-  void getPreviewOfImage_returnsCorrectBytesAndMetadata() throws IOException {
-    Query q = new QueryBuilder().fileId("abc").version(1).serviceType("files").build();
+  void getPreviewOfImage_returnsStreamWithCorrectContent() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/image/abc-uuid/1/100x200/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withHeader("Content-Length", String.valueOf(IMAGE_BYTES.length))
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("abc-uuid")
+        .version(1)
+        .area("100x200")
+        .serviceType("files")
+        .build();
+
     try (PreviewResponse r = client.getPreviewOfImage(q)) {
-      assertEquals(MIME, r.getMimeType());
-      assertEquals(LENGTH, r.getLength());
-      assertArrayEquals(CONTENT_BYTES, r.getContent().readAllBytes());
+      assertEquals(MIME_JPEG, r.getMimeType());
+      assertEquals(IMAGE_BYTES.length, r.getLength());
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
   @Test
-  void getThumbnailOfImage_returnsCorrectBytesAndMetadata() throws IOException {
-    Query q = new QueryBuilder().fileId("abc").version(1).serviceType("files").build();
+  void getThumbnailOfImage_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/image/thumb-uuid/2/50x50/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("thumb-uuid")
+        .version(2)
+        .area("50x50")
+        .serviceType("files")
+        .quality("high")
+        .build();
+
     try (PreviewResponse r = client.getThumbnailOfImage(q)) {
-      assertArrayEquals(CONTENT_BYTES, r.getContent().readAllBytes());
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
   @Test
-  void getPreviewOfPdf_returnsCorrectBytesAndMetadata() throws IOException {
-    Query q = new QueryBuilder().fileId("abc").version(1).serviceType("files").build();
+  void getPreviewOfPdf_routesToCorrectPath() throws IOException {
+    byte[] pdfBytes = "%PDF-fake".getBytes(StandardCharsets.UTF_8);
+    stubFor(get(urlPathEqualTo("/preview/pdf/pdf-uuid/3/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/pdf")
+            .withBody(pdfBytes)));
+
+    Query q = new QueryBuilder()
+        .fileId("pdf-uuid")
+        .version(3)
+        .serviceType("files")
+        .build();
+
     try (PreviewResponse r = client.getPreviewOfPdf(q)) {
-      assertArrayEquals(CONTENT_BYTES, r.getContent().readAllBytes());
+      assertEquals("application/pdf", r.getMimeType());
+      assertArrayEquals(pdfBytes, r.getContent().readAllBytes());
     }
   }
 
   @Test
-  void getPreviewOfDocument_returnsCorrectBytesAndMetadata() throws IOException {
-    Query q = new QueryBuilder().fileId("abc").version(1).serviceType("files").build();
-    try (PreviewResponse r = client.getPreviewOfDocument(q)) {
-      assertArrayEquals(CONTENT_BYTES, r.getContent().readAllBytes());
-    }
-  }
+  void getThumbnailOfPdf_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/pdf/pdf-uuid/1/100x100/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
 
-  /** New: tests a previously-untested GET path (getThumbnailOfPdf). */
-  @Test
-  void getThumbnailOfPdf_returnsCorrectBytesAndMetadata() throws IOException {
-    Query q = new QueryBuilder().fileId("abc").version(1).serviceType("files").build();
+    Query q = new QueryBuilder()
+        .fileId("pdf-uuid")
+        .version(1)
+        .area("100x100")
+        .serviceType("files")
+        .build();
+
     try (PreviewResponse r = client.getThumbnailOfPdf(q)) {
-      assertEquals(MIME, r.getMimeType());
-      assertEquals(LENGTH, r.getLength());
-      assertArrayEquals(CONTENT_BYTES, r.getContent().readAllBytes());
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
-  // ---- Error mapping ----
-
   @Test
-  void getPreviewOfImage_notFoundThrowsPreviewException() {
-    Query q = new QueryBuilder().fileId("NOTFOUND").serviceType("files").build();
-    PreviewException ex = assertThrows(PreviewException.class, () -> client.getPreviewOfImage(q));
-    assertEquals(Status.Code.NOT_FOUND, ex.getCode());
-  }
+  void getPreviewOfDocument_routesToCorrectPath() throws IOException {
+    byte[] docBytes = "doc-content".getBytes(StandardCharsets.UTF_8);
+    stubFor(get(urlPathEqualTo("/preview/document/doc-uuid/1/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/pdf")
+            .withBody(docBytes)));
 
-  /** New: mid-stream server error wraps as IOException with PreviewException cause. */
-  @Test
-  void midStreamError_throwsIOExceptionWrappingPreviewException() throws IOException {
-    Query q = new QueryBuilder().fileId("MIDERROR").serviceType("files").build();
-    // The server sends: metadata + "first" chunk + error.
-    // The BlockingClientCall buffers messages eagerly, so the error may surface at any read —
-    // even during the read that returns the "first" chunk bytes. Either way:
-    // - The stream can be opened (metadata frame must be readable)
-    // - At some point during reading, an IOException wrapping a PreviewException(INTERNAL) is thrown
-    try (PreviewResponse r = client.getPreviewOfImage(q)) {
-      IOException ioEx = assertThrows(IOException.class, () -> r.getContent().readAllBytes());
-      assertInstanceOf(PreviewException.class, ioEx.getCause());
-      assertEquals(Status.Code.INTERNAL, ((PreviewException) ioEx.getCause()).getCode());
+    Query q = new QueryBuilder()
+        .fileId("doc-uuid")
+        .version(1)
+        .serviceType("chats")
+        .build();
+
+    try (PreviewResponse r = client.getPreviewOfDocument(q)) {
+      assertArrayEquals(docBytes, r.getContent().readAllBytes());
     }
   }
 
-  // ---- Cancellation / early close ----
-
-  /**
-   * New: early {@link PreviewResponse#close()} cancels the gRPC call — the server observes
-   * cancellation and the client call does not hang.
-   *
-   * <p>Uses a separate server with a thread pool (not directExecutor) so that the server can
-   * block waiting for more data while the client closes the stream.
-   */
   @Test
-  void earlyClose_cancelsGrpcCall_doesNotHang() throws Exception {
-    // We need a non-directExecutor server so the server thread can block independently
-    String slowServerName = "preview-slow-" + System.nanoTime();
-    AtomicBoolean slowServerCancelled = new AtomicBoolean(false);
-    CountDownLatch slowServerReadyLatch = new CountDownLatch(1);
-    CountDownLatch slowServerCancelledLatch = new CountDownLatch(1);
+  void getThumbnailOfDocument_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/document/doc-uuid/1/80x80/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
 
-    Server slowServer = InProcessServerBuilder.forName(slowServerName)
-        // intentionally NOT directExecutor so server runs on its own thread
-        .addService(new PreviewServiceGrpc.PreviewServiceImplBase() {
-          @Override
-          public void getImagePreview(GetRequest req, StreamObserver<PreviewChunk> obs) {
-            obs.onNext(PreviewChunk.newBuilder()
-                .setMetadata(PreviewMetadata.newBuilder().setMimeType(MIME).setLength(100L).build())
-                .build());
-            obs.onNext(PreviewChunk.newBuilder()
-                .setChunk(ByteString.copyFrom(new byte[]{42}))
-                .build());
-            // Signal that we've sent the first chunk and are now blocking
-            slowServerReadyLatch.countDown();
-            // Spin-wait until the context is cancelled (client closed the stream)
-            Context ctx = Context.current();
-            long deadline = System.currentTimeMillis() + 5000;
-            while (!ctx.isCancelled() && System.currentTimeMillis() < deadline) {
-              try { Thread.sleep(10); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
-            }
-            if (ctx.isCancelled()) {
-              slowServerCancelled.set(true);
-              slowServerCancelledLatch.countDown();
-            } else {
-              slowServerCancelledLatch.countDown();
-              obs.onCompleted();
-            }
-          }
-        })
-        .build()
-        .start();
+    Query q = new QueryBuilder()
+        .fileId("doc-uuid")
+        .version(1)
+        .area("80x80")
+        .serviceType("files")
+        .build();
 
-    ManagedChannel slowChannel = InProcessChannelBuilder.forName(slowServerName).build();
-    try (PreviewClient slowClient = new PreviewClient(slowChannel)) {
-      PreviewResponse r = slowClient.getPreviewOfImage(
-          new QueryBuilder().fileId("any").serviceType("files").build());
-      // Wait until server has sent the first chunk
-      assertTrue(slowServerReadyLatch.await(2, TimeUnit.SECONDS), "Server should have sent first chunk");
-      // Read 1 byte to confirm stream is live
-      int b = r.getContent().read();
-      assertNotEquals(-1, b);
-      // Close early — this cancels the gRPC call
-      r.close();
-      // Server should observe cancellation within 3 seconds
-      boolean observed = slowServerCancelledLatch.await(3, TimeUnit.SECONDS);
-      assertTrue(observed, "Server latch should have counted down");
-      assertTrue(slowServerCancelled.get(), "Server should have observed context cancellation");
-    } finally {
-      slowServer.shutdown();
-      slowServer.awaitTermination();
+    try (PreviewResponse r = client.getThumbnailOfDocument(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
-  // ---- Upload round-trip ----
+  // ── Error mapping ─────────────────────────────────────────────────────────
 
   @Test
-  void postPreviewOfImage_serverReceivesExactBytes() throws IOException {
-    Query q = new QueryBuilder().area("320x240").serviceType("files").build();
-    ByteArrayInputStream input = new ByteArrayInputStream(CONTENT_BYTES);
-    try (PreviewResponse r = client.postPreviewOfImage(input, q)) {
-      assertNotNull(r);
-      assertEquals(MIME, r.getMimeType());
-      // The fake server echoes back the data it received; verify it got all bytes
-      byte[] received = lastUploadBytes.get();
-      assertNotNull(received, "Server should have received upload bytes");
-      assertArrayEquals(CONTENT_BYTES, received);
-    }
-  }
+  void getPreviewOfImage_404_throwsPreviewException() {
+    stubFor(get(urlPathEqualTo("/preview/image/missing/1/100x100/"))
+        .willReturn(aResponse()
+            .withStatus(404)
+            .withHeader("Content-Type", "application/json")
+            .withBody("{\"detail\":\"not found\"}")));
 
-  /** New: tests upload thumbnail path (previously untested). */
-  @Test
-  void postThumbnailOfImage_serverReceivesBytes() throws IOException {
-    Query q = new QueryBuilder().area("160x120").serviceType("files").build();
-    byte[] data = "thumbnail data".getBytes(StandardCharsets.UTF_8);
-    ByteArrayInputStream input = new ByteArrayInputStream(data);
-    try (PreviewResponse r = client.postThumbnailOfImage(input, q)) {
-      assertNotNull(r);
-      byte[] received = lastUploadBytes.get();
-      assertNotNull(received);
-      assertArrayEquals(data, received);
-    }
-  }
+    Query q = new QueryBuilder()
+        .fileId("missing")
+        .version(1)
+        .area("100x100")
+        .serviceType("files")
+        .build();
 
-  /** New: upload RPC server error maps to PreviewException with INVALID_ARGUMENT code. */
-  @Test
-  void uploadError_throwsPreviewException_withCorrectCode() {
-    Query q = new QueryBuilder().area("bad").serviceType("UPLOADERR").build();
-    ByteArrayInputStream input = new ByteArrayInputStream(CONTENT_BYTES);
     PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.postPreviewOfImage(input, q));
-    assertEquals(Status.Code.INVALID_ARGUMENT, ex.getCode());
+        () -> client.getPreviewOfImage(q));
+    assertEquals(404, ex.getHttpStatus());
+    assertTrue(ex.isNotFound());
   }
 
-  /** New: server returns two separate data chunks — lazy reader must reassemble them. */
   @Test
-  void uploadMultiFrameResponse_reassemblesCorrectly() throws Exception {
-    String serverName = "preview-multiframe-" + System.nanoTime();
-    byte[] part1 = "hello ".getBytes(StandardCharsets.UTF_8);
-    byte[] part2 = "world".getBytes(StandardCharsets.UTF_8);
-    byte[] expected = "hello world".getBytes(StandardCharsets.UTF_8);
+  void getPreviewOfImage_400_throwsPreviewException() {
+    stubFor(get(urlPathEqualTo("/preview/image/bad/0/bad-area/"))
+        .willReturn(aResponse()
+            .withStatus(400)
+            .withBody("{\"detail\":\"bad area\"}")));
 
-    Server multiServer = InProcessServerBuilder.forName(serverName)
-        .directExecutor()
-        .addService(new PreviewServiceGrpc.PreviewServiceImplBase() {
-          @Override
-          public StreamObserver<UploadChunk> postImagePreview(StreamObserver<PreviewChunk> obs) {
-            return new StreamObserver<>() {
-              @Override public void onNext(UploadChunk chunk) { /* consume */ }
-              @Override public void onError(Throwable t) { obs.onError(t); }
-              @Override public void onCompleted() {
-                // Metadata frame first, then TWO data chunks
-                obs.onNext(PreviewChunk.newBuilder()
-                    .setMetadata(PreviewMetadata.newBuilder()
-                        .setMimeType("image/png")
-                        .setLength(expected.length)
-                        .build())
-                    .build());
-                obs.onNext(PreviewChunk.newBuilder()
-                    .setChunk(ByteString.copyFrom(part1))
-                    .build());
-                obs.onNext(PreviewChunk.newBuilder()
-                    .setChunk(ByteString.copyFrom(part2))
-                    .build());
-                obs.onCompleted();
-              }
-            };
-          }
-        })
-        .build().start();
+    Query q = new QueryBuilder()
+        .fileId("bad")
+        .version(0)
+        .area("bad-area")
+        .serviceType("files")
+        .build();
 
-    ManagedChannel ch = InProcessChannelBuilder.forName(serverName).directExecutor().build();
-    try (PreviewClient c = new PreviewClient(ch)) {
-      Query q = new QueryBuilder().area("320x240").serviceType("files").build();
-      try (PreviewResponse r = c.postPreviewOfImage(
-          new ByteArrayInputStream(new byte[]{1}), q)) {
-        assertEquals("image/png", r.getMimeType());
-        assertEquals(expected.length, r.getLength());
-        assertArrayEquals(expected, r.getContent().readAllBytes());
-      }
-    } finally {
-      multiServer.shutdown();
-      multiServer.awaitTermination();
+    PreviewException ex = assertThrows(PreviewException.class,
+        () -> client.getPreviewOfImage(q));
+    assertEquals(400, ex.getHttpStatus());
+    assertTrue(ex.isBadRequest());
+  }
+
+  // ── POST uploads ──────────────────────────────────────────────────────────
+
+  @Test
+  void postPreviewOfImage_sendsMultipartBody_returnsResponse() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/image/200x100/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .area("200x100")
+        .serviceType("files")
+        .build();
+
+    byte[] uploadContent = "upload-content".getBytes(StandardCharsets.UTF_8);
+    try (PreviewResponse r = client.postPreviewOfImage(
+        new ByteArrayInputStream(uploadContent), q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+
+    // Verify the request had multipart content-type
+    verify(postRequestedFor(urlPathEqualTo("/preview/image/200x100/"))
+        .withHeader("Content-Type", containing("multipart/form-data")));
+  }
+
+  @Test
+  void postThumbnailOfImage_routesToCorrectPath() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/image/160x120/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().area("160x120").build();
+    try (PreviewResponse r = client.postThumbnailOfImage(
+        new ByteArrayInputStream(new byte[]{1, 2, 3}), q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
-  /**
-   * New: closing PreviewResponse before reading all upload response bytes cancels the gRPC call
-   * and does not cause a hang — mirroring the download earlyClose test.
-   */
   @Test
-  void uploadEarlyClose_cancelsCall_doesNotHang() throws Exception {
-    String serverName = "preview-upload-cancel-" + System.nanoTime();
-    AtomicBoolean serverCancelled = new AtomicBoolean(false);
-    CountDownLatch serverSentFirstChunk = new CountDownLatch(1);
-    CountDownLatch serverDoneLatch = new CountDownLatch(1);
+  void postPreviewOfPdf_routesToCorrectPath() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/pdf/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/pdf")
+            .withBody("pdf-data".getBytes(StandardCharsets.UTF_8))));
 
-    Server cancelServer = InProcessServerBuilder.forName(serverName)
-        // NOT directExecutor — server must run on its own thread to block independently
-        .addService(new PreviewServiceGrpc.PreviewServiceImplBase() {
-          @Override
-          public StreamObserver<UploadChunk> postImagePreview(StreamObserver<PreviewChunk> obs) {
-            return new StreamObserver<>() {
-              @Override public void onNext(UploadChunk chunk) { /* consume */ }
-              @Override public void onError(Throwable t) { obs.onError(t); }
-              @Override public void onCompleted() {
-                obs.onNext(PreviewChunk.newBuilder()
-                    .setMetadata(PreviewMetadata.newBuilder()
-                        .setMimeType(MIME).setLength(100L).build())
-                    .build());
-                obs.onNext(PreviewChunk.newBuilder()
-                    .setChunk(ByteString.copyFrom(new byte[]{42}))
-                    .build());
-                serverSentFirstChunk.countDown();
-                // Block until client cancels
-                Context ctx = Context.current();
-                long deadline = System.currentTimeMillis() + 5000;
-                while (!ctx.isCancelled() && System.currentTimeMillis() < deadline) {
-                  try { Thread.sleep(10); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); break;
-                  }
-                }
-                serverCancelled.set(ctx.isCancelled());
-                serverDoneLatch.countDown();
-                if (!ctx.isCancelled()) obs.onCompleted();
-              }
-            };
-          }
-        })
-        .build().start();
-
-    ManagedChannel ch = InProcessChannelBuilder.forName(serverName).build();
-    try (PreviewClient c = new PreviewClient(ch)) {
-      Query q = new QueryBuilder().area("320x240").serviceType("files").build();
-      PreviewResponse r = c.postPreviewOfImage(new ByteArrayInputStream(new byte[]{1}), q);
-      assertTrue(serverSentFirstChunk.await(2, TimeUnit.SECONDS), "Server should have sent first chunk");
-      // Read exactly 1 byte to confirm stream is live
-      int b = r.getContent().read();
-      assertNotEquals(-1, b);
-      // Early close — cancels the gRPC call
-      r.close();
-      assertTrue(serverDoneLatch.await(3, TimeUnit.SECONDS), "Server should have observed cancellation");
-      assertTrue(serverCancelled.get(), "Server context should be cancelled");
-    } finally {
-      cancelServer.shutdown();
-      cancelServer.awaitTermination();
+    Query q = new QueryBuilder().firstPage(1).lastPage(5).build();
+    try (PreviewResponse r = client.postPreviewOfPdf(
+        new ByteArrayInputStream(new byte[]{0}), q)) {
+      assertEquals("application/pdf", r.getMimeType());
     }
   }
 
-  // ---- healthReady ----
+  @Test
+  void postThumbnailOfPdf_routesToCorrectPath() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/pdf/120x80/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().area("120x80").build();
+    try (PreviewResponse r = client.postThumbnailOfPdf(
+        new ByteArrayInputStream(new byte[]{1}), q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+  }
 
   @Test
-  void healthReady_returnsTrue_whenServerServing() {
+  void postPreviewOfDocument_routesToCorrectPath() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/document/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/pdf")
+            .withBody("doc-pdf".getBytes(StandardCharsets.UTF_8))));
+
+    Query q = new QueryBuilder().langTag("it-IT").build();
+    try (PreviewResponse r = client.postPreviewOfDocument(
+        new ByteArrayInputStream(new byte[]{0}), q)) {
+      assertEquals("application/pdf", r.getMimeType());
+    }
+  }
+
+  @Test
+  void postThumbnailOfDocument_routesToCorrectPath() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview/document/100x100/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().area("100x100").build();
+    try (PreviewResponse r = client.postThumbnailOfDocument(
+        new ByteArrayInputStream(new byte[]{1}), q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+  }
+
+  // ── Health ────────────────────────────────────────────────────────────────
+
+  @Test
+  void healthReady_true_when200() {
+    stubFor(get(urlPathEqualTo("/health/ready/"))
+        .willReturn(aResponse().withStatus(200)));
+
     assertTrue(client.healthReady());
   }
 
-  /**
-   * New: healthReady returns false when server reports NOT_SERVING.
-   * Uses a dedicated in-process server returning NOT_SERVING.
-   */
   @Test
-  void healthReady_returnsFalse_whenServerNotServing() throws IOException, InterruptedException {
-    String notServingName = "preview-not-serving-" + System.nanoTime();
-    Server notServingServer = InProcessServerBuilder.forName(notServingName)
-        .directExecutor()
-        .addService(new NotServingHealthService())
-        .build()
-        .start();
-    try {
-      ManagedChannel notServingChannel = InProcessChannelBuilder.forName(notServingName)
-          .directExecutor()
-          .build();
-      try (PreviewClient notServingClient = new PreviewClient(notServingChannel)) {
-        assertFalse(notServingClient.healthReady());
-      }
-    } finally {
-      notServingServer.shutdown();
-      notServingServer.awaitTermination();
+  void healthReady_false_when429() {
+    stubFor(get(urlPathEqualTo("/health/ready/"))
+        .willReturn(aResponse().withStatus(429)));
+
+    assertFalse(client.healthReady());
+  }
+
+  @Test
+  void healthReady_false_when502() {
+    stubFor(get(urlPathEqualTo("/health/ready/"))
+        .willReturn(aResponse().withStatus(502)));
+
+    assertFalse(client.healthReady());
+  }
+
+  // ── Video (new endpoints) ─────────────────────────────────────────────────
+
+  @Test
+  void getPreviewOfVideo_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/320x240/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .area("320x240")
+        .serviceType("files")
+        .build();
+
+    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
-  // =========================================================================
-  // Fake implementations
-  // =========================================================================
+  @Test
+  void getThumbnailOfVideo_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/160x120/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
 
-  /** Streams metadata+content for all download RPCs; returns NOT_FOUND for fileId="NOTFOUND". */
-  private class FakePreviewService extends PreviewServiceGrpc.PreviewServiceImplBase {
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .area("160x120")
+        .serviceType("files")
+        .build();
 
-    private void streamDownload(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      String fileId = req.getParams().getFileId();
-      if ("NOTFOUND".equals(fileId)) {
-        obs.onError(Status.NOT_FOUND.withDescription("not found").asRuntimeException());
-        return;
-      }
-      if ("MIDERROR".equals(fileId)) {
-        // Send metadata + first chunk + then an error
-        obs.onNext(PreviewChunk.newBuilder()
-            .setMetadata(PreviewMetadata.newBuilder().setMimeType(MIME).setLength(5L).build())
-            .build());
-        obs.onNext(PreviewChunk.newBuilder()
-            .setChunk(ByteString.copyFrom("first".getBytes(StandardCharsets.UTF_8)))
-            .build());
-        obs.onError(Status.INTERNAL.withDescription("mid-stream server error").asRuntimeException());
-        return;
-      }
-      obs.onNext(PreviewChunk.newBuilder()
-          .setMetadata(PreviewMetadata.newBuilder().setMimeType(MIME).setLength(LENGTH).build())
-          .build());
-      obs.onNext(PreviewChunk.newBuilder()
-          .setChunk(ByteString.copyFrom(CONTENT_BYTES))
-          .build());
-      obs.onCompleted();
-    }
-
-    @Override
-    public void getImagePreview(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    @Override
-    public void getImageThumbnail(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    @Override
-    public void getPdfPreview(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    @Override
-    public void getPdfThumbnail(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    @Override
-    public void getDocumentPreview(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    @Override
-    public void getDocumentThumbnail(GetRequest req, StreamObserver<PreviewChunk> obs) {
-      streamDownload(req, obs);
-    }
-
-    /** Collects all upload bytes, stores them in lastUploadBytes, then streams back the same metadata+content. */
-    private StreamObserver<UploadChunk> handleUpload(
-        StreamObserver<PreviewChunk> responseObserver, boolean error) {
-      return new StreamObserver<UploadChunk>() {
-        final java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-
-        @Override
-        public void onNext(UploadChunk chunk) {
-          if (chunk.getPayloadCase() == UploadChunk.PayloadCase.METADATA) {
-            // check if this is an error-trigger upload
-          } else if (chunk.getPayloadCase() == UploadChunk.PayloadCase.DATA) {
-            byte[] b = chunk.getData().toByteArray();
-            buf.write(b, 0, b.length);
-          }
-        }
-
-        @Override
-        public void onError(Throwable t) {
-          responseObserver.onError(t);
-        }
-
-        @Override
-        public void onCompleted() {
-          if (error) {
-            responseObserver.onError(
-                Status.INVALID_ARGUMENT.withDescription("invalid upload params").asRuntimeException());
-            return;
-          }
-          lastUploadBytes.set(buf.toByteArray());
-          // Echo back metadata + the received data
-          responseObserver.onNext(PreviewChunk.newBuilder()
-              .setMetadata(PreviewMetadata.newBuilder().setMimeType(MIME).setLength(buf.size()).build())
-              .build());
-          responseObserver.onNext(PreviewChunk.newBuilder()
-              .setChunk(ByteString.copyFrom(buf.toByteArray()))
-              .build());
-          responseObserver.onCompleted();
-        }
-      };
-    }
-
-    private StreamObserver<UploadChunk> routeUpload(
-        StreamObserver<PreviewChunk> obs, String serviceType) {
-      // serviceType "UPLOADERR" triggers INVALID_ARGUMENT error
-      boolean triggerError = "UPLOADERR".equals(serviceType);
-      return handleUpload(obs, triggerError);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postImagePreview(StreamObserver<PreviewChunk> obs) {
-      // We can't easily inspect params here without reading from the first chunk;
-      // use a wrapper that checks the metadata frame
-      return new UploadRouter(obs);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postImageThumbnail(StreamObserver<PreviewChunk> obs) {
-      return handleUpload(obs, false);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postPdfPreview(StreamObserver<PreviewChunk> obs) {
-      return handleUpload(obs, false);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postPdfThumbnail(StreamObserver<PreviewChunk> obs) {
-      return handleUpload(obs, false);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postDocumentPreview(StreamObserver<PreviewChunk> obs) {
-      return handleUpload(obs, false);
-    }
-
-    @Override
-    public StreamObserver<UploadChunk> postDocumentThumbnail(StreamObserver<PreviewChunk> obs) {
-      return handleUpload(obs, false);
-    }
-
-    /** Routes based on the serviceType field in the metadata frame. */
-    private class UploadRouter implements StreamObserver<UploadChunk> {
-      private final StreamObserver<PreviewChunk> responseObserver;
-      private StreamObserver<UploadChunk> delegate;
-      private final java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-      private boolean errorMode = false;
-
-      UploadRouter(StreamObserver<PreviewChunk> responseObserver) {
-        this.responseObserver = responseObserver;
-      }
-
-      @Override
-      public void onNext(UploadChunk chunk) {
-        if (chunk.getPayloadCase() == UploadChunk.PayloadCase.METADATA) {
-          String serviceType = chunk.getMetadata().getParams().getServiceType();
-          errorMode = "UPLOADERR".equals(serviceType);
-        } else if (chunk.getPayloadCase() == UploadChunk.PayloadCase.DATA) {
-          byte[] b = chunk.getData().toByteArray();
-          buf.write(b, 0, b.length);
-        }
-      }
-
-      @Override
-      public void onError(Throwable t) {
-        responseObserver.onError(t);
-      }
-
-      @Override
-      public void onCompleted() {
-        if (errorMode) {
-          responseObserver.onError(
-              Status.INVALID_ARGUMENT.withDescription("invalid upload params").asRuntimeException());
-          return;
-        }
-        lastUploadBytes.set(buf.toByteArray());
-        responseObserver.onNext(PreviewChunk.newBuilder()
-            .setMetadata(PreviewMetadata.newBuilder().setMimeType(MIME).setLength(buf.size()).build())
-            .build());
-        responseObserver.onNext(PreviewChunk.newBuilder()
-            .setChunk(ByteString.copyFrom(buf.toByteArray()))
-            .build());
-        responseObserver.onCompleted();
-      }
+    try (PreviewResponse r = client.getThumbnailOfVideo(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
-  private static class FakeHealthService extends HealthGrpc.HealthImplBase {
-    @Override
-    public void check(HealthCheckRequest req, StreamObserver<HealthCheckResponse> obs) {
-      obs.onNext(HealthCheckResponse.newBuilder()
-          .setStatus(HealthCheckResponse.ServingStatus.SERVING)
-          .build());
-      obs.onCompleted();
-    }
-  }
+  // ── Query without fileId: IllegalArgumentException ───────────────────────
 
-  private static class NotServingHealthService extends HealthGrpc.HealthImplBase {
-    @Override
-    public void check(HealthCheckRequest req, StreamObserver<HealthCheckResponse> obs) {
-      obs.onNext(HealthCheckResponse.newBuilder()
-          .setStatus(HealthCheckResponse.ServingStatus.NOT_SERVING)
-          .build());
-      obs.onCompleted();
-    }
+  @Test
+  void getPreviewOfImage_withoutFileId_throwsIllegalArgument() {
+    Query q = new QueryBuilder().area("100x100").serviceType("files").build();
+    assertThrows(IllegalArgumentException.class, () -> client.getPreviewOfImage(q));
   }
 }
