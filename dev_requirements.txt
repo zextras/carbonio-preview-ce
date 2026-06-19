@@ -6,7 +6,7 @@
 
 black~=24.10.0
 ruff~=0.14.10
-pre-commit~=4.0.1
+pre-commit~=4.6.0
 
 respx~=0.22.0
 
