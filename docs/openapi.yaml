@@ -1,1578 +1,1846 @@
-# SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
-#
-# SPDX-License-Identifier: AGPL-3.0-only
-#
-# OpenAPI 3.0.2 specification for carbonio-preview-ce (Go REST service).
-#
-# IMPORTANT — binary responses:
-#   Preview and thumbnail 200 responses are binary image/PDF data.
-#   Each is declared with the correct media-type and schema {type: string,
-#   format: binary} so that openapi-generator emits byte[] / ByteArray rather
-#   than java.lang.Object in the Java SDK.
-#
-# This file is the source of truth. It is hand-maintained in sync with the Go
-# REST handlers (server/*.go). To regenerate server/static/openapi.json run:
-#
-#   go generate ./cmd/gendocs/...
-#   cp docs/openapi.json server/static/openapi.json
-#
-# (or use the Makefile target `make openapi` when it exists).
-
-openapi: 3.0.2
-info:
-  title: preview
-  description: |
-    Preview service.
-
-    You can preview the following type of files:
-
-    * **images (png/jpeg/gif/svg)**
-    * **pdf**
-    * **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**
-    * **video (mp4, mkv, …) — thumbnail/preview of first frame**
-
-    You will be able to:
-
-    * **Preview images**.
-    * **Generate smart thumbnails**.
-
-    The main difference between thumbnail and preview functionality is that
-    preview tends to be more faithful while thumbnail tends to elaborate on it,
-    cropping it by default and rounding the image if asked.
-    Preview should always output the file in its original format, while thumbnail
-    will convert it to an image.
-    There is no difference in quality between png and jpeg; the difference in
-    quality can be achieved only by asking for a jpeg format and changing the
-    quality parameter.
-    Asking for a GIF output can only be done when the input file is a GIF,
-    otherwise it will raise an error.
-  version: latest
-
-paths:
-  # ────────────────────────────────────────────────────────────────────
-  # IMAGE
-  # ────────────────────────────────────────────────────────────────────
-  '/preview/image/{id}/{version}/{area}/thumbnail/':
-    get:
-      tags:
-        - image
-      summary: Get Thumbnail
-      description: |
-        Creates and returns a thumbnail of the image fetched by id and version
-        with the given size, quality, format and shape.
-        It will automatically crop the picture.
-        - **id**: UUID of the image
-        - **version**: version of the image
-        - **quality**: quality of the output image (the higher the slower)
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200); the first is width, the latter height
-        - **shape**: Rounded and Rectangular are currently supported
-        - **service_type**: Service that owns the resource
-      operationId: get_thumbnail_preview_image__id___version___area__thumbnail__get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/image/{area}/thumbnail/':
-    post:
-      tags:
-        - image
-      summary: Post Thumbnail
-      description: |
-        Creates and returns a thumbnail of the given image
-        with the given size, quality, format and shape.
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **file**: file uploaded with FormData
-      operationId: post_thumbnail_preview_image__area__thumbnail__post
-      parameters:
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary image data
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-
-  '/preview/image/{area}/':
-    post:
-      tags:
-        - image
-      summary: Post Preview
-      description: |
-        Creates and returns a preview of the given image
-        with the given size, quality and format.
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **crop**: True will crop the picture starting from the borders
-        - **file**: file uploaded with FormData
-      operationId: post_preview_preview_image__area___post
-      parameters:
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: false
-          schema:
-            title: Crop
-            type: boolean
-            default: false
-          name: crop
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary image data
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-
-  '/preview/image/{id}/{version}/{area}/':
-    get:
-      tags:
-        - image
-      summary: Get Preview
-      description: |
-        Creates and returns a preview of the image fetched by id and version
-        with the given size, quality and format.
-        - **id**: UUID of the image
-        - **version**: version of the image
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **crop**: True will crop the picture starting from the borders
-        - **service_type**: Service that owns the resource
-      operationId: get_preview_preview_image__id___version___area___get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            title: Crop
-            type: boolean
-            default: false
-          name: crop
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  # ────────────────────────────────────────────────────────────────────
-  # PDF
-  # ────────────────────────────────────────────────────────────────────
-  '/preview/pdf/{id}/{version}/':
-    get:
-      tags:
-        - pdf
-      summary: Get Preview
-      description: |
-        Create and returns a preview of the given file;
-        the pdf file will contain the first and last page given.
-        With default values will return all the pages.
-        - **id**: UUID of the pdf
-        - **version**: version of the pdf
-        - **first_page**: integer value of first page to preview (n>=1)
-        - **last_page**: integer value of last page to preview (0 = last of the pdf)
-        - **service_type**: Service that owns the resource
-      operationId: get_preview_preview_pdf__id___version___get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            title: First Page
-            type: integer
-            default: 1
-            minimum: 1
-          name: first_page
-          in: query
-        - required: false
-          schema:
-            title: Last Page
-            type: integer
-            default: 0
-            minimum: 0
-          name: last_page
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary PDF data
-          content:
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/pdf/':
-    post:
-      tags:
-        - pdf
-      summary: Post Preview
-      description: |
-        Create and returns a preview of the given file;
-        the pdf file will contain the first and last page given.
-        With default values will return all the pages.
-        - **file**: file uploaded with FormData
-        - **first_page**: integer value of first page to preview (n>=1)
-        - **last_page**: integer value of last page to preview (0 = last of the pdf)
-      operationId: post_preview_preview_pdf__post
-      parameters:
-        - required: false
-          schema:
-            title: First Page
-            type: integer
-            default: 1
-            minimum: 1
-          name: first_page
-          in: query
-        - required: false
-          schema:
-            title: Last Page
-            type: integer
-            default: 0
-            minimum: 0
-          name: last_page
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary PDF data
-          content:
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/pdf/{area}/thumbnail/':
-    post:
-      tags:
-        - pdf
-      summary: Post Thumbnail
-      description: |
-        Create and returns the thumbnail of the given file;
-        the image rendered will be the first page.
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **file**: file uploaded with FormData
-      operationId: post_thumbnail_preview_pdf__area__thumbnail__post
-      parameters:
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary image data (rasterized first page)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/pdf/{id}/{version}/{area}/thumbnail/':
-    get:
-      tags:
-        - pdf
-      summary: Get Thumbnail
-      description: |
-        Create and returns a thumbnail of the file fetched by id and version;
-        the image will be rendered from the first page.
-        - **id**: UUID of the pdf
-        - **version**: version of the file
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **service_type**: Service that owns the resource
-      operationId: get_thumbnail_preview_pdf__id___version___area__thumbnail__get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data (rasterized first page)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  # ────────────────────────────────────────────────────────────────────
-  # DOCUMENT
-  # ────────────────────────────────────────────────────────────────────
-  '/preview/document/{id}/{version}/':
-    get:
-      tags:
-        - document
-      summary: Get Preview
-      description: |
-        Create and returns a pdf preview of the given file;
-        the pdf file will contain the first and last page given.
-        With default values will return all the pages.
-        - **id**: UUID of the file
-        - **version**: version of the file
-        - **first_page**: integer value of first page to preview (n>=1)
-        - **last_page**: integer value of last page to preview (0 = last of the file)
-        - **lang_tag**: language tag for document conversion (default en-US)
-        - **service_type**: Service that owns the resource
-      operationId: get_preview_preview_document__id___version___get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            title: First Page
-            type: integer
-            default: 1
-            minimum: 1
-          name: first_page
-          in: query
-        - required: false
-          schema:
-            title: Last Page
-            type: integer
-            default: 0
-            minimum: 0
-          name: last_page
-          in: query
-        - required: false
-          schema:
-            title: Lang Tag
-            type: string
-            default: en-US
-          name: lang_tag
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary PDF data
-          content:
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage or Collabora is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/document/':
-    post:
-      tags:
-        - document
-      summary: Post Preview
-      description: |
-        Create and returns a pdf preview of the given file;
-        the pdf file will contain the first and last page given.
-        With default values will return all the pages.
-        - **file**: file uploaded with FormData
-        - **first_page**: integer value of first page to preview (n>=1)
-        - **last_page**: integer value of last page to preview (0 = last of the pdf)
-        - **lang_tag**: language tag for document conversion (default en-US)
-      operationId: post_preview_preview_document__post
-      parameters:
-        - required: false
-          schema:
-            title: First Page
-            type: integer
-            default: 1
-            minimum: 1
-          name: first_page
-          in: query
-        - required: false
-          schema:
-            title: Last Page
-            type: integer
-            default: 0
-            minimum: 0
-          name: last_page
-          in: query
-        - required: false
-          schema:
-            title: Lang Tag
-            type: string
-            default: en-US
-          name: lang_tag
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary PDF data
-          content:
-            application/pdf:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Collabora is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/document/{area}/thumbnail/':
-    post:
-      tags:
-        - document
-      summary: Post Thumbnail
-      description: |
-        Create and returns the thumbnail of the given file;
-        the image rendered will be the first page.
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **lang_tag**: language tag for document conversion (default en-US)
-        - **file**: file uploaded with FormData
-      operationId: post_thumbnail_preview_document__area__thumbnail__post
-      parameters:
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-        - required: false
-          schema:
-            title: Lang Tag
-            type: string
-            default: en-US
-          name: lang_tag
-          in: query
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadBody'
-        required: true
-      responses:
-        '200':
-          description: Successful Response — binary image data (rasterized first page)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Collabora is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/document/{id}/{version}/{area}/thumbnail/':
-    get:
-      tags:
-        - document
-      summary: Get Thumbnail
-      description: |
-        Create and returns a thumbnail of the file fetched by id and version;
-        the image will be rendered from the first page.
-        - **id**: UUID of the file
-        - **version**: version of the file
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **lang_tag**: language tag for document conversion (default en-US)
-        - **service_type**: Service that owns the resource
-      operationId: get_thumbnail_preview_document__id___version___area__thumbnail__get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-        - required: false
-          schema:
-            title: Lang Tag
-            type: string
-            default: en-US
-          name: lang_tag
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data (rasterized first page)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage or Collabora is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '503':
-          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  # ────────────────────────────────────────────────────────────────────
-  # VIDEO (new — no Python equivalent)
-  # ────────────────────────────────────────────────────────────────────
-  '/preview/video/{id}/{version}/{area}/':
-    get:
-      tags:
-        - video
-      summary: Get Video Preview
-      description: |
-        Extracts the first frame from a video file fetched by id and version,
-        then returns a scaled/cropped image of that frame.
-        - **id**: UUID of the video file
-        - **version**: version of the video file
-        - **area**: width x height (e.g. 100x200)
-        - **crop**: True will crop the image starting from the borders
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **service_type**: Service that owns the resource
-      operationId: get_preview_preview_video__id___version___area___get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            title: Crop
-            type: boolean
-            default: false
-          name: crop
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data (first video frame)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct or video format is unsupported.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error or video too large.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  '/preview/video/{id}/{version}/{area}/thumbnail/':
-    get:
-      tags:
-        - video
-      summary: Get Video Thumbnail
-      description: |
-        Extracts the first frame from a video file fetched by id and version,
-        then returns a cropped thumbnail image.
-        - **id**: UUID of the video file
-        - **version**: version of the video file
-        - **area**: width x height (e.g. 100x200)
-        - **shape**: Rounded and Rectangular are currently supported
-        - **quality**: quality of the output image
-        - **output_format**: format of the output image
-        - **service_type**: Service that owns the resource
-      operationId: get_thumbnail_preview_video__id___version___area__thumbnail__get
-      parameters:
-        - required: true
-          schema:
-            title: Id
-            type: string
-            format: uuid
-          name: id
-          in: path
-        - required: true
-          schema:
-            title: Version
-            type: integer
-            minimum: 0
-          name: version
-          in: path
-        - required: true
-          schema:
-            title: Area
-            type: string
-            pattern: '^[0-9]+x[0-9]+$'
-          name: area
-          in: path
-        - required: true
-          schema:
-            $ref: '#/components/schemas/ServiceTypeEnum'
-          name: service_type
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageBorderShapeEnum'
-            default: rectangular
-          name: shape
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageQualityEnum'
-            default: medium
-          name: quality
-          in: query
-        - required: false
-          schema:
-            allOf:
-              - $ref: '#/components/schemas/ImageTypeEnum'
-            default: jpeg
-          name: output_format
-          in: query
-      responses:
-        '200':
-          description: Successful Response — binary image data (first video frame, cropped)
-          content:
-            image/jpeg:
-              schema:
-                type: string
-                format: binary
-            image/png:
-              schema:
-                type: string
-                format: binary
-            image/gif:
-              schema:
-                type: string
-                format: binary
-        '400':
-          description: Some values in the query were not correct or video format is unsupported.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '404':
-          description: Requested item was not found in the storage.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-        '422':
-          description: Validation Error or video too large.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-        '502':
-          description: Storage is currently unavailable.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPDetail'
-
-  # ────────────────────────────────────────────────────────────────────
-  # HEALTH
-  # ────────────────────────────────────────────────────────────────────
-  '/health/':
-    get:
-      tags:
-        - health
-      summary: Health
-      description: |
-        Checks if the service and all of its dependencies are
-        working and returns a descriptive JSON.
-      operationId: health_health__get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HealthResponse'
-        '429':
-          description: Carbonio-docs-editor is currently unavailable.
-        '502':
-          description: Storage is currently unavailable.
-
-  '/health/ready/':
-    get:
-      tags:
-        - health
-      summary: Health Ready
-      description: |
-        Checks if the service is up and essential dependencies are running correctly.
-      operationId: health_ready_health_ready__get
-      responses:
-        '200':
-          description: Successful Response
-        '429':
-          description: Carbonio-docs-editor is currently unavailable.
-
-  '/health/live/':
-    get:
-      tags:
-        - health
-      summary: Health Live
-      description: |
-        Checks if the service is up.
-      operationId: health_live_health_live__get
-      responses:
-        '200':
-          description: Successful Response
-
 components:
   schemas:
-    # ── file upload body (shared by all POST multipart endpoints) ──────
-    FileUploadBody:
-      title: FileUploadBody
+    FastAPIError:
+      additionalProperties: false
+      type: object
+    FormFile:
+      additionalProperties: false
+      properties:
+        ContentType:
+          type: string
+        Filename:
+          type: string
+        IsSet:
+          type: boolean
+        Size:
+          format: int64
+          type: integer
       required:
-        - file
+        - ContentType
+        - IsSet
+        - Size
+        - Filename
       type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-
-    # ── enum types ─────────────────────────────────────────────────────
-    ImageBorderShapeEnum:
-      title: ImageBorderShapeEnum
-      enum:
-        - rounded
-        - rectangular
-      type: string
-      description: |
-        Class representing all the image border shape accepted values.
-
-    ImageQualityEnum:
-      title: ImageQualityEnum
-      enum:
-        - lowest
-        - low
-        - medium
-        - high
-        - highest
-      type: string
-      description: |
-        Class representing all the image quality accepted values.
-
-    ImageTypeEnum:
-      title: ImageTypeEnum
-      enum:
-        - jpeg
-        - png
-        - gif
-      type: string
-      description: |
-        Class representing all the image type accepted values.
-
-    ServiceTypeEnum:
-      title: ServiceTypeEnum
-      enum:
-        - files
-        - chats
-      type: string
-      description: |
-        Class representing all the service type accepted values.
-
-    # ── error shapes ───────────────────────────────────────────────────
-    HTTPDetail:
-      title: HTTPDetail
-      type: object
-      properties:
-        detail:
-          title: Detail
-          type: string
-
-    HTTPValidationError:
-      title: HTTPValidationError
-      type: object
-      properties:
-        detail:
-          title: Detail
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationError'
-
-    ValidationError:
-      title: ValidationError
-      required:
-        - loc
-        - msg
-        - type
-      type: object
-      properties:
-        loc:
-          title: Location
-          type: array
-          items:
-            anyOf:
-              - type: string
-              - type: integer
-        msg:
-          title: Message
-          type: string
-        type:
-          title: Error Type
-          type: string
-
-    # ── health response schema ─────────────────────────────────────────
     HealthDependency:
-      title: HealthDependency
-      type: object
+      additionalProperties: false
+      properties:
+        live:
+          type: boolean
+        name:
+          type: string
+        ready:
+          type: boolean
+        type:
+          type: string
       required:
         - name
         - ready
         - live
         - type
-      properties:
-        name:
-          title: Name
-          type: string
-        ready:
-          title: Ready
-          type: boolean
-        live:
-          title: Live
-          type: boolean
-        type:
-          title: Type
-          type: string
-
-    HealthResponse:
-      title: HealthResponse
       type: object
+    HealthResponse:
+      additionalProperties: false
+      properties:
+        dependencies:
+          items:
+            $ref: "#/components/schemas/HealthDependency"
+          nullable: true
+          type: array
+        ready:
+          type: boolean
       required:
         - ready
         - dependencies
-      properties:
-        ready:
-          title: Ready
-          type: boolean
-        dependencies:
-          title: Dependencies
-          type: array
-          items:
-            $ref: '#/components/schemas/HealthDependency'
+      type: object
+info:
+  description: Preview service.
+  title: preview
+  version: latest
+openapi: 3.0.3
+paths:
+  /health/:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Error
+      summary: Health Summary
+      tags:
+        - health
+  /health/live/:
+    get:
+      operationId: getHealthLive
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Error
+      summary: Liveness Probe
+      tags:
+        - health
+  /health/ready/:
+    get:
+      operationId: getHealthReady
+      responses:
+        "200":
+          description: OK
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Readiness Probe
+      tags:
+        - health
+  /preview/document/:
+    post:
+      operationId: postDocumentPreview
+      parameters:
+        - description: First page (1-based, default 1)
+          explode: false
+          in: query
+          name: first_page
+          schema:
+            default: 1
+            description: First page (1-based, default 1)
+            format: int64
+            type: integer
+        - description: Last page (0 = all, default 0)
+          explode: false
+          in: query
+          name: last_page
+          schema:
+            default: 0
+            description: Last page (0 = all, default 0)
+            format: int64
+            type: integer
+        - description: Language tag for conversion
+          explode: false
+          in: query
+          name: lang_tag
+          schema:
+            default: en-US
+            description: Language tag for conversion
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Document file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — PDF bytes
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Post Document Preview
+      tags:
+        - document
+  /preview/document/{area}/thumbnail/:
+    post:
+      operationId: postDocumentThumbnail
+      parameters:
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: Language tag for conversion
+          explode: false
+          in: query
+          name: lang_tag
+          schema:
+            default: en-US
+            description: Language tag for conversion
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Document file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Post Document Thumbnail
+      tags:
+        - document
+  /preview/document/{id}/{version}/:
+    get:
+      operationId: getDocumentPreview
+      parameters:
+        - description: UUID of the document
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the document
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: First page (1-based, default 1)
+          explode: false
+          in: query
+          name: first_page
+          schema:
+            default: 1
+            description: First page (1-based, default 1)
+            format: int64
+            type: integer
+        - description: Last page (0 = all, default 0)
+          explode: false
+          in: query
+          name: last_page
+          schema:
+            default: 0
+            description: Last page (0 = all, default 0)
+            format: int64
+            type: integer
+        - description: Language tag for conversion (default en-US)
+          explode: false
+          in: query
+          name: lang_tag
+          schema:
+            default: en-US
+            description: Language tag for conversion (default en-US)
+            type: string
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — PDF bytes
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Document Preview
+      tags:
+        - document
+  /preview/document/{id}/{version}/{area}/thumbnail/:
+    get:
+      operationId: getDocumentThumbnail
+      parameters:
+        - description: UUID of the document
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the document
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: Language tag for conversion
+          explode: false
+          in: query
+          name: lang_tag
+          schema:
+            default: en-US
+            description: Language tag for conversion
+            type: string
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Document Thumbnail
+      tags:
+        - document
+  /preview/image/{area}/:
+    post:
+      operationId: postImagePreview
+      parameters:
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Crop to fill (true) or scale to fit (false)
+          explode: false
+          in: query
+          name: crop
+          schema:
+            default: false
+            description: Crop to fill (true) or scale to fit (false)
+            type: boolean
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Image file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Post Image Preview
+      tags:
+        - image
+  /preview/image/{area}/thumbnail/:
+    post:
+      operationId: postImageThumbnail
+      parameters:
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Image file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+      summary: Post Image Thumbnail
+      tags:
+        - image
+  /preview/image/{id}/{version}/{area}/:
+    get:
+      operationId: getImagePreview
+      parameters:
+        - description: UUID of the image (UUID1–UUID4)
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the image (UUID1–UUID4)
+            format: uuid
+            type: string
+        - description: Version of the image (non-negative integer)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version of the image (non-negative integer)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Crop to fill (true) or scale to fit (false)
+          explode: false
+          in: query
+          name: crop
+          schema:
+            default: false
+            description: Crop to fill (true) or scale to fit (false)
+            type: boolean
+        - description: File owner ID for Advanced storage routing
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID for Advanced storage routing
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Image Preview
+      tags:
+        - image
+  /preview/image/{id}/{version}/{area}/thumbnail/:
+    get:
+      operationId: getImageThumbnail
+      parameters:
+        - description: UUID of the image (UUID1–UUID4)
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the image (UUID1–UUID4)
+            format: uuid
+            type: string
+        - description: Version of the image (non-negative integer)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version of the image (non-negative integer)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels, e.g. 100x200
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels, e.g. 100x200
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: File owner ID for Advanced storage routing
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID for Advanced storage routing
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Image Thumbnail
+      tags:
+        - image
+  /preview/pdf/:
+    post:
+      operationId: postPdfPreview
+      parameters:
+        - description: First page (1-based, default 1)
+          explode: false
+          in: query
+          name: first_page
+          schema:
+            default: 1
+            description: First page (1-based, default 1)
+            format: int64
+            type: integer
+        - description: Last page (0 = all, default 0)
+          explode: false
+          in: query
+          name: last_page
+          schema:
+            default: 0
+            description: Last page (0 = all, default 0)
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: PDF file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — PDF bytes
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Post PDF Preview
+      tags:
+        - pdf
+  /preview/pdf/{area}/thumbnail/:
+    post:
+      operationId: postPdfThumbnail
+      parameters:
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: PDF file to process
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Post PDF Thumbnail
+      tags:
+        - pdf
+  /preview/pdf/{id}/{version}/:
+    get:
+      operationId: getPdfPreview
+      parameters:
+        - description: UUID of the PDF
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the PDF
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: First page (1-based, default 1)
+          explode: false
+          in: query
+          name: first_page
+          schema:
+            default: 1
+            description: First page (1-based, default 1)
+            format: int64
+            type: integer
+        - description: Last page (0 = all, default 0)
+          explode: false
+          in: query
+          name: last_page
+          schema:
+            default: 0
+            description: Last page (0 = all, default 0)
+            format: int64
+            type: integer
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — PDF bytes
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get PDF Preview
+      tags:
+        - pdf
+  /preview/pdf/{id}/{version}/{area}/thumbnail/:
+    get:
+      operationId: getPdfThumbnail
+      parameters:
+        - description: UUID of the PDF
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the PDF
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get PDF Thumbnail
+      tags:
+        - pdf
+  /preview/video/{id}/{version}/{area}/:
+    get:
+      operationId: getVideoPreview
+      parameters:
+        - description: UUID of the video
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the video
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Crop to fill (true) or scale to fit (false)
+          explode: false
+          in: query
+          name: crop
+          schema:
+            default: false
+            description: Crop to fill (true) or scale to fit (false)
+            type: boolean
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Video Preview
+      tags:
+        - video
+  /preview/video/{id}/{version}/{area}/thumbnail/:
+    get:
+      operationId: getVideoThumbnail
+      parameters:
+        - description: UUID of the video
+          in: path
+          name: id
+          required: true
+          schema:
+            description: UUID of the video
+            format: uuid
+            type: string
+        - description: Version (non-negative)
+          in: path
+          name: version
+          required: true
+          schema:
+            description: Version (non-negative)
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Width x height in pixels
+          in: path
+          name: area
+          required: true
+          schema:
+            description: Width x height in pixels
+            pattern: ^[0-9]+x[0-9]+$
+            type: string
+        - description: Service that owns the resource
+          explode: false
+          in: query
+          name: service_type
+          required: true
+          schema:
+            description: Service that owns the resource
+            enum:
+              - files
+              - chats
+            type: string
+        - description: Output quality
+          explode: false
+          in: query
+          name: quality
+          schema:
+            default: medium
+            description: Output quality
+            enum:
+              - lowest
+              - low
+              - medium
+              - high
+              - highest
+            type: string
+        - description: Output image format
+          explode: false
+          in: query
+          name: output_format
+          schema:
+            default: jpeg
+            description: Output image format
+            enum:
+              - jpeg
+              - png
+              - gif
+            type: string
+        - description: Thumbnail border shape
+          explode: false
+          in: query
+          name: shape
+          schema:
+            default: rectangular
+            description: Thumbnail border shape
+            enum:
+              - rounded
+              - rectangular
+            type: string
+        - description: File owner ID
+          in: header
+          name: fileownerid
+          schema:
+            description: File owner ID
+            type: string
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — binary image data
+          headers:
+            Content-Type:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Get Video Thumbnail
+      tags:
+        - video

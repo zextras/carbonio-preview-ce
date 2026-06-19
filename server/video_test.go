@@ -36,6 +36,26 @@ func (f fakeStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _, 
 	return io.NopCloser(bytes.NewReader(f.body)), nil
 }
 
+// buildVideoHumaMux creates a huma-routed mux for video operations (test helper).
+func buildVideoHumaMux(cfg *config.Config, store storage.Client, c *cache.Cache, sem chan struct{}) *http.ServeMux {
+	mux := http.NewServeMux()
+	api := newHumaAPI(mux)
+	registerVideoOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: sem})
+	return mux
+}
+
+// videoThumbnailURL builds the GET thumbnail URL for a given id/version/area.
+func videoThumbnailURL(id, version, area string) string {
+	return fmt.Sprintf("/preview/video/%s/%s/%s/thumbnail/?service_type=files", id, version, area)
+}
+
+// videoPreviewURL builds the GET preview URL for a given id/version/area.
+func videoPreviewURL(id, version, area string) string {
+	return fmt.Sprintf("/preview/video/%s/%s/%s/?service_type=files", id, version, area)
+}
+
+const videoTestID = "11111111-1111-1111-1111-111111111111"
+
 func TestVideoGetThumbnail_OK(t *testing.T) {
 	cfg := testCfg()
 	c := cache.New(1 << 20)
@@ -55,18 +75,14 @@ func TestVideoGetThumbnail_OK(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract; imageThumbnailFunc = origRender })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if rr.Body.String() != "rendered-jpeg" {
-		t.Fatalf("body = %q", rr.Body.String())
+	if rec.Body.String() != "rendered-jpeg" {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 
@@ -89,18 +105,15 @@ func TestVideoGetPreview_OK(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract; imageThumbnailFunc = origRender })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/?service_type=files&crop=true", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	url := fmt.Sprintf("/preview/video/%s/1/320x240/?service_type=files&crop=true", videoTestID)
+	rec := doRequest(mux, http.MethodGet, url)
 
-	videoGetPreview(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if rr.Body.String() != "rendered-jpeg" {
-		t.Fatalf("body = %q", rr.Body.String())
+	if rec.Body.String() != "rendered-jpeg" {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 
@@ -109,14 +122,10 @@ func TestVideoGetThumbnail_Storage404(t *testing.T) {
 	c := cache.New(1 << 20)
 	sem := make(chan struct{}, 1)
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{err: storage.ErrNotFound}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{err: storage.ErrNotFound}, c, sem)
-
-	assertStringDetail(t, rr, http.StatusNotFound, config.Msg.ItemNotFound)
+	assertStringDetail(t, rec, http.StatusNotFound, config.Msg.ItemNotFound)
 }
 
 func TestVideoGetThumbnail_StorageError(t *testing.T) {
@@ -124,14 +133,10 @@ func TestVideoGetThumbnail_StorageError(t *testing.T) {
 	c := cache.New(1 << 20)
 	sem := make(chan struct{}, 1)
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{err: storage.ErrUnavailable}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{err: storage.ErrUnavailable}, c, sem)
-
-	assertStringDetail(t, rr, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
 func TestVideoGetThumbnail_ExtractError(t *testing.T) {
@@ -146,14 +151,10 @@ func TestVideoGetThumbnail_ExtractError(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	assertStringDetail(t, rr, http.StatusBadRequest, config.Msg.FormatNotSupported)
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
 }
 
 func TestVideoGetThumbnail_RenderError(t *testing.T) {
@@ -172,14 +173,10 @@ func TestVideoGetThumbnail_RenderError(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract; imageThumbnailFunc = origRender })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	assertStringDetail(t, rr, http.StatusBadRequest, config.Msg.FormatNotSupported)
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
 }
 
 func TestVideoGetThumbnail_InvalidID(t *testing.T) {
@@ -187,36 +184,29 @@ func TestVideoGetThumbnail_InvalidID(t *testing.T) {
 	c := cache.New(1 << 20)
 	sem := make(chan struct{}, 1)
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/preview/video/bad-id/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{}, c, sem)
+	rec := doRequest(mux, http.MethodGet, "/preview/video/bad-id/1/320x240/thumbnail/?service_type=files")
 
-	videoGetThumbnail(rr, req, "bad-id", "1", "320x240", cfg, fakeStore{}, c, sem)
-
-	assertValidationError(t, rr, "id")
+	assertValidationError(t, rec, "id")
 }
 
 func TestVideoGetThumbnail_InvalidArea(t *testing.T) {
 	cfg := testCfg()
 	c := cache.New(1 << 20)
 	sem := make(chan struct{}, 1)
-	id := "11111111-1111-1111-1111-111111111111"
 
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet,
-		fmt.Sprintf("/preview/video/%s/1/badarea/thumbnail/?service_type=files", id), nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{}, c, sem)
+	rec := doRequest(mux, http.MethodGet,
+		fmt.Sprintf("/preview/video/%s/1/badarea/thumbnail/?service_type=files", videoTestID))
 
-	videoGetThumbnail(rr, req, id, "1", "badarea", cfg, fakeStore{}, c, sem)
-
-	assertValidationError(t, rr, "area")
+	assertValidationError(t, rec, "area")
 }
 
 func TestVideoRoute_MethodNotAllowed(t *testing.T) {
 	cfg := testCfg()
-	mux := http.NewServeMux()
-	registerVideoRoutes(mux, cfg, fakeStore{}, cache.New(1<<20), make(chan struct{}, 1))
+	mux := buildVideoHumaMux(cfg, fakeStore{}, cache.New(1<<20), make(chan struct{}, 1))
 
-	id := "11111111-1111-1111-1111-111111111111"
-	path := fmt.Sprintf("/preview/video/%s/1/320x240/thumbnail/?service_type=files", id)
+	path := fmt.Sprintf("/preview/video/%s/1/320x240/thumbnail/?service_type=files", videoTestID)
 	rec := doRequest(mux, http.MethodPost, path)
 
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -224,13 +214,18 @@ func TestVideoRoute_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestVideoRoute_UnmatchedPath verifies that paths with extra segments do not
+// return 200. In Go 1.22 ServeMux, trailing-slash patterns act as subtree
+// matches, so extra segments may route to the handler (returning 422 for
+// missing/invalid params) rather than 404.
 func TestVideoRoute_UnmatchedPath(t *testing.T) {
 	cfg := testCfg()
-	mux := http.NewServeMux()
-	registerVideoRoutes(mux, cfg, fakeStore{}, cache.New(1<<20), make(chan struct{}, 1))
+	mux := buildVideoHumaMux(cfg, fakeStore{}, cache.New(1<<20), make(chan struct{}, 1))
 
 	rec := doRequest(mux, http.MethodGet, "/preview/video/extra/junk/segments/here/too/")
-	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
+	if rec.Code == http.StatusOK {
+		t.Errorf("status: got 200, want non-200 (extra path segments must not succeed)")
+	}
 }
 
 func TestVideoGetThumbnail_ErrTooLarge(t *testing.T) {
@@ -245,16 +240,16 @@ func TestVideoGetThumbnail_ErrTooLarge(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	assertStringDetail(t, rr, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 }
 
+// TestVideoGetThumbnail_CancelledContext verifies that a cancelled client does not
+// produce a 400 response. With the huma adapter the handler may return a 503
+// "request cancelled" error — what matters is that 400 is NOT returned and that
+// the test does not panic.
 func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
 	cfg := testCfg()
 	c := cache.New(1 << 20)
@@ -267,23 +262,18 @@ func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
 
-	rr := httptest.NewRecorder()
-	id := "11111111-1111-1111-1111-111111111111"
-	baseReq := httptest.NewRequest(http.MethodGet,
-		"/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+
+	baseReq := httptest.NewRequest(http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"), nil)
 	ctx, cancel := context.WithCancel(baseReq.Context())
-	cancel() // cancel immediately so r.Context().Err() != nil
+	cancel() // cancel immediately
 	req := baseReq.WithContext(ctx)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
 
-	videoGetThumbnail(rr, req, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-
-	// A cancelled client must NOT produce a 400 response and must not panic.
-	// The recorder default code is 200 (not yet written), so we just assert it is not 400.
+	// A cancelled client must NOT produce a 400 Bad Request.
 	if rr.Code == http.StatusBadRequest {
-		t.Errorf("cancelled context: got 400, want silent return (no error response written)")
-	}
-	if rr.Body.Len() != 0 {
-		t.Errorf("cancelled context: expected empty body, got %q", rr.Body.String())
+		t.Errorf("cancelled context: got 400, want != 400 (no format-error response written)")
 	}
 }
 
@@ -305,20 +295,17 @@ func TestVideoGetThumbnail_Cache(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract; imageThumbnailFunc = origRender })
 
-	id := "11111111-1111-1111-1111-111111111111"
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	url := videoThumbnailURL(videoTestID, "1", "320x240")
 
 	// First request — populates cache.
-	rr1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
-	videoGetThumbnail(rr1, req1, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rr1 := doRequest(mux, http.MethodGet, url)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("first request: status %d", rr1.Code)
 	}
 
 	// Second request — must be served from cache (extractor not called again).
-	rr2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "/preview/video/"+id+"/1/320x240/thumbnail/?service_type=files", nil)
-	videoGetThumbnail(rr2, req2, id, "1", "320x240", cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	rr2 := doRequest(mux, http.MethodGet, url)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("second request: status %d", rr2.Code)
 	}

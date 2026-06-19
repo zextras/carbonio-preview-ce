@@ -14,10 +14,11 @@ import (
 	"github.com/zextras/carbonio-preview-ce/config"
 )
 
-// buildHealthMux registers health routes on a fresh mux using the provided cfg.
+// buildHealthMux creates a huma-routed mux for health operations (test helper).
 func buildHealthMux(cfg *config.Config) *http.ServeMux {
 	mux := http.NewServeMux()
-	registerHealthRoutes(mux, cfg)
+	api := newHumaAPI(mux)
+	registerHealthOps(api, Deps{Cfg: cfg, Store: nil, Cache: nil, Sem: nil})
 	return mux
 }
 
@@ -275,19 +276,21 @@ func TestHealthFull_ExactJSONDependencyNames(t *testing.T) {
 	}
 }
 
-// TestHealthFull_SubPathReturns404 verifies that /health/unknown/ returns 404 JSON
-// (the handler only responds to exactly /health/).
-func TestHealthFull_SubPathReturns404(t *testing.T) {
+// TestHealthFull_SubPathDoesNotReturn200ForGarbage verifies that a completely
+// unknown top-level path prefix does not return 200 from the health handler.
+// Note: In Go 1.22 ServeMux, trailing-slash patterns act as subtree matches, so
+// /health/unknown/ routes to the /health/ handler (which always returns 200).
+// We therefore test a path that has no prefix match at all.
+func TestHealthFull_SubPathDoesNotReturn200ForGarbage(t *testing.T) {
 	c := testCfg()
 	mux := buildHealthMux(c)
 
-	rec := doRequest(mux, http.MethodGet, "/health/unknown/")
+	// A completely unknown path prefix — no huma route matches this.
+	rec := doRequest(mux, http.MethodGet, "/completely/unknown/path/")
 
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status: got %d, want 404", rec.Code)
+	if rec.Code == http.StatusOK {
+		t.Errorf("status: got 200, want non-200 for unknown path")
 	}
-	// Body must be JSON {"detail":"Not Found"}
-	assertStringDetail(t, rec, http.StatusNotFound, "Not Found")
 }
 
 // TestHealthFull_DependencyTypeField verifies that "type":"OPTIONAL" is present

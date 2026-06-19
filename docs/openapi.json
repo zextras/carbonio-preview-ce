@@ -1,59 +1,48 @@
 {
   "components": {
     "schemas": {
-      "FileUploadBody": {
+      "FastAPIError": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "FormFile": {
+        "additionalProperties": false,
         "properties": {
-          "file": {
-            "format": "binary",
-            "title": "File",
+          "ContentType": {
             "type": "string"
+          },
+          "Filename": {
+            "type": "string"
+          },
+          "IsSet": {
+            "type": "boolean"
+          },
+          "Size": {
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
-          "file"
+          "ContentType",
+          "IsSet",
+          "Size",
+          "Filename"
         ],
-        "title": "FileUploadBody",
-        "type": "object"
-      },
-      "HTTPDetail": {
-        "properties": {
-          "detail": {
-            "title": "Detail",
-            "type": "string"
-          }
-        },
-        "title": "HTTPDetail",
-        "type": "object"
-      },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
         "type": "object"
       },
       "HealthDependency": {
+        "additionalProperties": false,
         "properties": {
           "live": {
-            "title": "Live",
             "type": "boolean"
           },
           "name": {
-            "title": "Name",
             "type": "string"
           },
           "ready": {
-            "title": "Ready",
             "type": "boolean"
           },
           "type": {
-            "title": "Type",
             "type": "string"
           }
         },
@@ -63,20 +52,19 @@
           "live",
           "type"
         ],
-        "title": "HealthDependency",
         "type": "object"
       },
       "HealthResponse": {
+        "additionalProperties": false,
         "properties": {
           "dependencies": {
             "items": {
               "$ref": "#/components/schemas/HealthDependency"
             },
-            "title": "Dependencies",
+            "nullable": true,
             "type": "array"
           },
           "ready": {
-            "title": "Ready",
             "type": "boolean"
           }
         },
@@ -84,95 +72,20 @@
           "ready",
           "dependencies"
         ],
-        "title": "HealthResponse",
-        "type": "object"
-      },
-      "ImageBorderShapeEnum": {
-        "description": "Class representing all the image border shape accepted values.\n",
-        "enum": [
-          "rounded",
-          "rectangular"
-        ],
-        "title": "ImageBorderShapeEnum",
-        "type": "string"
-      },
-      "ImageQualityEnum": {
-        "description": "Class representing all the image quality accepted values.\n",
-        "enum": [
-          "lowest",
-          "low",
-          "medium",
-          "high",
-          "highest"
-        ],
-        "title": "ImageQualityEnum",
-        "type": "string"
-      },
-      "ImageTypeEnum": {
-        "description": "Class representing all the image type accepted values.\n",
-        "enum": [
-          "jpeg",
-          "png",
-          "gif"
-        ],
-        "title": "ImageTypeEnum",
-        "type": "string"
-      },
-      "ServiceTypeEnum": {
-        "description": "Class representing all the service type accepted values.\n",
-        "enum": [
-          "files",
-          "chats"
-        ],
-        "title": "ServiceTypeEnum",
-        "type": "string"
-      },
-      "ValidationError": {
-        "properties": {
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
         "type": "object"
       }
     }
   },
   "info": {
-    "description": "Preview service.\n\nYou can preview the following type of files:\n\n* **images (png/jpeg/gif/svg)**\n* **pdf**\n* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**\n* **video (mp4, mkv, …) — thumbnail/preview of first frame**\n\nYou will be able to:\n\n* **Preview images**.\n* **Generate smart thumbnails**.\n\nThe main difference between thumbnail and preview functionality is that\npreview tends to be more faithful while thumbnail tends to elaborate on it,\ncropping it by default and rounding the image if asked.\nPreview should always output the file in its original format, while thumbnail\nwill convert it to an image.\nThere is no difference in quality between png and jpeg; the difference in\nquality can be achieved only by asking for a jpeg format and changing the\nquality parameter.\nAsking for a GIF output can only be done when the input file is a GIF,\notherwise it will raise an error.\n",
+    "description": "Preview service.",
     "title": "preview",
     "version": "latest"
   },
-  "openapi": "3.0.2",
+  "openapi": "3.0.3",
   "paths": {
     "/health/": {
       "get": {
-        "description": "Checks if the service and all of its dependencies are\nworking and returns a descriptive JSON.\n",
-        "operationId": "health_health__get",
+        "operationId": "getHealth",
         "responses": {
           "200": {
             "content": {
@@ -182,16 +95,20 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "OK"
           },
-          "429": {
-            "description": "Carbonio-docs-editor is currently unavailable."
-          },
-          "502": {
-            "description": "Storage is currently unavailable."
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Error"
           }
         },
-        "summary": "Health",
+        "summary": "Health Summary",
         "tags": [
           "health"
         ]
@@ -199,14 +116,23 @@
     },
     "/health/live/": {
       "get": {
-        "description": "Checks if the service is up.\n",
-        "operationId": "health_live_health_live__get",
+        "operationId": "getHealthLive",
         "responses": {
           "200": {
-            "description": "Successful Response"
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Error"
           }
         },
-        "summary": "Health Live",
+        "summary": "Liveness Probe",
         "tags": [
           "health"
         ]
@@ -214,17 +140,33 @@
     },
     "/health/ready/": {
       "get": {
-        "description": "Checks if the service is up and essential dependencies are running correctly.\n",
-        "operationId": "health_ready_health_ready__get",
+        "operationId": "getHealthReady",
         "responses": {
           "200": {
-            "description": "Successful Response"
+            "description": "OK"
           },
           "429": {
-            "description": "Carbonio-docs-editor is currently unavailable."
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "summary": "Health Ready",
+        "summary": "Readiness Probe",
         "tags": [
           "health"
         ]
@@ -232,38 +174,40 @@
     },
     "/preview/document/": {
       "post": {
-        "description": "Create and returns a pdf preview of the given file;\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **file**: file uploaded with FormData\n- **first_page**: integer value of first page to preview (n\u003e=1)\n- **last_page**: integer value of last page to preview (0 = last of the pdf)\n- **lang_tag**: language tag for document conversion (default en-US)\n",
-        "operationId": "post_preview_preview_document__post",
+        "operationId": "postDocumentPreview",
         "parameters": [
           {
+            "description": "First page (1-based, default 1)",
+            "explode": false,
             "in": "query",
             "name": "first_page",
-            "required": false,
             "schema": {
               "default": 1,
-              "minimum": 1,
-              "title": "First Page",
+              "description": "First page (1-based, default 1)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Last page (0 = all, default 0)",
+            "explode": false,
             "in": "query",
             "name": "last_page",
-            "required": false,
             "schema": {
               "default": 0,
-              "minimum": 0,
-              "title": "Last Page",
+              "description": "Last page (0 = all, default 0)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Language tag for conversion",
+            "explode": false,
             "in": "query",
             "name": "lang_tag",
-            "required": false,
             "schema": {
               "default": "en-US",
-              "title": "Lang Tag",
+              "description": "Language tag for conversion",
               "type": "string"
             }
           }
@@ -271,12 +215,28 @@
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "Document file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -284,64 +244,72 @@
               "application/pdf": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary PDF data"
+            "description": "Successful Response — PDF bytes",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Requested item was not found in the storage."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Collabora is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Post Preview",
+        "summary": "Post Document Preview",
         "tags": [
           "document"
         ]
@@ -349,65 +317,76 @@
     },
     "/preview/document/{area}/thumbnail/": {
       "post": {
-        "description": "Create and returns the thumbnail of the given file;\nthe image rendered will be the first page.\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **lang_tag**: language tag for document conversion (default en-US)\n- **file**: file uploaded with FormData\n",
-        "operationId": "post_thumbnail_preview_document__area__thumbnail__post",
+        "operationId": "postDocumentThumbnail",
         "parameters": [
           {
+            "description": "Width x height in pixels",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
-              ],
-              "default": "rectangular"
-            }
-          },
-          {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
             }
           },
           {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Language tag for conversion",
+            "explode": false,
             "in": "query",
             "name": "lang_tag",
-            "required": false,
             "schema": {
               "default": "en-US",
-              "title": "Lang Tag",
+              "description": "Language tag for conversion",
               "type": "string"
             }
           }
@@ -415,83 +394,115 @@
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "Document file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
             "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data (rasterized first page)"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Requested item was not found in the storage."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Collabora is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Post Thumbnail",
+        "summary": "Post Document Thumbnail",
         "tags": [
           "document"
         ]
@@ -499,66 +510,87 @@
     },
     "/preview/document/{id}/{version}/": {
       "get": {
-        "description": "Create and returns a pdf preview of the given file;\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **id**: UUID of the file\n- **version**: version of the file\n- **first_page**: integer value of first page to preview (n\u003e=1)\n- **last_page**: integer value of last page to preview (0 = last of the file)\n- **lang_tag**: language tag for document conversion (default en-US)\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_preview_preview_document__id___version___get",
+        "operationId": "getDocumentPreview",
         "parameters": [
           {
+            "description": "UUID of the document",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the document",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version (non-negative)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
             }
           },
           {
+            "description": "First page (1-based, default 1)",
+            "explode": false,
             "in": "query",
             "name": "first_page",
-            "required": false,
             "schema": {
               "default": 1,
-              "minimum": 1,
-              "title": "First Page",
+              "description": "First page (1-based, default 1)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Last page (0 = all, default 0)",
+            "explode": false,
             "in": "query",
             "name": "last_page",
-            "required": false,
             "schema": {
               "default": 0,
-              "minimum": 0,
-              "title": "Last Page",
+              "description": "Last page (0 = all, default 0)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Language tag for conversion (default en-US)",
+            "explode": false,
             "in": "query",
             "name": "lang_tag",
-            "required": false,
             "schema": {
               "default": "en-US",
-              "title": "Lang Tag",
+              "description": "Language tag for conversion (default en-US)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID",
               "type": "string"
             }
           }
@@ -569,64 +601,82 @@
               "application/pdf": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary PDF data"
+            "description": "Successful Response — PDF bytes",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage or Collabora is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Get Preview",
+        "summary": "Get Document Preview",
         "tags": [
           "document"
         ]
@@ -634,93 +684,123 @@
     },
     "/preview/document/{id}/{version}/{area}/thumbnail/": {
       "get": {
-        "description": "Create and returns a thumbnail of the file fetched by id and version;\nthe image will be rendered from the first page.\n- **id**: UUID of the file\n- **version**: version of the file\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **lang_tag**: language tag for document conversion (default en-US)\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_thumbnail_preview_document__id___version___area__thumbnail__get",
+        "operationId": "getDocumentThumbnail",
         "parameters": [
           {
+            "description": "UUID of the document",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the document",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version (non-negative)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Width x height in pixels",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
-            }
-          },
-          {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
               ],
-              "default": "rectangular"
+              "type": "string"
             }
           },
           {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
             }
           },
           {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Language tag for conversion",
+            "explode": false,
             "in": "query",
             "name": "lang_tag",
-            "required": false,
             "schema": {
               "default": "en-US",
-              "title": "Lang Tag",
+              "description": "Language tag for conversion",
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID",
               "type": "string"
             }
           }
@@ -728,73 +808,99 @@
         "responses": {
           "200": {
             "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data (rasterized first page)"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage or Collabora is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Get Thumbnail",
+        "summary": "Get Document Thumbnail",
         "tags": [
           "document"
         ]
@@ -802,65 +908,90 @@
     },
     "/preview/image/{area}/": {
       "post": {
-        "description": "Creates and returns a preview of the given image\nwith the given size, quality and format.\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **crop**: True will crop the picture starting from the borders\n- **file**: file uploaded with FormData\n",
-        "operationId": "post_preview_preview_image__area___post",
+        "operationId": "postImagePreview",
         "parameters": [
           {
+            "description": "Width x height in pixels, e.g. 100x200",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
-            "in": "query",
-            "name": "crop",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Crop",
-              "type": "boolean"
-            }
-          },
-          {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
+            }
+          },
+          {
+            "description": "Crop to fill (true) or scale to fit (false)",
+            "explode": false,
+            "in": "query",
+            "name": "crop",
+            "schema": {
+              "default": false,
+              "description": "Crop to fill (true) or scale to fit (false)",
+              "type": "boolean"
             }
           }
         ],
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "Image file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -868,46 +999,66 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "summary": "Post Preview",
+        "summary": "Post Image Preview",
         "tags": [
           "image"
         ]
@@ -915,68 +1066,94 @@
     },
     "/preview/image/{area}/thumbnail/": {
       "post": {
-        "description": "Creates and returns a thumbnail of the given image\nwith the given size, quality, format and shape.\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **file**: file uploaded with FormData\n",
-        "operationId": "post_thumbnail_preview_image__area__thumbnail__post",
+        "operationId": "postImageThumbnail",
         "parameters": [
           {
+            "description": "Width x height in pixels, e.g. 100x200",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
-              ],
-              "default": "rectangular"
-            }
-          },
-          {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
             }
           }
         ],
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "Image file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -984,46 +1161,66 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "summary": "Post Thumbnail",
+        "summary": "Post Image Thumbnail",
         "tags": [
           "image"
         ]
@@ -1031,81 +1228,109 @@
     },
     "/preview/image/{id}/{version}/{area}/": {
       "get": {
-        "description": "Creates and returns a preview of the image fetched by id and version\nwith the given size, quality and format.\n- **id**: UUID of the image\n- **version**: version of the image\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **crop**: True will crop the picture starting from the borders\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_preview_preview_image__id___version___area___get",
+        "operationId": "getImagePreview",
         "parameters": [
           {
+            "description": "UUID of the image (UUID1–UUID4)",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the image (UUID1–UUID4)",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version of the image (non-negative integer)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version of the image (non-negative integer)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Width x height in pixels, e.g. 100x200",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
             }
           },
           {
+            "description": "Output quality",
+            "explode": false,
+            "in": "query",
+            "name": "quality",
+            "schema": {
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output image format",
+            "explode": false,
+            "in": "query",
+            "name": "output_format",
+            "schema": {
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Crop to fill (true) or scale to fit (false)",
+            "explode": false,
             "in": "query",
             "name": "crop",
-            "required": false,
             "schema": {
               "default": false,
-              "title": "Crop",
+              "description": "Crop to fill (true) or scale to fit (false)",
               "type": "boolean"
             }
           },
           {
-            "in": "query",
-            "name": "quality",
-            "required": false,
+            "description": "File owner ID for Advanced storage routing",
+            "in": "header",
+            "name": "fileownerid",
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
-              ],
-              "default": "medium"
-            }
-          },
-          {
-            "in": "query",
-            "name": "output_format",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
-              ],
-              "default": "jpeg"
+              "description": "File owner ID for Advanced storage routing",
+              "type": "string"
             }
           }
         ],
@@ -1115,66 +1340,96 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage is currently unavailable."
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Get Preview",
+        "summary": "Get Image Preview",
         "tags": [
           "image"
         ]
@@ -1182,84 +1437,113 @@
     },
     "/preview/image/{id}/{version}/{area}/thumbnail/": {
       "get": {
-        "description": "Creates and returns a thumbnail of the image fetched by id and version\nwith the given size, quality, format and shape.\nIt will automatically crop the picture.\n- **id**: UUID of the image\n- **version**: version of the image\n- **quality**: quality of the output image (the higher the slower)\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200); the first is width, the latter height\n- **shape**: Rounded and Rectangular are currently supported\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_thumbnail_preview_image__id___version___area__thumbnail__get",
+        "operationId": "getImageThumbnail",
         "parameters": [
           {
+            "description": "UUID of the image (UUID1–UUID4)",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the image (UUID1–UUID4)",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version of the image (non-negative integer)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version of the image (non-negative integer)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Width x height in pixels, e.g. 100x200",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
-            }
-          },
-          {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
               ],
-              "default": "rectangular"
+              "type": "string"
             }
           },
           {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID for Advanced storage routing",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID for Advanced storage routing",
+              "type": "string"
             }
           }
         ],
@@ -1269,76 +1553,96 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Get Thumbnail",
+        "summary": "Get Image Thumbnail",
         "tags": [
           "image"
         ]
@@ -1346,28 +1650,29 @@
     },
     "/preview/pdf/": {
       "post": {
-        "description": "Create and returns a preview of the given file;\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **file**: file uploaded with FormData\n- **first_page**: integer value of first page to preview (n\u003e=1)\n- **last_page**: integer value of last page to preview (0 = last of the pdf)\n",
-        "operationId": "post_preview_preview_pdf__post",
+        "operationId": "postPdfPreview",
         "parameters": [
           {
+            "description": "First page (1-based, default 1)",
+            "explode": false,
             "in": "query",
             "name": "first_page",
-            "required": false,
             "schema": {
               "default": 1,
-              "minimum": 1,
-              "title": "First Page",
+              "description": "First page (1-based, default 1)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Last page (0 = all, default 0)",
+            "explode": false,
             "in": "query",
             "name": "last_page",
-            "required": false,
             "schema": {
               "default": 0,
-              "minimum": 0,
-              "title": "Last Page",
+              "description": "Last page (0 = all, default 0)",
+              "format": "int64",
               "type": "integer"
             }
           }
@@ -1375,12 +1680,28 @@
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "PDF file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1388,54 +1709,62 @@
               "application/pdf": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary PDF data"
+            "description": "Successful Response — PDF bytes",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Requested item was not found in the storage."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Post Preview",
+        "summary": "Post PDF Preview",
         "tags": [
           "pdf"
         ]
@@ -1443,129 +1772,171 @@
     },
     "/preview/pdf/{area}/thumbnail/": {
       "post": {
-        "description": "Create and returns the thumbnail of the given file;\nthe image rendered will be the first page.\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **file**: file uploaded with FormData\n",
-        "operationId": "post_thumbnail_preview_pdf__area__thumbnail__post",
+        "operationId": "postPdfThumbnail",
         "parameters": [
           {
+            "description": "Width x height in pixels",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
-              ],
-              "default": "rectangular"
-            }
-          },
-          {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
             }
           }
         ],
         "requestBody": {
           "content": {
             "multipart/form-data": {
+              "encoding": {
+                "file": {
+                  "contentType": "application/octet-stream"
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/FileUploadBody"
+                "properties": {
+                  "file": {
+                    "description": "PDF file to process",
+                    "format": "binary",
+                    "type": "string",
+                    "x-contentEncoding": "binary",
+                    "x-contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
             "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data (rasterized first page)"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Requested item was not found in the storage."
+            "description": "Bad Request"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Post Thumbnail",
+        "summary": "Post PDF Thumbnail",
         "tags": [
           "pdf"
         ]
@@ -1573,57 +1944,77 @@
     },
     "/preview/pdf/{id}/{version}/": {
       "get": {
-        "description": "Create and returns a preview of the given file;\nthe pdf file will contain the first and last page given.\nWith default values will return all the pages.\n- **id**: UUID of the pdf\n- **version**: version of the pdf\n- **first_page**: integer value of first page to preview (n\u003e=1)\n- **last_page**: integer value of last page to preview (0 = last of the pdf)\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_preview_preview_pdf__id___version___get",
+        "operationId": "getPdfPreview",
         "parameters": [
           {
+            "description": "UUID of the PDF",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the PDF",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version (non-negative)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
             }
           },
           {
+            "description": "First page (1-based, default 1)",
+            "explode": false,
             "in": "query",
             "name": "first_page",
-            "required": false,
             "schema": {
               "default": 1,
-              "minimum": 1,
-              "title": "First Page",
+              "description": "First page (1-based, default 1)",
+              "format": "int64",
               "type": "integer"
             }
           },
           {
+            "description": "Last page (0 = all, default 0)",
+            "explode": false,
             "in": "query",
             "name": "last_page",
-            "required": false,
             "schema": {
               "default": 0,
-              "minimum": 0,
-              "title": "Last Page",
+              "description": "Last page (0 = all, default 0)",
+              "format": "int64",
               "type": "integer"
+            }
+          },
+          {
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID",
+              "type": "string"
             }
           }
         ],
@@ -1633,64 +2024,82 @@
               "application/pdf": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary PDF data"
+            "description": "Successful Response — PDF bytes",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage is currently unavailable."
+            "description": "Bad Gateway"
           },
           "503": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Get Preview",
+        "summary": "Get PDF Preview",
         "tags": [
           "pdf"
         ]
@@ -1698,239 +2107,113 @@
     },
     "/preview/pdf/{id}/{version}/{area}/thumbnail/": {
       "get": {
-        "description": "Create and returns a thumbnail of the file fetched by id and version;\nthe image will be rendered from the first page.\n- **id**: UUID of the pdf\n- **version**: version of the file\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_thumbnail_preview_pdf__id___version___area__thumbnail__get",
+        "operationId": "getPdfThumbnail",
         "parameters": [
           {
+            "description": "UUID of the PDF",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the PDF",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version (non-negative)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Width x height in pixels",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
             }
           },
           {
+            "description": "Output quality",
+            "explode": false,
+            "in": "query",
+            "name": "quality",
+            "schema": {
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output image format",
+            "explode": false,
+            "in": "query",
+            "name": "output_format",
+            "schema": {
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
             "in": "query",
             "name": "shape",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
               ],
-              "default": "rectangular"
-            }
-          },
-          {
-            "in": "query",
-            "name": "quality",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
-              ],
-              "default": "medium"
-            }
-          },
-          {
-            "in": "query",
-            "name": "output_format",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
-              ],
-              "default": "jpeg"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "image/jpeg": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              },
-              "image/png": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response — binary image data (rasterized first page)"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Some values in the query were not correct."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Requested item was not found in the storage."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "Storage is currently unavailable."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
-                }
-              }
-            },
-            "description": "PDF rendering temporarily unavailable (pool exhaustion or worker start failure)."
-          }
-        },
-        "summary": "Get Thumbnail",
-        "tags": [
-          "pdf"
-        ]
-      }
-    },
-    "/preview/video/{id}/{version}/{area}/": {
-      "get": {
-        "description": "Extracts the first frame from a video file fetched by id and version,\nthen returns a scaled/cropped image of that frame.\n- **id**: UUID of the video file\n- **version**: version of the video file\n- **area**: width x height (e.g. 100x200)\n- **crop**: True will crop the image starting from the borders\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_preview_preview_video__id___version___area___get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
-            "in": "path",
-            "name": "version",
-            "required": true,
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
             "schema": {
-              "minimum": 0,
-              "title": "Version",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "path",
-            "name": "area",
-            "required": true,
-            "schema": {
-              "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
+              "description": "File owner ID",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "service_type",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
-            }
-          },
-          {
-            "in": "query",
-            "name": "crop",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Crop",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "quality",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
-              ],
-              "default": "medium"
-            }
-          },
-          {
-            "in": "query",
-            "name": "output_format",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
-              ],
-              "default": "jpeg"
             }
           }
         ],
@@ -1940,63 +2223,302 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data (first video frame)"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct or video format is unsupported."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error or video too large."
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage is currently unavailable."
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get PDF Thumbnail",
+        "tags": [
+          "pdf"
+        ]
+      }
+    },
+    "/preview/video/{id}/{version}/{area}/": {
+      "get": {
+        "operationId": "getVideoPreview",
+        "parameters": [
+          {
+            "description": "UUID of the video",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "UUID of the video",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Version (non-negative)",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Width x height in pixels",
+            "in": "path",
+            "name": "area",
+            "required": true,
+            "schema": {
+              "description": "Width x height in pixels",
+              "pattern": "^[0-9]+x[0-9]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Service that owns the resource",
+            "explode": false,
+            "in": "query",
+            "name": "service_type",
+            "required": true,
+            "schema": {
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output quality",
+            "explode": false,
+            "in": "query",
+            "name": "quality",
+            "schema": {
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output image format",
+            "explode": false,
+            "in": "query",
+            "name": "output_format",
+            "schema": {
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Crop to fill (true) or scale to fit (false)",
+            "explode": false,
+            "in": "query",
+            "name": "crop",
+            "schema": {
+              "default": false,
+              "description": "Crop to fill (true) or scale to fit (false)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              }
+            },
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Get Video Preview",
@@ -2007,84 +2529,113 @@
     },
     "/preview/video/{id}/{version}/{area}/thumbnail/": {
       "get": {
-        "description": "Extracts the first frame from a video file fetched by id and version,\nthen returns a cropped thumbnail image.\n- **id**: UUID of the video file\n- **version**: version of the video file\n- **area**: width x height (e.g. 100x200)\n- **shape**: Rounded and Rectangular are currently supported\n- **quality**: quality of the output image\n- **output_format**: format of the output image\n- **service_type**: Service that owns the resource\n",
-        "operationId": "get_thumbnail_preview_video__id___version___area__thumbnail__get",
+        "operationId": "getVideoThumbnail",
         "parameters": [
           {
+            "description": "UUID of the video",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
+              "description": "UUID of the video",
               "format": "uuid",
-              "title": "Id",
               "type": "string"
             }
           },
           {
+            "description": "Version (non-negative)",
             "in": "path",
             "name": "version",
             "required": true,
             "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
               "minimum": 0,
-              "title": "Version",
               "type": "integer"
             }
           },
           {
+            "description": "Width x height in pixels",
             "in": "path",
             "name": "area",
             "required": true,
             "schema": {
+              "description": "Width x height in pixels",
               "pattern": "^[0-9]+x[0-9]+$",
-              "title": "Area",
               "type": "string"
             }
           },
           {
+            "description": "Service that owns the resource",
+            "explode": false,
             "in": "query",
             "name": "service_type",
             "required": true,
             "schema": {
-              "$ref": "#/components/schemas/ServiceTypeEnum"
-            }
-          },
-          {
-            "in": "query",
-            "name": "shape",
-            "required": false,
-            "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageBorderShapeEnum"
-                }
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
               ],
-              "default": "rectangular"
+              "type": "string"
             }
           },
           {
+            "description": "Output quality",
+            "explode": false,
             "in": "query",
             "name": "quality",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageQualityEnum"
-                }
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
               ],
-              "default": "medium"
+              "type": "string"
             }
           },
           {
+            "description": "Output image format",
+            "explode": false,
             "in": "query",
             "name": "output_format",
-            "required": false,
             "schema": {
-              "allOf": [
-                {
-                  "$ref": "#/components/schemas/ImageTypeEnum"
-                }
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
               ],
-              "default": "jpeg"
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID",
+              "type": "string"
             }
           }
         ],
@@ -2094,63 +2645,93 @@
               "image/gif": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/jpeg": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               },
               "image/png": {
                 "schema": {
                   "format": "binary",
-                  "type": "string"
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
                 }
               }
             },
-            "description": "Successful Response — binary image data (first video frame, cropped)"
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Some values in the query were not correct or video format is unsupported."
+            "description": "Bad Request"
           },
           "404": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Requested item was not found in the storage."
+            "description": "Not Found"
           },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Validation Error or video too large."
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "502": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPDetail"
+                  "$ref": "#/components/schemas/FastAPIError"
                 }
               }
             },
-            "description": "Storage is currently unavailable."
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Get Video Thumbnail",

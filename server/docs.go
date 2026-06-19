@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// To regenerate the embedded OpenAPI spec from docs/openapi.yaml, run:
+// To regenerate the embedded OpenAPI spec from the huma handler registration
+// in server/api.go, run:
 //
 //	go generate ./server/...
 //
@@ -16,10 +17,10 @@ import (
 	"net/http"
 )
 
-// openAPIJSON holds the embedded OpenAPI spec JSON, generated from docs/openapi.yaml.
-// The file is copied into server/static/ at build time by the Makefile / CI step
+// openAPIJSON holds the embedded OpenAPI spec JSON, huma-generated from server/api.go via cmd/gendocs.
+// The file is written into server/static/ by cmd/gendocs
 // (go:embed does not allow ../ paths, so the canonical copy lives in docs/openapi.json
-// and a generated copy lives in server/static/openapi.json).
+// and an identical copy lives in server/static/openapi.json).
 //
 //go:embed static/openapi.json
 var openAPIJSON []byte

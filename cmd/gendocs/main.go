@@ -2,24 +2,16 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Command gendocs synchronises the OpenAPI specification artefacts.
+// Command gendocs generates the authoritative OpenAPI specification artefacts
+// directly from the huma handler registrations in server/api.go.
 //
-// During the pilot phase it performs two tasks:
+// It writes three files in one pass:
 //
-//  1. Generates the huma code-first spec (image + health ops) via
-//     RegisterOperations → DowngradeYAML and writes it to
-//     docs/openapi.huma-pilot.yaml for inspection.
-//     This file does NOT overwrite the authoritative docs/openapi.yaml.
+//  1. docs/openapi.yaml  — OAS 3.0.3 YAML (human-readable, for diffs)
+//  2. docs/openapi.json  — OAS 3.0.3 JSON (for SDK generators)
+//  3. server/static/openapi.json — copy of the JSON picked up by go:embed in server/docs.go
 //
-//  2. Reads the existing docs/openapi.json (the authoritative JSON copy,
-//     last generated from docs/openapi.yaml) and re-emits it to
-//     server/static/openapi.json so that the go:embed directive in
-//     server/docs.go picks up the latest canonical spec without requiring
-//     python3 or PyYAML.
-//
-// After full migration (all ops under huma) task 2 will be replaced by a
-// direct DowngradeYAML/Downgrade write to docs/openapi.yaml, docs/openapi.json,
-// and server/static/openapi.json.
+// No Python, no PyYAML, no pre-existing JSON file required.
 //
 // Invoke via go:generate in server/docs.go:
 //
@@ -46,37 +38,56 @@ import (
 func main() {
 	root := repoRoot()
 
-	pilotYAMLPath := filepath.Join(root, "docs", "openapi.huma-pilot.yaml")
-	canonicalJSONPath := filepath.Join(root, "docs", "openapi.json")
+	yamlPath := filepath.Join(root, "docs", "openapi.yaml")
+	jsonPath := filepath.Join(root, "docs", "openapi.json")
 	staticJSONPath := filepath.Join(root, "server", "static", "openapi.json")
 
-	// ── Task 1: generate huma pilot spec ────────────────────────────────────
-	pilotYAML := generatePilotSpec()
-	if err := os.WriteFile(pilotYAMLPath, pilotYAML, 0o644); err != nil {
-		log.Fatalf("gendocs: write %s: %v", pilotYAMLPath, err)
-	}
-	log.Printf("gendocs: wrote pilot spec to %s", pilotYAMLPath)
+	// Build a throwaway huma API, register all operations, then downgrade to OAS 3.0.3.
+	api := buildAPI()
+	server.RegisterOperations(api, server.Deps{})
 
-	// ── Task 2: copy canonical JSON → server/static (no python3 needed) ─────
-	canonicalJSON, err := os.ReadFile(canonicalJSONPath)
+	// ── YAML ────────────────────────────────────────────────────────────────
+	yamlBytes, err := api.OpenAPI().DowngradeYAML()
 	if err != nil {
-		log.Fatalf("gendocs: read %s: %v (run python3 yamlToJSON first or commit docs/openapi.json)", canonicalJSONPath, err)
+		log.Fatalf("gendocs: DowngradeYAML: %v", err)
 	}
-	pretty := prettyJSON(canonicalJSON)
+	if err := os.MkdirAll(filepath.Dir(yamlPath), 0o755); err != nil {
+		log.Fatalf("gendocs: mkdir %s: %v", filepath.Dir(yamlPath), err)
+	}
+	if err := os.WriteFile(yamlPath, yamlBytes, 0o644); err != nil {
+		log.Fatalf("gendocs: write %s: %v", yamlPath, err)
+	}
+	log.Printf("gendocs: wrote %s", yamlPath)
+
+	// ── JSON (from Downgrade, not a YAML→JSON conversion) ───────────────────
+	jsonBytes, err := api.OpenAPI().Downgrade()
+	if err != nil {
+		log.Fatalf("gendocs: Downgrade: %v", err)
+	}
+	prettyJSON := prettyIndent(jsonBytes)
+
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		log.Fatalf("gendocs: mkdir %s: %v", filepath.Dir(jsonPath), err)
+	}
+	if err := os.WriteFile(jsonPath, prettyJSON, 0o644); err != nil {
+		log.Fatalf("gendocs: write %s: %v", jsonPath, err)
+	}
+	log.Printf("gendocs: wrote %s", jsonPath)
+
+	// ── server/static/openapi.json (same bytes, picked up by go:embed) ──────
 	if err := os.MkdirAll(filepath.Dir(staticJSONPath), 0o755); err != nil {
 		log.Fatalf("gendocs: mkdir %s: %v", filepath.Dir(staticJSONPath), err)
 	}
-	if err := os.WriteFile(staticJSONPath, pretty, 0o644); err != nil {
+	if err := os.WriteFile(staticJSONPath, prettyJSON, 0o644); err != nil {
 		log.Fatalf("gendocs: write %s: %v", staticJSONPath, err)
 	}
 	log.Printf("gendocs: wrote %s", staticJSONPath)
 }
 
-// generatePilotSpec builds a throwaway huma API, registers image + health
-// operations (the pilot scope), and returns the OAS 3.0.3 YAML bytes.
-// The config is built from scratch to avoid the SchemaLinkTransformer that
-// huma.DefaultConfig installs — it would inject $schema fields into responses.
-func generatePilotSpec() []byte {
+// buildAPI constructs a throwaway huma API over a fresh ServeMux.
+// The config is built from scratch (same as server.newHumaAPI) to avoid the
+// SchemaLinkTransformer that huma.DefaultConfig installs.
+func buildAPI() huma.API {
 	mux := http.NewServeMux()
 	registry := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
 	cfg := huma.Config{
@@ -97,20 +108,11 @@ func generatePilotSpec() []byte {
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",
 	}
-	api := humago.New(mux, cfg)
-
-	// Pass nil Deps — handlers are never invoked in gendocs mode.
-	server.RegisterOperations(api, server.Deps{})
-
-	yamlBytes, err := api.OpenAPI().DowngradeYAML()
-	if err != nil {
-		log.Fatalf("gendocs: DowngradeYAML: %v", err)
-	}
-	return yamlBytes
+	return humago.New(mux, cfg)
 }
 
-// prettyJSON re-encodes raw JSON bytes with indentation for stable diffs.
-func prettyJSON(raw []byte) []byte {
+// prettyIndent re-encodes raw JSON bytes with 2-space indentation for stable diffs.
+func prettyIndent(raw []byte) []byte {
 	var obj interface{}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		log.Fatalf("gendocs: JSON unmarshal: %v", err)
