@@ -18,7 +18,7 @@ httpx~=0.28.1
 
 # 11.x cannot be used since they drop support for python3.8
 Pillow~=10.4.0
-pypdfium2~=4.30.0
+pypdfium2~=5.10.1
 
 psutil==7.0.0
 
