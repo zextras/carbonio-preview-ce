@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// To regenerate the embedded OpenAPI spec from docs/openapi.yaml, run:
+//
+//	go generate ./server/...
+//
+//go:generate go run ../cmd/gendocs
+
 package server
 
 import (

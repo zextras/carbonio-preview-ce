@@ -1,13 +1,57 @@
-﻿# SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+# SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
 #
 # SPDX-License-Identifier: AGPL-3.0-only
+#
+# OpenAPI 3.0.2 specification for carbonio-preview-ce (Go REST service).
+#
+# IMPORTANT — binary responses:
+#   Preview and thumbnail 200 responses are binary image/PDF data.
+#   Each is declared with the correct media-type and schema {type: string,
+#   format: binary} so that openapi-generator emits byte[] / ByteArray rather
+#   than java.lang.Object in the Java SDK.
+#
+# This file is the source of truth. It is hand-maintained in sync with the Go
+# REST handlers (server/*.go). To regenerate server/static/openapi.json run:
+#
+#   go generate ./cmd/gendocs/...
+#   cp docs/openapi.json server/static/openapi.json
+#
+# (or use the Makefile target `make openapi` when it exists).
 
 openapi: 3.0.2
 info:
   title: preview
-  description: "\nPreview service. \U0001F680 \n\nYou can preview the following type of files:\n\n* **images(png/jpeg/gif/svg)**\n* **pdf**\n* **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**\n\nYou will be able to:\n\n* **Preview images**.\n* **Generate smart thumbnails**.\n\nThe main difference between thumbnail and preview\n functionality is that preview tends to be more faithful\nwhile thumbnail tends to elaborate on it, cropping\n it by default and rounding the image if asked.\nPreview should always output the file in its original format,\n while thumbnail will convert it to an image.\nThere is no difference in quality between png and jpeg,\n the difference in quality can be achieved only\nby asking for a jpeg format and changing the quality parameter.\n Asking for a GIF output can only be done when the input file is a GIF, otherwise it will raise and error.\n"
+  description: |
+    Preview service.
+
+    You can preview the following type of files:
+
+    * **images (png/jpeg/gif/svg)**
+    * **pdf**
+    * **documents (xls, xlsx, ods, ppt, pptx, odp, doc, docx, odt)**
+    * **video (mp4, mkv, …) — thumbnail/preview of first frame**
+
+    You will be able to:
+
+    * **Preview images**.
+    * **Generate smart thumbnails**.
+
+    The main difference between thumbnail and preview functionality is that
+    preview tends to be more faithful while thumbnail tends to elaborate on it,
+    cropping it by default and rounding the image if asked.
+    Preview should always output the file in its original format, while thumbnail
+    will convert it to an image.
+    There is no difference in quality between png and jpeg; the difference in
+    quality can be achieved only by asking for a jpeg format and changing the
+    quality parameter.
+    Asking for a GIF output can only be done when the input file is a GIF,
+    otherwise it will raise an error.
   version: latest
+
 paths:
+  # ────────────────────────────────────────────────────────────────────
+  # IMAGE
+  # ────────────────────────────────────────────────────────────────────
   '/preview/image/{id}/{version}/{area}/thumbnail/':
     get:
       tags:
@@ -19,33 +63,32 @@ paths:
         It will automatically crop the picture.
         - **id**: UUID of the image
         - **version**: version of the image
-        - **quality**: quality of the output image
-        (the higher you go the slower the process)
+        - **quality**: quality of the output image (the higher the slower)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
+        - **area**: width x height (e.g. 100x200); the first is width, the latter height
+        - **shape**: Rounded and Rectangular are currently supported
         - **service_type**: Service that owns the resource
-         (service that first uploaded the data to storage)
       operationId: get_thumbnail_preview_image__id___version___area__thumbnail__get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: true
@@ -76,14 +119,32 @@ paths:
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -92,6 +153,17 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+        '503':
+          description: PDF rendering temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
   '/preview/image/{area}/thumbnail/':
     post:
       tags:
@@ -101,21 +173,17 @@ paths:
         Creates and returns a thumbnail of the given image
         with the given size, quality, format and shape.
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
-        This option will lose information, leaving it False will scale and
-        have borders to fill the requested size.
-        - **file**: file uploaded with FormData.
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
+        - **file**: file uploaded with FormData
       operationId: post_thumbnail_preview_image__area__thumbnail__post
       parameters:
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: false
@@ -143,23 +211,37 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: >-
-                #/components/schemas/Body_post_thumbnail_preview_image__area__thumbnail__post
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+
   '/preview/image/{area}/':
     post:
       tags:
@@ -167,23 +249,19 @@ paths:
       summary: Post Preview
       description: |
         Creates and returns a preview of the given image
-        with the given size, quality and format
+        with the given size, quality and format.
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **crop**: True will crop the picture starting from the borders.
-        This option will lose information, leaving it False will scale and
-        have borders to fill the requested size.
-        - **file**: file uploaded with FormData.
+        - **area**: width x height (e.g. 100x200)
+        - **crop**: True will crop the picture starting from the borders
+        - **file**: file uploaded with FormData
       operationId: post_preview_preview_image__area___post
       parameters:
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: false
@@ -211,23 +289,37 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: >-
-                #/components/schemas/Body_post_preview_preview_image__area___post
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+
   '/preview/image/{id}/{version}/{area}/':
     get:
       tags:
@@ -235,38 +327,35 @@ paths:
       summary: Get Preview
       description: |
         Creates and returns a preview of the image fetched by id and version
-        with the given size, quality and format
+        with the given size, quality and format.
         - **id**: UUID of the image
         - **version**: version of the image
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **crop**: True will crop the picture starting from the borders.
-        This option will lose information, leaving it False will scale and
-        have borders to fill the requested size.
+        - **area**: width x height (e.g. 100x200)
+        - **crop**: True will crop the picture starting from the borders
         - **service_type**: Service that owns the resource
-        (service that first uploaded the data to storage)
       operationId: get_preview_preview_image__id___version___area___get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: true
@@ -297,14 +386,32 @@ paths:
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -313,42 +420,42 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  # ────────────────────────────────────────────────────────────────────
+  # PDF
+  # ────────────────────────────────────────────────────────────────────
   '/preview/pdf/{id}/{version}/':
     get:
       tags:
         - pdf
       summary: Get Preview
-      description: >
-        Create and returns a preview of the given file,
-
+      description: |
+        Create and returns a preview of the given file;
         the pdf file will contain the first and last page given.
-
         With default values will return all the pages.
-
-        - **id**: UUID of the pdf.
-
-        - **version**: version of the pdf.
-
+        - **id**: UUID of the pdf
+        - **version**: version of the pdf
         - **first_page**: integer value of first page to preview (n>=1)
-
-        - **last_page**: integer value of last page to preview  (0 = last of the
-        pdf)
-
+        - **last_page**: integer value of last page to preview (0 = last of the pdf)
         - **service_type**: Service that owns the resource
-
-        (service that first uploaded the data to storage)
       operationId: get_preview_preview_pdf__id___version___get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
@@ -361,6 +468,7 @@ paths:
             title: First Page
             type: integer
             default: 1
+            minimum: 1
           name: first_page
           in: query
         - required: false
@@ -368,16 +476,29 @@ paths:
             title: Last Page
             type: integer
             default: 0
+            minimum: 0
           name: last_page
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary PDF data
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -386,29 +507,29 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure). This status is a deliberate divergence from the
-            original Python service, which had no pool-timeout concept.
-  /preview/pdf/:
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  '/preview/pdf/':
     post:
       tags:
         - pdf
       summary: Post Preview
-      description: >
-        Create and returns a preview of the given file,
-
+      description: |
+        Create and returns a preview of the given file;
         the pdf file will contain the first and last page given.
-
         With default values will return all the pages.
-
-        - **file**: file uploaded with FormData.
-
+        - **file**: file uploaded with FormData
         - **first_page**: integer value of first page to preview (n>=1)
-
-        - **last_page**: integer value of last page to preview  (0 = last of the
-        pdf)
+        - **last_page**: integer value of last page to preview (0 = last of the pdf)
       operationId: post_preview_preview_pdf__post
       parameters:
         - required: false
@@ -416,6 +537,7 @@ paths:
             title: First Page
             type: integer
             default: 1
+            minimum: 1
           name: first_page
           in: query
         - required: false
@@ -423,22 +545,35 @@ paths:
             title: Last Page
             type: integer
             default: 0
+            minimum: 0
           name: last_page
           in: query
       requestBody:
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Body_post_preview_preview_pdf__post'
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary PDF data
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -446,31 +581,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
   '/preview/pdf/{area}/thumbnail/':
     post:
       tags:
         - pdf
       summary: Post Thumbnail
       description: |
-        Create and returns the thumbnail of the given file,
+        Create and returns the thumbnail of the given file;
         the image rendered will be the first page.
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
-        - **file**: file uploaded with FormData.
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
+        - **file**: file uploaded with FormData
       operationId: post_thumbnail_preview_pdf__area__thumbnail__post
       parameters:
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: false
@@ -498,19 +634,32 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: >-
-                #/components/schemas/Body_post_thumbnail_preview_pdf__area__thumbnail__post
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data (rasterized first page)
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -518,46 +667,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
   '/preview/pdf/{id}/{version}/{area}/thumbnail/':
     get:
       tags:
         - pdf
       summary: Get Thumbnail
       description: |
-        Create and returns a thumbnail of the file fetched by id and version
+        Create and returns a thumbnail of the file fetched by id and version;
         the image will be rendered from the first page.
-        - **id**: UUID of the pdf.
-        - **version**: version of the file.
+        - **id**: UUID of the pdf
+        - **version**: version of the file
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
         - **service_type**: Service that owns the resource
-         (service that first uploaded the data to storage)
       operationId: get_thumbnail_preview_pdf__id___version___area__thumbnail__get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: true
@@ -588,12 +739,28 @@ paths:
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data (rasterized first page)
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -602,46 +769,49 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
           description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  # ────────────────────────────────────────────────────────────────────
+  # DOCUMENT
+  # ────────────────────────────────────────────────────────────────────
   '/preview/document/{id}/{version}/':
     get:
       tags:
         - document
       summary: Get Preview
-      description: >
-        Create and returns a pdf preview of the given file,
-
+      description: |
+        Create and returns a pdf preview of the given file;
         the pdf file will contain the first and last page given.
-
         With default values will return all the pages.
-
-        - **id**: UUID of the file.
-
-        - **version**: version of the file.
-
+        - **id**: UUID of the file
+        - **version**: version of the file
         - **first_page**: integer value of first page to preview (n>=1)
-
-        - **last_page**: integer value of last page to preview  (0 = last of the
-        file)
-
+        - **last_page**: integer value of last page to preview (0 = last of the file)
+        - **lang_tag**: language tag for document conversion (default en-US)
         - **service_type**: Service that owns the resource
-
-        (service that first uploaded the data to storage)
       operationId: get_preview_preview_document__id___version___get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
@@ -654,6 +824,7 @@ paths:
             title: First Page
             type: integer
             default: 1
+            minimum: 1
           name: first_page
           in: query
         - required: false
@@ -661,6 +832,7 @@ paths:
             title: Last Page
             type: integer
             default: 0
+            minimum: 0
           name: last_page
           in: query
         - required: false
@@ -672,12 +844,24 @@ paths:
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary PDF data
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -685,29 +869,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
-          description: Storage is currently unavailable.
+          description: Storage or Collabora is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
-  /preview/document/:
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  '/preview/document/':
     post:
       tags:
         - document
       summary: Post Preview
-      description: >
-        Create and returns a pdf preview of the given file,
-
+      description: |
+        Create and returns a pdf preview of the given file;
         the pdf file will contain the first and last page given.
-
         With default values will return all the pages.
-
-        - **file**: file uploaded with FormData.
-
+        - **file**: file uploaded with FormData
         - **first_page**: integer value of first page to preview (n>=1)
-
-        - **last_page**: integer value of last page to preview  (0 = last of the
-        pdf)
+        - **last_page**: integer value of last page to preview (0 = last of the pdf)
+        - **lang_tag**: language tag for document conversion (default en-US)
       operationId: post_preview_preview_document__post
       parameters:
         - required: false
@@ -715,6 +901,7 @@ paths:
             title: First Page
             type: integer
             default: 1
+            minimum: 1
           name: first_page
           in: query
         - required: false
@@ -722,6 +909,7 @@ paths:
             title: Last Page
             type: integer
             default: 0
+            minimum: 0
           name: last_page
           in: query
         - required: false
@@ -735,48 +923,68 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/Body_post_preview_preview_document__post'
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary PDF data
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Collabora is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
   '/preview/document/{area}/thumbnail/':
     post:
       tags:
         - document
       summary: Post Thumbnail
       description: |
-        Create and returns the thumbnail of the given file,
+        Create and returns the thumbnail of the given file;
         the image rendered will be the first page.
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
-        - **file**: file uploaded with FormData.
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
+        - **lang_tag**: language tag for document conversion (default en-US)
+        - **file**: file uploaded with FormData
       operationId: post_thumbnail_preview_document__area__thumbnail__post
       parameters:
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: false
@@ -811,66 +1019,88 @@ paths:
         content:
           multipart/form-data:
             schema:
-              $ref: >-
-                #/components/schemas/Body_post_thumbnail_preview_document__area__thumbnail__post
+              $ref: '#/components/schemas/FileUploadBody'
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data (rasterized first page)
           content:
-            application/json:
-              schema: {}
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
         '400':
           description: Some values in the query were not correct.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Collabora is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
   '/preview/document/{id}/{version}/{area}/thumbnail/':
     get:
       tags:
         - document
       summary: Get Thumbnail
       description: |
-        Create and returns a thumbnail of the file fetched by id and version
+        Create and returns a thumbnail of the file fetched by id and version;
         the image will be rendered from the first page.
-        - **id**: UUID of the file.
-        - **version**: version of the file.
+        - **id**: UUID of the file
+        - **version**: version of the file
         - **quality**: quality of the output image
-        (the higher you go the slower the process)
         - **output_format**: format of the output image
-        - **area**: width of the output image (>=0) x
-        height of the output image (>=0), width x height => 100x200.
-        The first is width, the latter height, the order is important!
-        - **shape**: Rounded and Rectangular are currently supported.
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
+        - **lang_tag**: language tag for document conversion (default en-US)
         - **service_type**: Service that owns the resource
-         (service that first uploaded the data to storage)
       operationId: get_thumbnail_preview_document__id___version___area__thumbnail__get
       parameters:
         - required: true
           schema:
             title: Id
             type: string
+            format: uuid
           name: id
           in: path
         - required: true
           schema:
             title: Version
             type: integer
+            minimum: 0
           name: version
           in: path
         - required: true
           schema:
             title: Area
             type: string
+            pattern: '^[0-9]+x[0-9]+$'
           name: area
           in: path
         - required: true
@@ -908,12 +1138,28 @@ paths:
           in: query
       responses:
         '200':
-          description: Successful Response
+          description: Successful Response — binary image data (rasterized first page)
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct.
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '404':
           description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '422':
           description: Validation Error
           content:
@@ -921,19 +1167,242 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
         '502':
-          description: Storage is currently unavailable.
+          description: Storage or Collabora is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
         '503':
-          description: >-
-            PDF rendering temporarily unavailable (pool exhaustion or worker
-            start failure).
-  /health/:
+          description: PDF rendering temporarily unavailable (pool exhaustion or worker start failure).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  # ────────────────────────────────────────────────────────────────────
+  # VIDEO (new — no Python equivalent)
+  # ────────────────────────────────────────────────────────────────────
+  '/preview/video/{id}/{version}/{area}/':
+    get:
+      tags:
+        - video
+      summary: Get Video Preview
+      description: |
+        Extracts the first frame from a video file fetched by id and version,
+        then returns a scaled/cropped image of that frame.
+        - **id**: UUID of the video file
+        - **version**: version of the video file
+        - **area**: width x height (e.g. 100x200)
+        - **crop**: True will crop the image starting from the borders
+        - **quality**: quality of the output image
+        - **output_format**: format of the output image
+        - **service_type**: Service that owns the resource
+      operationId: get_preview_preview_video__id___version___area___get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+            format: uuid
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+            minimum: 0
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+            pattern: '^[0-9]+x[0-9]+$'
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            title: Crop
+            type: boolean
+            default: false
+          name: crop
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response — binary image data (first video frame)
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct or video format is unsupported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+        '404':
+          description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+        '422':
+          description: Validation Error or video too large.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  '/preview/video/{id}/{version}/{area}/thumbnail/':
+    get:
+      tags:
+        - video
+      summary: Get Video Thumbnail
+      description: |
+        Extracts the first frame from a video file fetched by id and version,
+        then returns a cropped thumbnail image.
+        - **id**: UUID of the video file
+        - **version**: version of the video file
+        - **area**: width x height (e.g. 100x200)
+        - **shape**: Rounded and Rectangular are currently supported
+        - **quality**: quality of the output image
+        - **output_format**: format of the output image
+        - **service_type**: Service that owns the resource
+      operationId: get_thumbnail_preview_video__id___version___area__thumbnail__get
+      parameters:
+        - required: true
+          schema:
+            title: Id
+            type: string
+            format: uuid
+          name: id
+          in: path
+        - required: true
+          schema:
+            title: Version
+            type: integer
+            minimum: 0
+          name: version
+          in: path
+        - required: true
+          schema:
+            title: Area
+            type: string
+            pattern: '^[0-9]+x[0-9]+$'
+          name: area
+          in: path
+        - required: true
+          schema:
+            $ref: '#/components/schemas/ServiceTypeEnum'
+          name: service_type
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageBorderShapeEnum'
+            default: rectangular
+          name: shape
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageQualityEnum'
+            default: medium
+          name: quality
+          in: query
+        - required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ImageTypeEnum'
+            default: jpeg
+          name: output_format
+          in: query
+      responses:
+        '200':
+          description: Successful Response — binary image data (first video frame, cropped)
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Some values in the query were not correct or video format is unsupported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+        '404':
+          description: Requested item was not found in the storage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+        '422':
+          description: Validation Error or video too large.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '502':
+          description: Storage is currently unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPDetail'
+
+  # ────────────────────────────────────────────────────────────────────
+  # HEALTH
+  # ────────────────────────────────────────────────────────────────────
+  '/health/':
     get:
       tags:
         - health
       summary: Health
       description: |
         Checks if the service and all of its dependencies are
-        working and returns a descriptive json
+        working and returns a descriptive JSON.
       operationId: health_health__get
       responses:
         '200':
@@ -943,56 +1412,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
         '429':
-          description: >-
-            Carbonio-docs-editor is currently unavailable,
-            document preview service is currently offline.
+          description: Carbonio-docs-editor is currently unavailable.
         '502':
           description: Storage is currently unavailable.
-  /health/ready/:
+
+  '/health/ready/':
     get:
       tags:
         - health
       summary: Health Ready
-      description: >
-        Checks if the service is up and essential dependencies are running
-        correctly
+      description: |
+        Checks if the service is up and essential dependencies are running correctly.
       operationId: health_ready_health_ready__get
       responses:
         '200':
           description: Successful Response
-          content:
-            application/json:
-              schema: {}
         '429':
-          description: >-
-            Carbonio-docs-editor is currently unavailable,
-            document preview service is currently offline.
-        '502':
-          description: Storage is currently unavailable.
-  /health/live/:
+          description: Carbonio-docs-editor is currently unavailable.
+
+  '/health/live/':
     get:
       tags:
         - health
       summary: Health Live
       description: |
-        Checks if the service is up
+        Checks if the service is up.
       operationId: health_live_health_live__get
       responses:
         '200':
           description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '429':
-          description: >-
-            Carbonio-docs-editor is currently unavailable,
-            document preview service is currently offline.
-        '502':
-          description: Storage is currently unavailable.
+
 components:
   schemas:
-    Body_post_preview_preview_document__post:
-      title: Body_post_preview_preview_document__post
+    # ── file upload body (shared by all POST multipart endpoints) ──────
+    FileUploadBody:
+      title: FileUploadBody
       required:
         - file
       type: object
@@ -1001,74 +1455,16 @@ components:
           title: File
           type: string
           format: binary
-    Body_post_preview_preview_image__area___post:
-      title: Body_post_preview_preview_image__area___post
-      required:
-        - file
-      type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-    Body_post_preview_preview_pdf__post:
-      title: Body_post_preview_preview_pdf__post
-      required:
-        - file
-      type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-    Body_post_thumbnail_preview_document__area__thumbnail__post:
-      title: Body_post_thumbnail_preview_document__area__thumbnail__post
-      required:
-        - file
-      type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-    Body_post_thumbnail_preview_image__area__thumbnail__post:
-      title: Body_post_thumbnail_preview_image__area__thumbnail__post
-      required:
-        - file
-      type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-    Body_post_thumbnail_preview_pdf__area__thumbnail__post:
-      title: Body_post_thumbnail_preview_pdf__area__thumbnail__post
-      required:
-        - file
-      type: object
-      properties:
-        file:
-          title: File
-          type: string
-          format: binary
-    HTTPValidationError:
-      title: HTTPValidationError
-      type: object
-      properties:
-        detail:
-          title: Detail
-          type: array
-          items:
-            $ref: '#/components/schemas/ValidationError'
+
+    # ── enum types ─────────────────────────────────────────────────────
     ImageBorderShapeEnum:
       title: ImageBorderShapeEnum
       enum:
         - rounded
         - rectangular
       type: string
-      description: |2-
-
-            Class representing all the image type accepted values
+      description: |
+        Class representing all the image border shape accepted values.
 
     ImageQualityEnum:
       title: ImageQualityEnum
@@ -1079,9 +1475,8 @@ components:
         - high
         - highest
       type: string
-      description: |2-
-
-            Class representing all the image quality accepted values
+      description: |
+        Class representing all the image quality accepted values.
 
     ImageTypeEnum:
       title: ImageTypeEnum
@@ -1090,9 +1485,8 @@ components:
         - png
         - gif
       type: string
-      description: |2-
-
-            Class representing all the image type accepted values
+      description: |
+        Class representing all the image type accepted values.
 
     ServiceTypeEnum:
       title: ServiceTypeEnum
@@ -1100,9 +1494,27 @@ components:
         - files
         - chats
       type: string
-      description: |2-
+      description: |
+        Class representing all the service type accepted values.
 
-            Class representing all the service type accepted values
+    # ── error shapes ───────────────────────────────────────────────────
+    HTTPDetail:
+      title: HTTPDetail
+      type: object
+      properties:
+        detail:
+          title: Detail
+          type: string
+
+    HTTPValidationError:
+      title: HTTPValidationError
+      type: object
+      properties:
+        detail:
+          title: Detail
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationError'
 
     ValidationError:
       title: ValidationError
@@ -1125,6 +1537,8 @@ components:
         type:
           title: Error Type
           type: string
+
+    # ── health response schema ─────────────────────────────────────────
     HealthDependency:
       title: HealthDependency
       type: object
@@ -1146,6 +1560,7 @@ components:
         type:
           title: Type
           type: string
+
     HealthResponse:
       title: HealthResponse
       type: object

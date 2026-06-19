@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,13 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/soheilhy/cmux"
-	"google.golang.org/grpc/health/grpc_health_v1"
-
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
-	grpcserver "github.com/zextras/carbonio-preview-ce/server/grpc"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
 
@@ -71,7 +66,6 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
-	// sem is intentionally shared between HTTP and gRPC to bound TOTAL render concurrency.
 	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
 
 	// Build the public request handler (semaphore + mux + logging).
@@ -84,23 +78,6 @@ func (s *Server) Run() {
 		ReadTimeout:  time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 		WriteTimeout: time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
 	}
-
-	// Build gRPC server — sem is shared with HTTP to bound TOTAL render concurrency.
-	ps := grpcserver.NewPreviewServer(s.store, s.cfg, sem)
-	grpcSrv, healthSvc := grpcserver.GRPCServer(ps)
-
-	// Bind ONE listener; cmux multiplexes gRPC + HTTP/REST + health on the same port.
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		slog.Error("Run: net.Listen", "addr", addr, "err", err)
-		os.Exit(1)
-	}
-
-	m := cmux.New(lis)
-	// gRPC matcher: HTTP/2 with content-type: application/grpc (sends settings frame first)
-	grpcL := m.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
-	// HTTP matcher: everything else (REST + health)
-	httpL := m.Match(cmux.HTTP1Fast(), cmux.Any())
 
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
@@ -116,61 +93,27 @@ func (s *Server) Run() {
 		"log_level", s.cfg.LogLevel.String(),
 	)
 
-	// Serve gRPC on the gRPC sub-listener; flip health to SERVING after bind.
 	go func() {
-		healthSvc.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
-		if err := grpcSrv.Serve(grpcL); err != nil {
-			slog.Error("Run: serve gRPC", "err", err)
-		}
-	}()
-
-	// Serve HTTP (REST + health) on the HTTP sub-listener.
-	go func() {
-		if err := srv.Serve(httpL); err != nil && err != http.ErrServerClosed {
-			slog.Error("Run: serve HTTP", "err", err)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("Run: ListenAndServe", "err", err)
 			os.Exit(1)
-		}
-	}()
-
-	// Start cmux multiplexer — dispatches accepted connections to the right sub-listener.
-	go func() {
-		if err := m.Serve(); err != nil {
-			// cmux.ErrListenerClosed is normal on shutdown; log others.
-			slog.Debug("Run: cmux stopped", "err", err)
 		}
 	}()
 
 	sig := <-sigC
 	slog.Info("Run: received signal, shutting down", "signal", sig.String())
 
-	// Shutdown order: close the root listener (stops cmux), drain HTTP, then gRPC.
-	_ = lis.Close()
-
-	httpCtx, httpCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer httpCancel()
-	if err := srv.Shutdown(httpCtx); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: HTTP shutdown", "err", err)
-	}
-
-	// GracefulStop waits for in-flight RPCs to complete; force-stop after 10s.
-	done := make(chan struct{})
-	go func() { grpcSrv.GracefulStop(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		slog.Warn("Run: gRPC graceful stop timed out, forcing stop")
-		grpcSrv.Stop()
 	}
 }
 
-// Handler builds and returns the server's HTTP request handler: the render
-// concurrency semaphore (sized from cfg.RenderConcurrency), the public mux with
-// all route groups, and the logging middleware. It does NOT start a listener,
-// install signal handlers, or perform render initialisation (InitVips / the
-// pdfium pool) — that remains Run's responsibility. Callers embedding the
-// preview server (or testing it over httptest.Server) must ensure render is
-// initialised before serving requests; Handler itself is pure and side-effect
-// free beyond constructing the handler chain.
+// Handler builds and returns the server's HTTP request handler. It does NOT
+// start a listener or perform render initialisation — that remains Run's
+// responsibility. Callers embedding the preview server (or testing it over
+// httptest.Server) must ensure render is initialised before serving requests.
 func (s *Server) Handler() http.Handler {
 	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
 	return loggingMiddleware(s.buildMux(sem))
