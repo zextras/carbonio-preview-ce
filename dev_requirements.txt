@@ -8,7 +8,7 @@ black~=24.10.0
 ruff~=0.14.10
 pre-commit~=4.0.1
 
-respx~=0.22.0
+respx~=0.23.1
 
 pytest~=8.4.2
 pytest-mockito~=0.0.4
