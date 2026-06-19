@@ -27,7 +27,7 @@ COPY --from=prep /staging/staging .
 RUN yap build ubuntu-jammy /tmp/staging/package
 
 # Stage Ubuntu 24.04 (Noble)
-FROM docker.io/m0rf30/yap-ubuntu-noble:1.44 AS ubuntu-noble-builder
+FROM docker.io/m0rf30/yap-ubuntu-noble:1.55 AS ubuntu-noble-builder
 WORKDIR /tmp/staging
 COPY --from=prep /staging/staging .
 RUN yap build ubuntu-noble /tmp/staging/package
