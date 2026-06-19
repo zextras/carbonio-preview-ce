@@ -17,7 +17,7 @@ gunicorn~=23.0.0
 httpx~=0.28.1
 
 # 11.x cannot be used since they drop support for python3.8
-Pillow~=10.4.0
+Pillow~=11.3.0
 pypdfium2~=4.30.0
 
 psutil==7.0.0
