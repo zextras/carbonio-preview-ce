@@ -67,8 +67,8 @@ source=(
 sha256sums=(
   'f70942e22cffaa1b3783aece6275050cb70239573961c5c0cca30f83b5ba58ad'
   'cf5902414af144e4fde6c03f17308142596c65a8ec4f910e4cacfd93d863b0d9'
-  '4cfdd83b8a892eba82259989cc339bb3a311c671e753413cf24cf482f027160b'
-  '90e595d8cd5353f6a00ecfd56fd97cac7587894dfe97ac28ef5fec398b5901d9'
+  'ce115c11ca2ebc53ec4bac914ca0b63ae83e309578b2d5aade3698a05f9dbbbc'
+  '5b135d5eafa56e9006dfdd6b231f9048b0a446ba9753d7f2f8bf72b0dbfdd4e2'
   'eaa158e0e71e93fd39b03750d1468dd9f8066891f9682209bde10547d36c1094'
   'cb294a1038886d60c4056a2b50ce8e49d923ad8d15226af4e742a7ae1f5523d6'
   'e98ceeb36ca3d9d1eb5afc799cdbe412c0fce1b99083864132288ff5b28dcb9c'
@@ -213,10 +213,10 @@ package__ubuntu_jammy() {
 }
 
 postinst() {
-  getent group 'carbonio-preview' >/dev/null \
-    || groupadd -r 'carbonio-preview'
-  getent passwd 'carbonio-preview' >/dev/null \
-    || useradd -r -m \
+  getent group 'carbonio-preview' >/dev/null ||
+    groupadd -r 'carbonio-preview'
+  getent passwd 'carbonio-preview' >/dev/null ||
+    useradd -r -m \
       -d '/var/lib/carbonio-preview' \
       -g 'carbonio-preview' \
       -s /sbin/nologin 'carbonio-preview'
