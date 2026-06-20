@@ -22,9 +22,6 @@ var (
 	// Zextras-published "carbonio-ffmpeg" package installs the binary at
 	// /opt/zextras/common/bin/ffmpeg. Overridable from config in main().
 	FFmpegPath = "/opt/zextras/common/bin/ffmpeg"
-	// MaxBytes caps how many bytes we stream to the temp file before rejecting.
-	// Videos larger than this are not previewed (ErrTooLarge).
-	MaxBytes int64 = 100 << 20 // 100 MiB
 	// Timeout bounds a single ffmpeg invocation.
 	Timeout = 20 * time.Second
 	// MaxConcurrent bounds the number of ffmpeg subprocesses that may run

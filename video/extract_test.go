@@ -70,7 +70,7 @@ func genTestMP4(t *testing.T, faststart bool) []byte {
 
 func TestExtractFirstFramePNG_MoovAtEnd(t *testing.T) {
 	data := genTestMP4(t, false) // moov-at-end (the hard case)
-	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data), MaxBytes)
+	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestExtractFirstFramePNG_MoovAtEnd(t *testing.T) {
 
 func TestExtractFirstFramePNG_Faststart(t *testing.T) {
 	data := genTestMP4(t, true)
-	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data), MaxBytes)
+	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
@@ -90,19 +90,11 @@ func TestExtractFirstFramePNG_Faststart(t *testing.T) {
 	}
 }
 
-func TestExtractFirstFramePNG_TooLarge(t *testing.T) {
-	data := genTestMP4(t, true)
-	_, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data), 1024) // 1KB cap
-	if err != ErrTooLarge {
-		t.Fatalf("want ErrTooLarge, got %v", err)
-	}
-}
-
 func TestExtractFirstFramePNG_NotAVideo(t *testing.T) {
 	if !ffmpegAvailable() {
 		t.Skip("ffmpeg not available")
 	}
-	_, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader([]byte("not a video")), MaxBytes)
+	_, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader([]byte("not a video")))
 	if err == nil {
 		t.Fatalf("want error for non-video input, got nil")
 	}

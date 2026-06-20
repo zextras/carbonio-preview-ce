@@ -17,7 +17,6 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/storage"
-	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // fakeStore returns canned bytes for both retrieve methods.
@@ -63,7 +62,7 @@ func TestVideoGetThumbnail_OK(t *testing.T) {
 
 	origExtract := videoFirstFrameFunc
 	origRender := imageThumbnailFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		_, _ = io.ReadAll(r)
 		return []byte("\x89PNGframe0"), nil
 	}
@@ -93,7 +92,7 @@ func TestVideoGetPreview_OK(t *testing.T) {
 
 	origExtract := videoFirstFrameFunc
 	origRender := imageThumbnailFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		_, _ = io.ReadAll(r)
 		return []byte("\x89PNGframe0"), nil
 	}
@@ -145,7 +144,7 @@ func TestVideoGetThumbnail_ExtractError(t *testing.T) {
 	sem := make(chan struct{}, 1)
 
 	origExtract := videoFirstFrameFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		_, _ = io.ReadAll(r)
 		return nil, errors.New("ffmpeg failed")
 	}
@@ -164,7 +163,7 @@ func TestVideoGetThumbnail_RenderError(t *testing.T) {
 
 	origExtract := videoFirstFrameFunc
 	origRender := imageThumbnailFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		_, _ = io.ReadAll(r)
 		return []byte("\x89PNGframe0"), nil
 	}
@@ -228,24 +227,6 @@ func TestVideoRoute_UnmatchedPath(t *testing.T) {
 	}
 }
 
-func TestVideoGetThumbnail_ErrTooLarge(t *testing.T) {
-	cfg := testCfg()
-	c := cache.New(1 << 20)
-	sem := make(chan struct{}, 1)
-
-	origExtract := videoFirstFrameFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
-		_, _ = io.ReadAll(r)
-		return nil, video.ErrTooLarge
-	}
-	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
-
-	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
-	rec := doRequest(mux, http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"))
-
-	assertStringDetail(t, rec, http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-}
-
 // TestVideoGetThumbnail_CancelledContext verifies that a cancelled client does not
 // produce a 400 response. With the huma adapter the handler may return a 503
 // "request cancelled" error — what matters is that 400 is NOT returned and that
@@ -256,7 +237,7 @@ func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
 	sem := make(chan struct{}, 1)
 
 	origExtract := videoFirstFrameFunc
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		_, _ = io.ReadAll(r)
 		return nil, context.Canceled
 	}
@@ -285,7 +266,7 @@ func TestVideoGetThumbnail_Cache(t *testing.T) {
 	origExtract := videoFirstFrameFunc
 	origRender := imageThumbnailFunc
 	callCount := 0
-	videoFirstFrameFunc = func(_ context.Context, r io.Reader, _ int64) ([]byte, error) {
+	videoFirstFrameFunc = func(_ context.Context, r io.Reader) ([]byte, error) {
 		callCount++
 		_, _ = io.ReadAll(r)
 		return []byte("\x89PNGframe0"), nil

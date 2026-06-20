@@ -19,7 +19,6 @@ import (
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
-	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // ---------------------------------------------------------------------------
@@ -1263,13 +1262,10 @@ func registerVideoOps(api huma.API, deps Deps) {
 		}
 		defer rc.Close()
 
-		frame, rerr := videoFirstFrameFunc(ctx, rc, video.MaxBytes)
+		frame, rerr := videoFirstFrameFunc(ctx, rc)
 		if rerr != nil {
 			if ctx.Err() != nil {
 				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
-			}
-			if errors.Is(rerr, video.ErrTooLarge) {
-				return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 			}
 			log.Printf("getVideoPreview: first-frame: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -1334,13 +1330,10 @@ func registerVideoOps(api huma.API, deps Deps) {
 		}
 		defer rc.Close()
 
-		frame, rerr := videoFirstFrameFunc(ctx, rc, video.MaxBytes)
+		frame, rerr := videoFirstFrameFunc(ctx, rc)
 		if rerr != nil {
 			if ctx.Err() != nil {
 				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
-			}
-			if errors.Is(rerr, video.ErrTooLarge) {
-				return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 			}
 			log.Printf("getVideoThumbnail: first-frame: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)

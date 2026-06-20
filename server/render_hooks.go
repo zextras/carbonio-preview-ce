@@ -35,8 +35,8 @@ var imageThumbnailFunc = func(
 
 // videoFirstFrameFunc is the seam for video.ExtractFirstFramePNG. Tests override
 // it to avoid spawning ffmpeg; production uses the real extractor.
-var videoFirstFrameFunc = func(ctx context.Context, r io.Reader, maxBytes int64) ([]byte, error) {
-	return video.ExtractFirstFramePNG(ctx, r, maxBytes)
+var videoFirstFrameFunc = func(ctx context.Context, r io.Reader) ([]byte, error) {
+	return video.ExtractFirstFramePNG(ctx, r)
 }
 
 // pdfSliceFunc is the seam for render.PDFSlice.
