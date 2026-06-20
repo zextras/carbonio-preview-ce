@@ -267,16 +267,63 @@ func newHumaAPI(mux *http.ServeMux) huma.API {
 // Semaphore middleware (image render ops only)
 // ---------------------------------------------------------------------------
 
+// semBusyWait is the maximum time a request will wait to acquire a render slot
+// before failing fast with 503. It is intentionally short: a request that
+// cannot get a slot quickly is better off being told to retry than blocking
+// until the client's read-timeout (the WSC client abandons at ~15s). The
+// request context deadline still bounds the wait if it is shorter than this.
+const semBusyWait = 2 * time.Second
+
 // semaphoreMiddleware returns a huma middleware that acquires the render
-// semaphore before the handler and releases it after. Pass sem=nil for
-// unlimited concurrency (tests / gendocs).
-func semaphoreMiddleware(sem chan struct{}) func(huma.Context, func(huma.Context)) {
-	return func(ctx huma.Context, next func(huma.Context)) {
-		if sem != nil {
-			sem <- struct{}{}
-			defer func() { <-sem }()
+// semaphore before the handler and releases it AFTER, on every exit path.
+// Pass sem=nil for unlimited concurrency (tests / gendocs).
+//
+// This is the SINGLE acquisition point for the shared render concurrency
+// limiter. The underlying render functions (render.ImageThumbnail,
+// render.PDFSlice, render.PDFRasterize) must be called with a nil semaphore so
+// they do NOT re-acquire — acquiring the same slot twice per request (here AND
+// inside the render call) deadlocks the limiter under burst load and wedges the
+// service until restart.
+//
+// Acquisition is context-aware and bounded:
+//   - If the request context is already cancelled, we do NOT acquire and return
+//     503 immediately (an abandoned request must not take a slot it cannot use).
+//   - If no slot is free within semBusyWait (or the ctx is cancelled first), we
+//     fail fast with 503 "server busy" WITHOUT acquiring, instead of blocking
+//     until the client's read-timeout.
+//   - On success the slot is released via defer, so it is returned on every
+//     normal return, error return, ctx-cancel, and panic.
+func semaphoreMiddleware(api huma.API, sem chan struct{}) func(huma.Context, func(huma.Context)) {
+	return func(hctx huma.Context, next func(huma.Context)) {
+		if sem == nil {
+			next(hctx)
+			return
 		}
-		next(ctx)
+
+		ctx := hctx.Context()
+		// Reject a request whose context is already cancelled before competing
+		// for a slot.
+		if err := ctx.Err(); err != nil {
+			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
+			return
+		}
+
+		timer := time.NewTimer(semBusyWait)
+		defer timer.Stop()
+
+		select {
+		case sem <- struct{}{}:
+			// Acquired: release unconditionally on every exit path.
+			defer func() { <-sem }()
+			next(hctx)
+		case <-ctx.Done():
+			// Client disconnected / deadline exceeded while waiting — never
+			// acquired, so nothing to release.
+			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
+		case <-timer.C:
+			// All slots busy and none freed in time — fail fast, never acquired.
+			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
+		}
 	}
 }
 
@@ -285,7 +332,7 @@ func semaphoreMiddleware(sem chan struct{}) func(huma.Context, func(huma.Context
 // ---------------------------------------------------------------------------
 
 func registerImageOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(deps.Sem)
+	semMW := semaphoreMiddleware(api, deps.Sem)
 
 	// GET /preview/image/{id}/{version}/{area}/
 	huma.Register(api, huma.Operation{
@@ -333,7 +380,7 @@ func registerImageOps(api huma.API, deps Deps) {
 		if crop {
 			cropMode = "center"
 		}
-		out, rerr := imageThumbnailFunc(deps.Sem, data, width, height, outputFormat, quality, "rectangular", cropMode)
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
 		if rerr != nil {
 			log.Printf("getImagePreview render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -386,7 +433,7 @@ func registerImageOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		}
 
-		out, rerr := imageThumbnailFunc(deps.Sem, data, width, height, outputFormat, quality, shape, "center")
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
 		if rerr != nil {
 			log.Printf("getImageThumbnail render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -429,7 +476,7 @@ func registerImageOps(api huma.API, deps Deps) {
 		if crop {
 			cropMode = "center"
 		}
-		out, rerr := imageThumbnailFunc(deps.Sem, fileData, width, height, outputFormat, quality, "rectangular", cropMode)
+		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, "rectangular", cropMode)
 		if rerr != nil {
 			log.Printf("postImagePreview render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -466,7 +513,7 @@ func registerImageOps(api huma.API, deps Deps) {
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		out, rerr := imageThumbnailFunc(deps.Sem, fileData, width, height, outputFormat, quality, shape, "center")
+		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, shape, "center")
 		if rerr != nil {
 			log.Printf("postImageThumbnail render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -773,7 +820,7 @@ var pdfBinaryResponse = &huma.Response{
 // ---------------------------------------------------------------------------
 
 func registerPDFOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(deps.Sem)
+	semMW := semaphoreMiddleware(api, deps.Sem)
 
 	// GET /preview/pdf/{id}/{version}/
 	huma.Register(api, huma.Operation{
@@ -810,7 +857,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		}
 
-		sliced, rerr := pdfSliceFunc(deps.Sem, data, input.FirstPage, input.LastPage)
+		sliced, rerr := pdfSliceFunc(nil, data, input.FirstPage, input.LastPage)
 		if rerr != nil {
 			log.Printf("getPdfPreview: PDFSlice: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -863,7 +910,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
 		}
 
-		out, rerr := pdfRasterizeFunc(deps.Sem, data, 0, width, height, outputFormat, quality, shape)
+		out, rerr := pdfRasterizeFunc(nil, data, 0, width, height, outputFormat, quality, shape)
 		if rerr != nil {
 			log.Printf("getPdfThumbnail: PDFRasterize: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -903,7 +950,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		sliced, rerr := pdfSliceFunc(deps.Sem, fileData, input.FirstPage, input.LastPage)
+		sliced, rerr := pdfSliceFunc(nil, fileData, input.FirstPage, input.LastPage)
 		if rerr != nil {
 			log.Printf("postPdfPreview: PDFSlice: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -941,7 +988,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		out, rerr := pdfRasterizeFunc(deps.Sem, fileData, 0, width, height, outputFormat, quality, shape)
+		out, rerr := pdfRasterizeFunc(nil, fileData, 0, width, height, outputFormat, quality, shape)
 		if rerr != nil {
 			log.Printf("postPdfThumbnail: PDFRasterize: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -963,7 +1010,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 // ---------------------------------------------------------------------------
 
 func registerDocumentOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(deps.Sem)
+	semMW := semaphoreMiddleware(api, deps.Sem)
 
 	// GET /preview/document/{id}/{version}/
 	huma.Register(api, huma.Operation{
@@ -1016,7 +1063,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
 		}
 
-		sliced, rerr := pdfSliceFunc(deps.Sem, pdfBytes, input.FirstPage, input.LastPage)
+		sliced, rerr := pdfSliceFunc(nil, pdfBytes, input.FirstPage, input.LastPage)
 		if rerr != nil {
 			log.Printf("getDocumentPreview: PDFSlice: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -1085,7 +1132,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
 		}
 
-		out, rerr := pdfRasterizeFunc(deps.Sem, pdfBytes, 0, width, height, outputFormat, quality, shape)
+		out, rerr := pdfRasterizeFunc(nil, pdfBytes, 0, width, height, outputFormat, quality, shape)
 		if rerr != nil {
 			log.Printf("getDocumentThumbnail: PDFRasterize: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -1140,7 +1187,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
 		}
 
-		sliced, rerr := pdfSliceFunc(deps.Sem, pdfBytes, input.FirstPage, input.LastPage)
+		sliced, rerr := pdfSliceFunc(nil, pdfBytes, input.FirstPage, input.LastPage)
 		if rerr != nil {
 			log.Printf("postDocumentPreview: PDFSlice: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -1194,7 +1241,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
 		}
 
-		out, rerr := pdfRasterizeFunc(deps.Sem, pdfBytes, 0, width, height, outputFormat, quality, shape)
+		out, rerr := pdfRasterizeFunc(nil, pdfBytes, 0, width, height, outputFormat, quality, shape)
 		if rerr != nil {
 			log.Printf("postDocumentThumbnail: PDFRasterize: %v", rerr)
 			if errors.Is(rerr, render.ErrRenderUnavailable) {
@@ -1216,7 +1263,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 // ---------------------------------------------------------------------------
 
 func registerVideoOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(deps.Sem)
+	semMW := semaphoreMiddleware(api, deps.Sem)
 
 	// GET /preview/video/{id}/{version}/{area}/
 	huma.Register(api, huma.Operation{
@@ -1287,7 +1334,7 @@ func registerVideoOps(api huma.API, deps Deps) {
 		if crop {
 			cropMode = "center"
 		}
-		out, rerr := imageThumbnailFunc(deps.Sem, frame, width, height, outputFormat, quality, "rectangular", cropMode)
+		out, rerr := imageThumbnailFunc(nil, frame, width, height, outputFormat, quality, "rectangular", cropMode)
 		if rerr != nil {
 			log.Printf("getVideoPreview: render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -1363,7 +1410,7 @@ func registerVideoOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
 		}
 
-		out, rerr := imageThumbnailFunc(deps.Sem, frame, width, height, outputFormat, quality, shape, "center")
+		out, rerr := imageThumbnailFunc(nil, frame, width, height, outputFormat, quality, shape, "center")
 		if rerr != nil {
 			log.Printf("getVideoThumbnail: render: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)

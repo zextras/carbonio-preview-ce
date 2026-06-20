@@ -276,7 +276,12 @@ func TestVideoGetThumbnail_DeadlineExceeded(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
 
-	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	// nil sem: this test exercises the handler's own deadline→504 mapping, not
+	// the render-concurrency limiter. With a real sem the semaphore middleware
+	// would (correctly) reject the already-expired inbound context with 503
+	// before the handler runs, masking the mapping under test.
+	_ = sem
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, nil)
 
 	// Use an already-expired context so ctx.Err() == DeadlineExceeded when the
 	// handler checks it after videoFirstFrameFunc returns.
@@ -306,7 +311,11 @@ func TestVideoGetPreview_DeadlineExceeded(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
 
-	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+	// nil sem: see TestVideoGetThumbnail_DeadlineExceeded — this asserts the
+	// handler's deadline→504 mapping, which the semaphore middleware would
+	// otherwise short-circuit with 503 on the already-expired inbound context.
+	_ = sem
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, nil)
 
 	baseReq := httptest.NewRequest(http.MethodGet, videoPreviewURL(videoTestID, "1", "320x240"), nil)
 	ctx, cancel := context.WithDeadline(baseReq.Context(), time.Now().Add(-time.Second))
