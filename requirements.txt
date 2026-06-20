@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-FastAPI~=0.115.12
+FastAPI~=0.138.0
 
 pydantic>=2.10.6
 
