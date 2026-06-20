@@ -129,21 +129,26 @@ func TestRetrieveData_ConnectionRefused(t *testing.T) {
 	}
 }
 
-// TestRetrieveData_Timeout verifies that a request that times out maps to
-// ErrUnavailable.
-func TestRetrieveData_Timeout(t *testing.T) {
-	// Server that never responds (hangs).
+// TestRetrieveData_CtxTimeout verifies that a request whose context deadline
+// fires while the server is hanging maps to ErrUnavailable.
+//
+// The storage client carries no total-request http.Client.Timeout; the
+// per-request deadline is provided by the caller's context (mirroring the
+// single-clock design where the video handler's context.WithTimeout governs
+// the full operation). A very short context deadline keeps the test fast.
+func TestRetrieveData_CtxTimeout(t *testing.T) {
+	// Server that never responds (hangs until ctx is cancelled).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Block until client times out.
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
 
-	// Very short timeout to keep test fast.
-	client := NewDirectClient(srv.URL, "download", 50*time.Millisecond)
-	_, err := client.RetrieveData(context.Background(), "some-id", 1, "files", "")
+	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := client.RetrieveData(ctx, "some-id", 1, "files", "")
 	if !errors.Is(err, ErrUnavailable) {
-		t.Errorf("expected ErrUnavailable on timeout, got %v", err)
+		t.Errorf("expected ErrUnavailable on ctx timeout, got %v", err)
 	}
 }
 

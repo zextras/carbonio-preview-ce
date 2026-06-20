@@ -16,15 +16,15 @@ import (
 // first video frame encoded as PNG. -an drops audio; -frames:v 1 makes ffmpeg
 // exit after the first frame. Output goes to stdout (pipe:1).
 //
-// Timeout layering: ctx is the end-to-end budget propagated from the HTTP/gRPC
-// request (covers both the preceding download and this ffmpeg run). video.Timeout
-// is an additional INNER cap applied only to the ffmpeg subprocess via a nested
-// context.WithTimeout — so a slow ffmpeg is killed by the inner deadline even if
-// the outer request deadline has not yet fired.
+// Single-clock design: ctx is the SOLE time budget for this operation. It is
+// the per-request context.WithTimeout established by the video handler
+// (covering the full lifecycle: download + ffmpeg + render). There is no inner
+// nested WithTimeout here — the independent 20 s ffmpeg cap has been removed.
+// exec.CommandContext kills the ffmpeg process when ctx is cancelled or its
+// deadline fires. WaitDelay is a short OS-level kill-grace period only (not a
+// duration cap); it ensures the process is actually reaped even if it ignores
+// SIGKILL, which is extremely rare.
 func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, Timeout)
-	defer cancel()
-
 	cmd := exec.CommandContext(ctx, FFmpegPath,
 		"-hide_banner", "-loglevel", "error", "-nostdin",
 		"-threads", "1",
@@ -34,13 +34,19 @@ func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) 
 		"-f", "image2pipe", "-c:v", "png",
 		"pipe:1",
 	)
-	cmd.WaitDelay = Timeout + 2*time.Second
+	// WaitDelay: a small grace period after ctx fires before we force-kill.
+	// This is NOT a duration cap — it only matters when the process refuses
+	// to die after SIGKILL, which is essentially impossible in practice.
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("%w: %v", ErrExtractTimeout, err)
+		}
+		if ctx.Err() == context.Canceled {
+			return nil, ctx.Err()
 		}
 		return nil, fmt.Errorf("%w: %v: %s", ErrExtractFailed, err, stderr.String())
 	}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
@@ -227,10 +228,10 @@ func TestVideoRoute_UnmatchedPath(t *testing.T) {
 	}
 }
 
-// TestVideoGetThumbnail_CancelledContext verifies that a cancelled client does not
-// produce a 400 response. With the huma adapter the handler may return a 503
-// "request cancelled" error — what matters is that 400 is NOT returned and that
-// the test does not panic.
+// TestVideoGetThumbnail_CancelledContext verifies that a cancelled client
+// context does not produce a 400 Bad Request. Under the single-clock design,
+// context.Canceled (client disconnected) is handled silently — the handler
+// returns (nil, nil) and the test must not panic or return a format-error.
 func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
 	cfg := testCfg()
 	c := cache.New(1 << 20)
@@ -252,9 +253,70 @@ func TestVideoGetThumbnail_CancelledContext(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
-	// A cancelled client must NOT produce a 400 Bad Request.
+	// A cancelled client must NOT produce a 400 Bad Request (format error).
 	if rr.Code == http.StatusBadRequest {
 		t.Errorf("cancelled context: got 400, want != 400 (no format-error response written)")
+	}
+}
+
+// TestVideoGetThumbnail_DeadlineExceeded verifies that an expired context
+// deadline maps to HTTP 504 Gateway Timeout (not 400 or 503).
+// Under the single-clock design, context.DeadlineExceeded means the
+// authoritative per-request timeout fired, so 504 is the correct response.
+func TestVideoGetThumbnail_DeadlineExceeded(t *testing.T) {
+	cfg := testCfg()
+	c := cache.New(1 << 20)
+	sem := make(chan struct{}, 1)
+
+	origExtract := videoFirstFrameFunc
+	videoFirstFrameFunc = func(ctx context.Context, r io.Reader) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		// Simulate the authoritative deadline firing during ffmpeg.
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
+
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+
+	// Use an already-expired context so ctx.Err() == DeadlineExceeded when the
+	// handler checks it after videoFirstFrameFunc returns.
+	baseReq := httptest.NewRequest(http.MethodGet, videoThumbnailURL(videoTestID, "1", "320x240"), nil)
+	ctx, cancel := context.WithDeadline(baseReq.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	req := baseReq.WithContext(ctx)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusGatewayTimeout {
+		t.Errorf("deadline exceeded: got %d, want 504", rr.Code)
+	}
+}
+
+// TestVideoGetPreview_DeadlineExceeded verifies the same 504 mapping for the
+// preview endpoint.
+func TestVideoGetPreview_DeadlineExceeded(t *testing.T) {
+	cfg := testCfg()
+	c := cache.New(1 << 20)
+	sem := make(chan struct{}, 1)
+
+	origExtract := videoFirstFrameFunc
+	videoFirstFrameFunc = func(ctx context.Context, r io.Reader) ([]byte, error) {
+		_, _ = io.ReadAll(r)
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() { videoFirstFrameFunc = origExtract })
+
+	mux := buildVideoHumaMux(cfg, fakeStore{body: []byte("video-bytes")}, c, sem)
+
+	baseReq := httptest.NewRequest(http.MethodGet, videoPreviewURL(videoTestID, "1", "320x240"), nil)
+	ctx, cancel := context.WithDeadline(baseReq.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	req := baseReq.WithContext(ctx)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusGatewayTimeout {
+		t.Errorf("deadline exceeded: got %d, want 504", rr.Code)
 	}
 }
 

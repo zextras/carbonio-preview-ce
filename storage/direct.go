@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,12 +29,22 @@ type DirectClient struct {
 //
 //   - storageBaseURL — scheme://host:port, e.g. "http://127.78.0.6:20000"
 //   - downloadAPI    — path segment, e.g. "download"
-//   - timeout        — applied to every HTTP request
-func NewDirectClient(storageBaseURL, downloadAPI string, timeout time.Duration) *DirectClient {
+//   - dialTimeout    — bounds TCP connection establishment and TLS handshake ONLY.
+//     There is intentionally NO http.Client.Timeout (no total-request cap here):
+//     the operation deadline is the per-request ctx deadline set by the handler,
+//     which governs the full lifecycle (download + ffmpeg + render) via a single
+//     context.WithTimeout. The body read is cancelled automatically when that
+//     ctx fires, because every request is built with http.NewRequestWithContext.
+func NewDirectClient(storageBaseURL, downloadAPI string, dialTimeout time.Duration) *DirectClient {
 	return &DirectClient{
 		downloadURL: storageBaseURL + "/" + downloadAPI,
 		http: &http.Client{
-			Timeout: timeout,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout: dialTimeout,
+				}).DialContext,
+				TLSHandshakeTimeout: dialTimeout,
+			},
 		},
 	}
 }

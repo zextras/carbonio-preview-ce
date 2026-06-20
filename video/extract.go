@@ -52,10 +52,11 @@ func releaseSem() { <-sem }
 // not just the ffmpeg subprocess. Excess requests block here on the
 // context-aware acquireSem and are unblocked immediately on context cancellation.
 //
-// ctx is the end-to-end budget for the whole operation: it is propagated to
-// both the streaming body read (via the caller's io.Reader) and the ffmpeg
-// subprocess. video.Timeout is an additional inner cap applied to the ffmpeg
-// run only (see runFFmpegFirstFrame).
+// Single-clock design: ctx is the SOLE time budget for the entire operation.
+// It is the per-request context.WithTimeout set by the video handler
+// (ServiceTimeoutInSeconds). It is propagated to both the streaming body read
+// (via r, which is backed by an http.Response.Body bound to ctx) and the
+// ffmpeg subprocess (via exec.CommandContext). There is no inner timeout.
 func ExtractFirstFramePNG(ctx context.Context, r io.Reader) ([]byte, error) {
 	// Acquire the concurrency slot BEFORE touching disk so the semaphore bounds
 	// the full download+extract operation (not just ffmpeg).

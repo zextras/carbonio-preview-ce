@@ -72,11 +72,18 @@ func (s *Server) Run() {
 	handler := loggingMiddleware(s.buildMux(sem))
 
 	addr := fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.ServicePort)
+	// Single-clock design: the per-request context deadline (set by video
+	// handlers via context.WithTimeout(r.Context(), ServiceTimeoutInSeconds))
+	// is the ONE authoritative operation cap. WriteTimeout is 0 so the server
+	// does not race against that per-request ctx with its own independent
+	// clock. ReadTimeout is kept to bound reading the inbound request headers/
+	// body (a separate, harmless concern that does not overlap with the handler
+	// ctx deadline).
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      handler,
 		ReadTimeout:  time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
-		WriteTimeout: time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
+		WriteTimeout: 0,
 	}
 
 	sigC := make(chan os.Signal, 1)

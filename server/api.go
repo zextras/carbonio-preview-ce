@@ -1225,10 +1225,16 @@ func registerVideoOps(api huma.API, deps Deps) {
 		Path:        "/preview/video/{id}/{version}/{area}/",
 		Summary:     "Get Video Preview",
 		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 502, 503},
+		Errors:      []int{400, 404, 422, 502, 503, 504},
 		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
 		Middlewares: huma.Middlewares{semMW},
 	}, func(ctx context.Context, input *videoGetPreviewInput) (*BinOut, error) {
+		// Single authoritative deadline: governs the FULL lifecycle of this
+		// request (storage download + ffmpeg first-frame + libvips render).
+		// No other time-based cap competes with this one.
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
+		defer cancel()
+
 		id, err := validateUUID(input.ID)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
@@ -1252,8 +1258,11 @@ func registerVideoOps(api huma.API, deps Deps) {
 
 		rc, rerr := deps.Store.RetrieveDataStreaming(ctx, id, input.Version, serviceType, ownerHeader)
 		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
+			}
+			if ctx.Err() == context.Canceled {
+				return nil, nil // client disconnected — nothing to write
 			}
 			if errors.Is(rerr, storage.ErrNotFound) {
 				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
@@ -1264,8 +1273,11 @@ func registerVideoOps(api huma.API, deps Deps) {
 
 		frame, rerr := videoFirstFrameFunc(ctx, rc)
 		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
+			}
+			if ctx.Err() == context.Canceled {
+				return nil, nil // client disconnected — nothing to write
 			}
 			log.Printf("getVideoPreview: first-frame: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
@@ -1293,10 +1305,16 @@ func registerVideoOps(api huma.API, deps Deps) {
 		Path:        "/preview/video/{id}/{version}/{area}/thumbnail/",
 		Summary:     "Get Video Thumbnail",
 		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 502, 503},
+		Errors:      []int{400, 404, 422, 502, 503, 504},
 		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
 		Middlewares: huma.Middlewares{semMW},
 	}, func(ctx context.Context, input *videoGetThumbnailInput) (*BinOut, error) {
+		// Single authoritative deadline: governs the FULL lifecycle of this
+		// request (storage download + ffmpeg first-frame + libvips render).
+		// No other time-based cap competes with this one.
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
+		defer cancel()
+
 		id, err := validateUUID(input.ID)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
@@ -1320,8 +1338,11 @@ func registerVideoOps(api huma.API, deps Deps) {
 
 		rc, rerr := deps.Store.RetrieveDataStreaming(ctx, id, input.Version, serviceType, ownerHeader)
 		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
+			}
+			if ctx.Err() == context.Canceled {
+				return nil, nil // client disconnected — nothing to write
 			}
 			if errors.Is(rerr, storage.ErrNotFound) {
 				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
@@ -1332,8 +1353,11 @@ func registerVideoOps(api huma.API, deps Deps) {
 
 		frame, rerr := videoFirstFrameFunc(ctx, rc)
 		if rerr != nil {
-			if ctx.Err() != nil {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "request cancelled")
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
+			}
+			if ctx.Err() == context.Canceled {
+				return nil, nil // client disconnected — nothing to write
 			}
 			log.Printf("getVideoThumbnail: first-frame: %v", rerr)
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)

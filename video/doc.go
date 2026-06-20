@@ -11,7 +11,6 @@ package video
 
 import (
 	"runtime"
-	"time"
 )
 
 // Tunables. main() may override these from config after config.Load(),
@@ -22,8 +21,6 @@ var (
 	// Zextras-published "carbonio-ffmpeg" package installs the binary at
 	// /opt/zextras/common/bin/ffmpeg. Overridable from config in main().
 	FFmpegPath = "/opt/zextras/common/bin/ffmpeg"
-	// Timeout bounds a single ffmpeg invocation.
-	Timeout = 20 * time.Second
 	// MaxConcurrent bounds the number of ffmpeg subprocesses that may run
 	// simultaneously. Each video request forks one ffmpeg process before the
 	// libvips render semaphore is acquired, so without this cap a burst of
