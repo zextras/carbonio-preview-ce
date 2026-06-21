@@ -9,11 +9,16 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 )
 
 // Blob is an alias for raw file content retrieved from storage.
 type Blob = []byte
+
+// ErrStoreNotSupported is returned by storage clients that cannot write
+// (the CE DirectClient). Generation runs only on the Advanced edition.
+var ErrStoreNotSupported = errors.New("storage: write not supported by this client")
 
 // Client is the minimal interface the preview service requires from
 // the storage layer.
@@ -45,4 +50,13 @@ type Client interface {
 	//
 	// Same error contract as RetrieveData (ErrNotFound / ErrUnavailable).
 	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, error)
+
+	// StoreData writes data as the content of storage node nodeID (version) in the
+	// given serviceType namespace, on the storage server that owns ownerID. The
+	// CALLER supplies nodeID (a plain UUID minted by WSC — storage does not mint
+	// it). Returns the stored node id (echoes nodeID) on success.
+	//
+	// CE's DirectClient does not support writes and returns ErrStoreNotSupported;
+	// only the Advanced PowerStoreClient implements real upload.
+	StoreData(ctx context.Context, nodeID string, version int, serviceType string, ownerID string, data []byte) (string, error)
 }

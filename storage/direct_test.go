@@ -361,3 +361,13 @@ func TestRetrieveData_2xxVariants(t *testing.T) {
 		})
 	}
 }
+
+// TestDirectClient_StoreData_NotSupported verifies that the CE DirectClient
+// rejects writes: generation is Advanced-only.
+func TestDirectClient_StoreData_NotSupported(t *testing.T) {
+	c := NewDirectClient("http://127.0.0.1:20000", "download", 0)
+	_, err := c.StoreData(context.Background(), "11111111-1111-1111-1111-111111111111", 0, "chats", "owner", []byte("jpg"))
+	if !errors.Is(err, ErrStoreNotSupported) {
+		t.Fatalf("expected ErrStoreNotSupported, got %v", err)
+	}
+}
