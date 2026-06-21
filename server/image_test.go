@@ -54,6 +54,10 @@ func (m *mockStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _,
 	return io.NopCloser(bytes.NewReader(m.blob)), nil
 }
 
+func (m *mockStore) StoreData(_ context.Context, nodeID string, _ int, _, _ string, _ []byte) (string, error) {
+	return nodeID, nil
+}
+
 // ---- render stubs ----
 
 // stubImageThumbnail replaces imageThumbnailFunc for the duration of a test.
@@ -93,6 +97,7 @@ func testCfg() *config.Config {
 		ServiceTimeoutInSeconds:              30,
 		ServiceDocsTimeout:                   15,
 		RenderConcurrency:                    runtime.NumCPU(),
+		VideoConcurrency:                     runtime.NumCPU(),
 		ServiceEnableDocumentPreview:         true,
 		ServiceEnableDocumentThumbnail:       true,
 		StorageFullAddress:                   "http://127.0.0.1:20000",

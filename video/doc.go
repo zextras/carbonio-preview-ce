@@ -9,10 +9,6 @@
 // phone/screen-recording layout) cannot be decoded from a non-seekable pipe.
 package video
 
-import (
-	"runtime"
-)
-
 // Tunables. main() may override these from config after config.Load(),
 // mirroring render.ImageMinRes.
 var (
@@ -20,11 +16,8 @@ var (
 	// convention used by carbonio-videoserver / carbonio-videorecorder: the
 	// Zextras-published "carbonio-ffmpeg" package installs the binary at
 	// /opt/zextras/common/bin/ffmpeg. Overridable from config in main().
+	//
+	// Concurrency is bounded by the caller (the generate handler's dedicated
+	// video-semaphore middleware), not here — see ExtractFirstFramePNG.
 	FFmpegPath = "/opt/zextras/common/bin/ffmpeg"
-	// MaxConcurrent bounds the number of ffmpeg subprocesses that may run
-	// simultaneously. Each video request forks one ffmpeg process before the
-	// libvips render semaphore is acquired, so without this cap a burst of
-	// requests can exhaust file-descriptors and RAM. main() may override this
-	// before the first call to ExtractFirstFramePNG.
-	MaxConcurrent = runtime.NumCPU()
 )

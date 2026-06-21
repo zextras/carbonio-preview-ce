@@ -5,8 +5,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
@@ -19,6 +22,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/video"
 )
 
 // ---------------------------------------------------------------------------
@@ -217,7 +221,12 @@ type Deps struct {
 	Cfg   *config.Config
 	Store storage.Client
 	Cache *cache.Cache
-	Sem   chan struct{}
+	// Sem is the shared render-concurrency semaphore (image/PDF/document ops).
+	Sem chan struct{}
+	// VideoSem is the DEDICATED video-generate semaphore (capacity =
+	// video-concurrency, default NumCPU). Separate from Sem so a flood of
+	// generate calls cannot starve image previews. nil = unlimited (tests).
+	VideoSem chan struct{}
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +239,7 @@ func RegisterOperations(api huma.API, deps Deps) {
 	registerHealthOps(api, deps)
 	registerPDFOps(api, deps)
 	registerDocumentOps(api, deps)
-	registerVideoOps(api, deps)
+	registerGenerateOps(api, deps)
 }
 
 // newHumaAPI constructs a huma API over the given mux with all Carbonio settings.
@@ -776,31 +785,26 @@ type docPostThumbnailInput struct {
 }
 
 // ---------------------------------------------------------------------------
-// Input structs — Video GET
+// Input/output structs — Video generate (POST)
 // ---------------------------------------------------------------------------
 
-// videoGetPreviewInput holds all path + query params for GET video preview.
-type videoGetPreviewInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Crop         bool        `query:"crop"          default:"false"             doc:"Crop to fill (true) or scale to fit (false)"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
+// generateVideoInput holds the path + query params + owner header for the
+// POST /preview/video/generate endpoint. The caller (WSC) supplies BOTH the
+// source coordinates (id/version/service_type/owner) AND the target node id
+// (a UUID it minted) under which the extracted first frame is stored.
+type generateVideoInput struct {
+	ID          string      `path:"id"            format:"uuid"   doc:"UUID of the SOURCE video node"`
+	Version     int         `path:"version"       minimum:"0"     doc:"Source version (non-negative)"`
+	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
+	Target      string      `query:"target"       format:"uuid" required:"true" doc:"Caller-minted UUID for the stored frame"`
+	FileOwnerID string      `header:"fileownerid"                doc:"File owner ID (PowerStore routing)" required:"false"`
 }
 
-// videoGetThumbnailInput holds all path + query params for GET video thumbnail.
-type videoGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
+// generateVideoOutput echoes the stored node id of the generated frame.
+type generateVideoOutput struct {
+	Body struct {
+		PreviewID string `json:"preview_id" doc:"Storage node id of the stored first-frame image (echoes target)"`
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,26 +1263,121 @@ func registerDocumentOps(api huma.API, deps Deps) {
 }
 
 // ---------------------------------------------------------------------------
-// Video operations
+// Video operations — generate (extract first frame → JPEG → store)
 // ---------------------------------------------------------------------------
 
-func registerVideoOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
+// JPEGQuality is the JPEG encoding quality used when re-encoding the extracted
+// first frame. Internal constant — not a config layer, not env-overridable.
+const JPEGQuality = 90
 
-	// GET /preview/video/{id}/{version}/{area}/
+// videoRetryAfterSeconds is the Retry-After header value (seconds) returned with
+// a 429 when the dedicated video semaphore is full.
+const videoRetryAfterSeconds = "1"
+
+// generateFirstFrameJPEG streams the source video, extracts the first frame
+// (PNG via the existing extractor), re-encodes it to JPEG q90 at full resolution
+// (no resize), and stores it under the CALLER-SUPPLIED target node id (a UUID
+// minted by WSC). Returns that id (echoed). Errors are returned raw; the handler
+// maps them to HTTP status codes via mapStorageOrExtractError.
+func generateFirstFrameJPEG(
+	ctx context.Context,
+	store storage.Client,
+	sourceNode string,
+	version int,
+	serviceType string,
+	ownerID string,
+	targetNodeID string,
+) (string, error) {
+	rc, err := store.RetrieveDataStreaming(ctx, sourceNode, version, serviceType, ownerID)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+
+	// AV1/corrupt → video.ErrExtractFailed; deadline → video.ErrExtractTimeout.
+	// No internal semaphore (removed): concurrency is bounded at the handler
+	// middleware (the single video semaphore).
+	pngBytes, err := videoFirstFrameFunc(ctx, rc)
+	if err != nil {
+		return "", err
+	}
+
+	img, err := png.Decode(bytes.NewReader(pngBytes))
+	if err != nil {
+		return "", err
+	}
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, img, &jpeg.Options{Quality: JPEGQuality}); err != nil {
+		return "", err
+	}
+
+	return store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg.Bytes())
+}
+
+// mapStorageOrExtractError maps a generate-pipeline error to the correct HTTP
+// status:
+//   - context deadline exceeded            → 504
+//   - video.ErrExtractFailed (AV1/corrupt) → 422
+//   - video.ErrExtractTimeout              → 504
+//   - storage.ErrNotFound                  → 404
+//   - everything else                      → 502
+func mapStorageOrExtractError(ctx context.Context, err error) error {
+	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, video.ErrExtractTimeout) {
+		return huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
+	}
+	switch {
+	case errors.Is(err, video.ErrExtractFailed):
+		return huma.NewError(http.StatusUnprocessableEntity, config.Msg.FormatNotSupported)
+	case errors.Is(err, storage.ErrNotFound):
+		return huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+	default:
+		return huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+	}
+}
+
+// videoSemaphoreMiddleware bounds generate to cfg.VideoConcurrency (APPLICATION
+// key video-concurrency, default NumCPU) using a DEDICATED semaphore — NOT the
+// shared render semMW — so a flood of generate calls can never starve image
+// previews. Try-acquire immediately; on a full semaphore return HTTP 429 with a
+// Retry-After header (no waiting).
+//
+// 429 (not 503): 4xx = expected backpressure, so it does not inflate preview's
+// 5xx error metrics or trip outage alerts; it clearly signals "retryable, back
+// off". 503 is reserved for "preview genuinely down" and is retained only on the
+// existing semMW (image/render). Pass vsem=nil for unlimited concurrency
+// (tests / gendocs).
+func videoSemaphoreMiddleware(api huma.API, vsem chan struct{}) func(huma.Context, func(huma.Context)) {
+	return func(hctx huma.Context, next func(huma.Context)) {
+		if vsem == nil {
+			next(hctx)
+			return
+		}
+		select {
+		case vsem <- struct{}{}:
+			defer func() { <-vsem }()
+			next(hctx)
+		default:
+			hctx.SetHeader("Retry-After", videoRetryAfterSeconds)
+			_ = huma.WriteErr(api, hctx, http.StatusTooManyRequests, "server busy, retry")
+		}
+	}
+}
+
+func registerGenerateOps(api huma.API, deps Deps) {
+	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem) // dedicated video semaphore, NOT semMW
+
+	// POST /preview/video/generate/{id}/{version}/
 	huma.Register(api, huma.Operation{
-		OperationID: "getVideoPreview",
-		Method:      http.MethodGet,
-		Path:        "/preview/video/{id}/{version}/{area}/",
-		Summary:     "Get Video Preview",
+		OperationID: "generateVideoPreview",
+		Method:      http.MethodPost,
+		Path:        "/preview/video/generate/{id}/{version}/",
+		Summary:     "Generate (extract + JPEG-encode + store) a video first-frame preview",
 		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 502, 503, 504},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *videoGetPreviewInput) (*BinOut, error) {
+		Errors:      []int{400, 404, 422, 429, 502, 504},
+		Middlewares: huma.Middlewares{vsemMW},
+	}, func(ctx context.Context, input *generateVideoInput) (*generateVideoOutput, error) {
 		// Single authoritative deadline: governs the FULL lifecycle of this
-		// request (storage download + ffmpeg first-frame + libvips render).
-		// No other time-based cap competes with this one.
+		// request (storage download + ffmpeg first-frame + JPEG encode + store).
 		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
 		defer cancel()
 
@@ -1287,142 +1386,25 @@ func registerVideoOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
 				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
 		}
-		width, height, err := parseArea(input.Area)
+		target, err := validateUUID(input.Target)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
-		}
-		serviceType := string(input.ServiceType)
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		crop := input.Crop
-		ownerHeader := input.FileOwnerID
-
-		key := cacheKey("video-preview", id, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "query.target", Value: input.Target})
 		}
 
-		rc, rerr := deps.Store.RetrieveDataStreaming(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
-			}
+		storedID, gerr := generateFirstFrameJPEG(
+			ctx, deps.Store, id, input.Version, string(input.ServiceType), input.FileOwnerID, target,
+		)
+		if gerr != nil {
 			if ctx.Err() == context.Canceled {
 				return nil, nil // client disconnected — nothing to write
 			}
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-		defer rc.Close()
-
-		frame, rerr := videoFirstFrameFunc(ctx, rc)
-		if rerr != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
-			}
-			if ctx.Err() == context.Canceled {
-				return nil, nil // client disconnected — nothing to write
-			}
-			log.Printf("getVideoPreview: first-frame: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+			log.Printf("generateVideoPreview: %v", gerr)
+			return nil, mapStorageOrExtractError(ctx, gerr)
 		}
 
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
-		}
-		out, rerr := imageThumbnailFunc(nil, frame, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			log.Printf("getVideoPreview: render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
-	})
-
-	// GET /preview/video/{id}/{version}/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "getVideoThumbnail",
-		Method:      http.MethodGet,
-		Path:        "/preview/video/{id}/{version}/{area}/thumbnail/",
-		Summary:     "Get Video Thumbnail",
-		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 502, 503, 504},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *videoGetThumbnailInput) (*BinOut, error) {
-		// Single authoritative deadline: governs the FULL lifecycle of this
-		// request (storage download + ffmpeg first-frame + libvips render).
-		// No other time-based cap competes with this one.
-		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
-		defer cancel()
-
-		id, err := validateUUID(input.ID)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
-		}
-		width, height, err := parseArea(input.Area)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
-		}
-		serviceType := string(input.ServiceType)
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		shape := string(input.Shape)
-		ownerHeader := input.FileOwnerID
-
-		key := cacheKey("video-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		rc, rerr := deps.Store.RetrieveDataStreaming(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
-			}
-			if ctx.Err() == context.Canceled {
-				return nil, nil // client disconnected — nothing to write
-			}
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-		defer rc.Close()
-
-		frame, rerr := videoFirstFrameFunc(ctx, rc)
-		if rerr != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return nil, huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
-			}
-			if ctx.Err() == context.Canceled {
-				return nil, nil // client disconnected — nothing to write
-			}
-			log.Printf("getVideoThumbnail: first-frame: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		out, rerr := imageThumbnailFunc(nil, frame, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			log.Printf("getVideoThumbnail: render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		// rounded shape: use png content type (same as PDF thumbnail)
-		actualFormat := outputFormat
-		if shape == "rounded" {
-			actualFormat = "png"
-		}
-		ct := contentTypeForFormat(actualFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
+		out := &generateVideoOutput{}
+		out.Body.PreviewID = storedID
+		return out, nil
 	})
 }

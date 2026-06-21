@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"sync"
 )
 
 var (
@@ -19,27 +18,6 @@ var (
 	ErrExtractTimeout = errors.New("video: extraction timed out")
 )
 
-// semOnce guards lazy initialisation of sem. Tests may reset both to override
-// MaxConcurrent before the first call.
-var (
-	semOnce sync.Once
-	sem     chan struct{}
-)
-
-// acquireSem blocks until a semaphore slot is available or ctx is cancelled.
-// It returns an error only when the context is done before a slot is obtained.
-func acquireSem(ctx context.Context) error {
-	semOnce.Do(func() { sem = make(chan struct{}, MaxConcurrent) })
-	select {
-	case sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func releaseSem() { <-sem }
-
 // ExtractFirstFramePNG streams r to a seekable temp file, extracts frame 0
 // with ffmpeg, and returns the PNG-encoded frame. No size cap is applied —
 // preview is a pure transform service; size policy belongs to the caller (WSC).
@@ -47,24 +25,17 @@ func releaseSem() { <-sem }
 // A seekable temp file (not a pipe) is mandatory: moov-at-end MP4 requires
 // backward seeks ffmpeg cannot do over a pipe.
 //
-// The semaphore slot (capacity video.MaxConcurrent) is acquired BEFORE
-// creating the temp file, so it bounds the entire download+extract operation,
-// not just the ffmpeg subprocess. Excess requests block here on the
-// context-aware acquireSem and are unblocked immediately on context cancellation.
+// Concurrency is NOT bounded here. The sole caller is the generate handler,
+// which bounds concurrency at exactly one point — the dedicated video-semaphore
+// middleware (capacity = video-concurrency, default runtime.NumCPU()). Bounding
+// again inside this function would double-bound the same work.
 //
 // Single-clock design: ctx is the SOLE time budget for the entire operation.
-// It is the per-request context.WithTimeout set by the video handler
+// It is the per-request context.WithTimeout set by the generate handler
 // (ServiceTimeoutInSeconds). It is propagated to both the streaming body read
 // (via r, which is backed by an http.Response.Body bound to ctx) and the
 // ffmpeg subprocess (via exec.CommandContext). There is no inner timeout.
 func ExtractFirstFramePNG(ctx context.Context, r io.Reader) ([]byte, error) {
-	// Acquire the concurrency slot BEFORE touching disk so the semaphore bounds
-	// the full download+extract operation (not just ffmpeg).
-	if err := acquireSem(ctx); err != nil {
-		return nil, err
-	}
-	defer releaseSem()
-
 	tmp, err := os.CreateTemp("", "carbonio-preview-video-*.bin")
 	if err != nil {
 		return nil, err

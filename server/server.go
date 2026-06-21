@@ -93,6 +93,7 @@ func (s *Server) Run() {
 		"addr", addr,
 		"render_concurrency", s.cfg.RenderConcurrency,
 		"pdf_workers", s.cfg.PDFWorkers,
+		"video_concurrency", s.cfg.VideoConcurrency,
 		"vips_concurrency", s.cfg.VIPSConcurrency,
 		"storages_timeout", s.cfg.ServiceTimeoutInSeconds,
 		"docs_timeout", s.cfg.ServiceDocsTimeout,
@@ -127,18 +128,26 @@ func (s *Server) Handler() http.Handler {
 }
 
 // buildMux assembles the public HTTP mux with all route groups.
-// All resource operations (image, health, pdf, document, video) are registered
-// under huma (code-first OpenAPI).
+// All resource operations (image, health, pdf, document, video-generate) are
+// registered under huma (code-first OpenAPI).
+//
+// sem is the shared render-concurrency semaphore (image/PDF/document). The
+// dedicated video-generate semaphore is built here from cfg.VideoConcurrency
+// (APPLICATION key video-concurrency, default runtime.NumCPU()) so a flood of
+// generate calls can never starve image previews, and vice-versa.
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
+
+	videoSem := make(chan struct{}, s.cfg.VideoConcurrency)
 
 	// Register all operations under huma.
 	api := newHumaAPI(mux)
 	RegisterOperations(api, Deps{
-		Cfg:   s.cfg,
-		Store: s.store,
-		Cache: s.cache,
-		Sem:   sem,
+		Cfg:      s.cfg,
+		Store:    s.store,
+		Cache:    s.cache,
+		Sem:      sem,
+		VideoSem: videoSem,
 	})
 
 	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).

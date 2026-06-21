@@ -21,6 +21,15 @@ components:
         - Size
         - Filename
       type: object
+    GenerateVideoOutputBody:
+      additionalProperties: false
+      properties:
+        preview_id:
+          description: Storage node id of the stored first-frame image (echoes target)
+          type: string
+      required:
+        - preview_id
+      type: object
     HealthDependency:
       additionalProperties: false
       properties:
@@ -1557,35 +1566,27 @@ paths:
       summary: Get PDF Thumbnail
       tags:
         - pdf
-  /preview/video/{id}/{version}/{area}/:
-    get:
-      operationId: getVideoPreview
+  /preview/video/generate/{id}/{version}/:
+    post:
+      operationId: generateVideoPreview
       parameters:
-        - description: UUID of the video
+        - description: UUID of the SOURCE video node
           in: path
           name: id
           required: true
           schema:
-            description: UUID of the video
+            description: UUID of the SOURCE video node
             format: uuid
             type: string
-        - description: Version (non-negative)
+        - description: Source version (non-negative)
           in: path
           name: version
           required: true
           schema:
-            description: Version (non-negative)
+            description: Source version (non-negative)
             format: int64
             minimum: 0
             type: integer
-        - description: Width x height in pixels
-          in: path
-          name: area
-          required: true
-          schema:
-            description: Width x height in pixels
-            pattern: ^[0-9]+x[0-9]+$
-            type: string
         - description: Service that owns the resource
           explode: false
           in: query
@@ -1597,69 +1598,28 @@ paths:
               - files
               - chats
             type: string
-        - description: Output quality
+        - description: Caller-minted UUID for the stored frame
           explode: false
           in: query
-          name: quality
+          name: target
+          required: true
           schema:
-            default: medium
-            description: Output quality
-            enum:
-              - lowest
-              - low
-              - medium
-              - high
-              - highest
+            description: Caller-minted UUID for the stored frame
+            format: uuid
             type: string
-        - description: Output image format
-          explode: false
-          in: query
-          name: output_format
-          schema:
-            default: jpeg
-            description: Output image format
-            enum:
-              - jpeg
-              - png
-              - gif
-            type: string
-        - description: Crop to fill (true) or scale to fit (false)
-          explode: false
-          in: query
-          name: crop
-          schema:
-            default: false
-            description: Crop to fill (true) or scale to fit (false)
-            type: boolean
-        - description: File owner ID
+        - description: File owner ID (PowerStore routing)
           in: header
           name: fileownerid
           schema:
-            description: File owner ID
+            description: File owner ID (PowerStore routing)
             type: string
       responses:
         "200":
           content:
-            image/gif:
+            application/json:
               schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/jpeg:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/png:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-          description: Successful Response — binary image data
-          headers:
-            Content-Type:
-              schema:
-                type: string
+                $ref: "#/components/schemas/GenerateVideoOutputBody"
+          description: OK
         "400":
           content:
             application/json:
@@ -1678,6 +1638,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Unprocessable Entity
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Too Many Requests
         "500":
           content:
             application/json:
@@ -1690,157 +1656,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Bad Gateway
-        "503":
+        "504":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
-          description: Service Unavailable
-      summary: Get Video Preview
-      tags:
-        - video
-  /preview/video/{id}/{version}/{area}/thumbnail/:
-    get:
-      operationId: getVideoThumbnail
-      parameters:
-        - description: UUID of the video
-          in: path
-          name: id
-          required: true
-          schema:
-            description: UUID of the video
-            format: uuid
-            type: string
-        - description: Version (non-negative)
-          in: path
-          name: version
-          required: true
-          schema:
-            description: Version (non-negative)
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Width x height in pixels
-          in: path
-          name: area
-          required: true
-          schema:
-            description: Width x height in pixels
-            pattern: ^[0-9]+x[0-9]+$
-            type: string
-        - description: Service that owns the resource
-          explode: false
-          in: query
-          name: service_type
-          required: true
-          schema:
-            description: Service that owns the resource
-            enum:
-              - files
-              - chats
-            type: string
-        - description: Output quality
-          explode: false
-          in: query
-          name: quality
-          schema:
-            default: medium
-            description: Output quality
-            enum:
-              - lowest
-              - low
-              - medium
-              - high
-              - highest
-            type: string
-        - description: Output image format
-          explode: false
-          in: query
-          name: output_format
-          schema:
-            default: jpeg
-            description: Output image format
-            enum:
-              - jpeg
-              - png
-              - gif
-            type: string
-        - description: Thumbnail border shape
-          explode: false
-          in: query
-          name: shape
-          schema:
-            default: rectangular
-            description: Thumbnail border shape
-            enum:
-              - rounded
-              - rectangular
-            type: string
-        - description: File owner ID
-          in: header
-          name: fileownerid
-          schema:
-            description: File owner ID
-            type: string
-      responses:
-        "200":
-          content:
-            image/gif:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/jpeg:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/png:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-          description: Successful Response — binary image data
-          headers:
-            Content-Type:
-              schema:
-                type: string
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Unprocessable Entity
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Internal Server Error
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Bad Gateway
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Service Unavailable
-      summary: Get Video Thumbnail
+          description: Gateway Timeout
+      summary: Generate (extract + JPEG-encode + store) a video first-frame preview
       tags:
         - video

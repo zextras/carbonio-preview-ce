@@ -29,6 +29,10 @@ func (s slotTestStore) RetrieveDataStreaming(_ context.Context, _ string, _ int,
 	panic("not used (image path uses RetrieveData)")
 }
 
+func (s slotTestStore) StoreData(_ context.Context, nodeID string, _ int, _, _ string, _ []byte) (string, error) {
+	return nodeID, nil
+}
+
 // buildImageMuxWithSem builds an image-only huma mux backed by a render slot
 // semaphore of the given capacity.
 func buildImageMuxWithSem(cfg *config.Config, store storage.Client, sem chan struct{}) *http.ServeMux {
