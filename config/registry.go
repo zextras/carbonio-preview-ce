@@ -248,29 +248,34 @@ func registerCEKeys() {
 			Description: "Maximum size (MiB) of the in-process rendered-output cache. 0 disables the cache.",
 		},
 		{
-			Key:       "upload-memory-threshold-mb",
-			Namespace: NamespaceApplication,
-			Default:   "32",
-			Description: "Memory budget (MiB) for gRPC upload receive buffering. " +
-				"Uploads exceeding this threshold spill to a temp file. " +
-				"Mirrors REST ParseMultipartForm memory budget. Default: 32.",
+			Key:          "render-concurrency",
+			Namespace:    NamespaceApplication,
+			Default:      "", // computed at runtime → runtime.NumCPU()
+			IfNotPresent: "Defaults to the number of CPUs",
+			Description:  "Maximum number of concurrent image-render operations. Defaults to the number of CPUs.",
 		},
 		{
-			Key:       "upload-max-mb",
-			Namespace: NamespaceApplication,
-			Default:   "0",
-			Description: "Hard cap (MiB) on total gRPC upload size. " +
-				"0 (default) means unlimited — matches REST behaviour. " +
-				"Set a positive value for an ops safety valve.",
+			Key:          "pdf-workers",
+			Namespace:    NamespaceApplication,
+			Default:      "", // computed at runtime → runtime.NumCPU()
+			IfNotPresent: "Defaults to the number of CPUs",
+			Description:  "Size of the PDFium subprocess worker pool. Defaults to the number of CPUs.",
+		},
+		{
+			Key:          "video-concurrency",
+			Namespace:    NamespaceApplication,
+			Default:      "", // computed at runtime → runtime.NumCPU()
+			IfNotPresent: "Defaults to the number of CPUs",
+			Description:  "Maximum number of concurrent video first-frame generate operations. Defaults to the number of CPUs.",
 		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly
 		// (a per-instance, framework-level knob equivalent to QUARKUS_LOG_LEVEL),
 		// outside the extensions networking/application config chain.
 		//
-		// NOTE: concurrency knobs are NOT registered here; they are controlled by
-		// PREVIEW_* environment variables (PREVIEW_RENDER_CONCURRENCY,
-		// PREVIEW_PDF_WORKERS, PREVIEW_VIPS_CONCURRENCY).
+		// NOTE: vips_concurrency is NOT registered here. It is a libvips
+		// internal-threads setting hardcoded to 1 as a plain code constant
+		// (config.vipsConcurrency) — not an operator knob, no env var, no KV path.
 		// Endpoint-path knobs are hardcoded constants.
 	}
 

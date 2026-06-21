@@ -17,6 +17,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strconv"
 )
 
@@ -56,15 +57,24 @@ type Config struct {
 	DocumentConversionConvertAPI      string
 
 	// RenderConcurrency is the maximum number of concurrent image-render operations.
-	// Controlled by PREVIEW_RENDER_CONCURRENCY env var (default: runtime.NumCPU()).
+	// Application-layer key "render-concurrency" (Consul KV carbonio-preview/render-concurrency
+	// / env APPLICATION_CONFIG_RENDER_CONCURRENCY). Defaults to runtime.NumCPU() when absent.
 	RenderConcurrency int
 
 	// PDFWorkers is the size of the PDFium subprocess worker pool.
-	// Controlled by PREVIEW_PDF_WORKERS env var (default: runtime.NumCPU()).
+	// Application-layer key "pdf-workers" (Consul KV carbonio-preview/pdf-workers
+	// / env APPLICATION_CONFIG_PDF_WORKERS). Defaults to runtime.NumCPU() when absent.
 	PDFWorkers int
 
-	// VIPSConcurrency is the libvips concurrency level.
-	// Controlled by PREVIEW_VIPS_CONCURRENCY env var (default: 1).
+	// VideoConcurrency is the maximum number of concurrent video first-frame
+	// generate operations. Application-layer key "video-concurrency" (Consul KV
+	// carbonio-preview/video-concurrency / env APPLICATION_CONFIG_VIDEO_CONCURRENCY).
+	// Defaults to runtime.NumCPU() when absent.
+	VideoConcurrency int
+
+	// VIPSConcurrency is the libvips internal-threads level. It is a hardcoded
+	// internal constant (= 1), not an operator knob — no registry key, no env var,
+	// no KV path.
 	VIPSConcurrency int
 
 	// CacheMaxBytes is the byte budget of the in-process rendered-output cache,
@@ -78,17 +88,6 @@ type Config struct {
 	DocumentConversionBaseAddress        string
 	DocumentConversionFullServiceAddress string
 	DocumentConversionFullConvertAddress string
-
-	// UploadMemoryThresholdBytes is the in-memory buffer budget for gRPC upload
-	// receive. Uploads larger than this spill to a temp file.
-	// Controlled by application config key "upload-memory-threshold-mb" (MiB → bytes).
-	// Default: 32 MiB (mirrors REST ParseMultipartForm budget).
-	UploadMemoryThresholdBytes int64
-
-	// UploadMaxBytes is an optional hard cap on total gRPC upload size.
-	// 0 means unlimited (default, matches REST behaviour).
-	// Controlled by application config key "upload-max-mb" (MiB → bytes).
-	UploadMaxBytes int64
 
 	// Derived feature flag
 	AreDocsEnabled bool
@@ -108,6 +107,12 @@ const (
 	documentConversionEndpoint   = "services/docs/editor"
 	documentConversionConvertAPI = "cool/convert-to"
 	imageMinimumResolution       = 80
+
+	// vipsConcurrency is the libvips internal-threads setting. It is a plain
+	// internal constant (=1), not an operator knob: no registry key, no env var,
+	// no KV path. libvips concurrency above 1 hurts throughput for the
+	// per-request render pattern (concurrency is bounded at the render semaphore).
+	vipsConcurrency = 1
 )
 
 // App is the package-level, process-wide configuration instance.
@@ -191,11 +196,12 @@ func Load() error {
 	var cacheMaxMB int
 	cacheMaxMB, parseErr = appNonNegativeInt(r, "cache-max-mb", parseErr)
 
-	var uploadMemThreshMB int
-	uploadMemThreshMB, parseErr = appPositiveInt(r, "upload-memory-threshold-mb", parseErr)
-
-	var uploadMaxMB int
-	uploadMaxMB, parseErr = appNonNegativeInt(r, "upload-max-mb", parseErr)
+	// Concurrency knobs (APPLICATION layer). Absent → 0 here → runtime.NumCPU()
+	// fallback below. A present-but-invalid value (non-integer or < 1) fails fast
+	// via appPositiveInt.
+	c.RenderConcurrency, parseErr = appPositiveInt(r, "render-concurrency", parseErr)
+	c.PDFWorkers, parseErr = appPositiveInt(r, "pdf-workers", parseErr)
+	c.VideoConcurrency, parseErr = appPositiveInt(r, "video-concurrency", parseErr)
 
 	if parseErr != nil {
 		return parseErr
@@ -203,12 +209,15 @@ func Load() error {
 
 	c.CacheMaxBytes = int64(cacheMaxMB) * 1024 * 1024
 
-	if uploadMemThreshMB > 0 {
-		c.UploadMemoryThresholdBytes = int64(uploadMemThreshMB) * 1024 * 1024
-	} else {
-		c.UploadMemoryThresholdBytes = 32 << 20 // 32 MiB default
+	if c.RenderConcurrency == 0 {
+		c.RenderConcurrency = runtime.NumCPU()
 	}
-	c.UploadMaxBytes = int64(uploadMaxMB) * 1024 * 1024 // 0 stays 0 (unlimited)
+	if c.PDFWorkers == 0 {
+		c.PDFWorkers = runtime.NumCPU()
+	}
+	if c.VideoConcurrency == 0 {
+		c.VideoConcurrency = runtime.NumCPU()
+	}
 
 	// ── Hardcoded endpoint constants (not operator-configurable) ──────────────
 	c.StorageDownloadAPI = storageDownloadAPI
@@ -217,14 +226,8 @@ func Load() error {
 	c.DocumentConversionConvertAPI = documentConversionConvertAPI
 	c.ImageMinimumResolution = imageMinimumResolution
 
-	// ── Per-instance env knobs (PREVIEW_* — outside the extensions chain) ─────
-	knobs, err := loadEnvKnobs()
-	if err != nil {
-		return err
-	}
-	c.RenderConcurrency = knobs.RenderConcurrency
-	c.PDFWorkers = knobs.PDFWorkers
-	c.VIPSConcurrency = knobs.VipsConcurrency
+	// ── libvips internal-threads (plain internal constant; not a knob) ────────
+	c.VIPSConcurrency = vipsConcurrency
 
 	// ── Log level (PREVIEW_LOG_LEVEL — outside the extensions chain) ─────────
 	// Read directly via os.Getenv; absent/empty → info.  Invalid → fail-fast.

@@ -129,27 +129,64 @@ func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 	}
 }
 
-// TestRenderConcurrencyEnvOverride verifies that PREVIEW_RENDER_CONCURRENCY is honoured.
-func TestRenderConcurrencyEnvOverride(t *testing.T) {
-	t.Setenv("PREVIEW_RENDER_CONCURRENCY", "3")
+// TestConfig_ConcurrencyFromApplicationEnv verifies that the three concurrency
+// knobs resolve from the APPLICATION_CONFIG_* env layer (the migrated chain).
+func TestConfig_ConcurrencyFromApplicationEnv(t *testing.T) {
+	t.Setenv("APPLICATION_CONFIG_RENDER_CONCURRENCY", "4")
+	t.Setenv("APPLICATION_CONFIG_PDF_WORKERS", "2")
+	t.Setenv("APPLICATION_CONFIG_VIDEO_CONCURRENCY", "3")
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.RenderConcurrency != 3 {
-		t.Errorf("RenderConcurrency = %d, want 3", App.RenderConcurrency)
+	if App.RenderConcurrency != 4 {
+		t.Errorf("RenderConcurrency = %d, want 4", App.RenderConcurrency)
+	}
+	if App.PDFWorkers != 2 {
+		t.Errorf("PDFWorkers = %d, want 2", App.PDFWorkers)
+	}
+	if App.VideoConcurrency != 3 {
+		t.Errorf("VideoConcurrency = %d, want 3", App.VideoConcurrency)
 	}
 }
 
-// TestPDFWorkersEnvOverride verifies that PREVIEW_PDF_WORKERS is honoured.
-func TestPDFWorkersEnvOverride(t *testing.T) {
-	t.Setenv("PREVIEW_PDF_WORKERS", "5")
+// TestConfig_ConcurrencyFromKV verifies that the three concurrency knobs resolve
+// from Consul KV (carbonio-preview/<key>).
+func TestConfig_ConcurrencyFromKV(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{
+		"render-concurrency": "6",
+		"pdf-workers":        "7",
+		"video-concurrency":  "8",
+	})
+	if err := loadWithConsul(t, srv); err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if App.RenderConcurrency != 6 {
+		t.Errorf("RenderConcurrency = %d, want 6", App.RenderConcurrency)
+	}
+	if App.PDFWorkers != 7 {
+		t.Errorf("PDFWorkers = %d, want 7", App.PDFWorkers)
+	}
+	if App.VideoConcurrency != 8 {
+		t.Errorf("VideoConcurrency = %d, want 8", App.VideoConcurrency)
+	}
+}
+
+// TestConfig_ConcurrencyDefaultsToNumCPU verifies that when no source provides a
+// value, all three concurrency knobs default to runtime.NumCPU().
+func TestConfig_ConcurrencyDefaultsToNumCPU(t *testing.T) {
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if App.PDFWorkers != 5 {
-		t.Errorf("PDFWorkers = %d, want 5", App.PDFWorkers)
+	if App.RenderConcurrency != runtime.NumCPU() {
+		t.Errorf("RenderConcurrency = %d, want runtime.NumCPU() = %d", App.RenderConcurrency, runtime.NumCPU())
+	}
+	if App.PDFWorkers != runtime.NumCPU() {
+		t.Errorf("PDFWorkers = %d, want runtime.NumCPU() = %d", App.PDFWorkers, runtime.NumCPU())
+	}
+	if App.VideoConcurrency != runtime.NumCPU() {
+		t.Errorf("VideoConcurrency = %d, want runtime.NumCPU() = %d", App.VideoConcurrency, runtime.NumCPU())
 	}
 }
 
@@ -440,17 +477,17 @@ func TestParseFailureBoolKey(t *testing.T) {
 	}
 }
 
-// TestParseFailurePDFWorkers verifies that a bad PREVIEW_PDF_WORKERS value is an error.
+// TestParseFailurePDFWorkers verifies that a bad pdf-workers KV value is an error
+// naming the key.
 func TestParseFailurePDFWorkers(t *testing.T) {
-	t.Setenv("PREVIEW_PDF_WORKERS", "banana")
-	srv := buildKVServer(t, nil)
+	srv := buildKVServer(t, map[string]string{"pdf-workers": "banana"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad PREVIEW_PDF_WORKERS value, got nil")
+		t.Fatal("expected error for bad pdf-workers value, got nil")
 	}
-	if !strings.Contains(err.Error(), "PREVIEW_PDF_WORKERS") {
-		t.Errorf("error %q should mention PREVIEW_PDF_WORKERS", err.Error())
+	if !strings.Contains(err.Error(), "pdf-workers") {
+		t.Errorf("error %q should mention key %q", err.Error(), "pdf-workers")
 	}
 }
 
@@ -478,31 +515,43 @@ func TestParseFailureZeroKVTimeout(t *testing.T) {
 	}
 }
 
-// TestParseFailureNegativeRenderConcurrency verifies that PREVIEW_RENDER_CONCURRENCY=-1 is rejected.
+// TestParseFailureNegativeRenderConcurrency verifies that render-concurrency=-1 is rejected.
 func TestParseFailureNegativeRenderConcurrency(t *testing.T) {
-	t.Setenv("PREVIEW_RENDER_CONCURRENCY", "-1")
-	srv := buildKVServer(t, nil)
+	srv := buildKVServer(t, map[string]string{"render-concurrency": "-1"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for PREVIEW_RENDER_CONCURRENCY=-1, got nil")
+		t.Fatal("expected error for render-concurrency=-1, got nil")
 	}
-	if !strings.Contains(err.Error(), "PREVIEW_RENDER_CONCURRENCY") {
-		t.Errorf("error %q should mention PREVIEW_RENDER_CONCURRENCY", err.Error())
+	if !strings.Contains(err.Error(), "render-concurrency") {
+		t.Errorf("error %q should mention key %q", err.Error(), "render-concurrency")
 	}
 }
 
-// TestParseFailureZeroPDFWorkers verifies that PREVIEW_PDF_WORKERS=0 is rejected.
+// TestParseFailureZeroPDFWorkers verifies that pdf-workers=0 is rejected
+// (appPositiveInt requires >= 1).
 func TestParseFailureZeroPDFWorkers(t *testing.T) {
-	t.Setenv("PREVIEW_PDF_WORKERS", "0")
-	srv := buildKVServer(t, nil)
+	srv := buildKVServer(t, map[string]string{"pdf-workers": "0"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for PREVIEW_PDF_WORKERS=0, got nil")
+		t.Fatal("expected error for pdf-workers=0, got nil")
 	}
-	if !strings.Contains(err.Error(), "PREVIEW_PDF_WORKERS") {
-		t.Errorf("error %q should mention PREVIEW_PDF_WORKERS", err.Error())
+	if !strings.Contains(err.Error(), "pdf-workers") {
+		t.Errorf("error %q should mention key %q", err.Error(), "pdf-workers")
+	}
+}
+
+// TestParseFailureZeroVideoConcurrency verifies that video-concurrency=0 is rejected.
+func TestParseFailureZeroVideoConcurrency(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"video-concurrency": "0"})
+	pointConsulAt(t, srv)
+	err := Load()
+	if err == nil {
+		t.Fatal("expected error for video-concurrency=0, got nil")
+	}
+	if !strings.Contains(err.Error(), "video-concurrency") {
+		t.Errorf("error %q should mention key %q", err.Error(), "video-concurrency")
 	}
 }
 

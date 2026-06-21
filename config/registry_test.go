@@ -55,6 +55,9 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 		"enable-document-thumbnail",
 		"timeout-in-seconds",
 		"docs-timeout-in-seconds",
+		"render-concurrency",
+		"pdf-workers",
+		"video-concurrency",
 	}
 
 	idx := make(map[string]KeyEntry, len(keys))
@@ -74,6 +77,9 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 		"enable-document-thumbnail": false,
 		"timeout-in-seconds":        true,
 		"docs-timeout-in-seconds":   true,
+		"render-concurrency":        false,
+		"pdf-workers":               false,
+		"video-concurrency":         false,
 	}
 	for k, wantHidden := range hiddenExpected {
 		e, ok := idx[k]
@@ -127,6 +133,9 @@ func TestKeyDefaults(t *testing.T) {
 		{"enable-document-thumbnail", "false", ""},
 		{"timeout-in-seconds", "30", ""},
 		{"docs-timeout-in-seconds", "15", ""},
+		{"render-concurrency", "", "Defaults to the number of CPUs"},
+		{"pdf-workers", "", "Defaults to the number of CPUs"},
+		{"video-concurrency", "", "Defaults to the number of CPUs"},
 	}
 	for _, tc := range appChecks {
 		e, ok := appIdx[tc.key]
@@ -267,13 +276,15 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 
 	// Spot-check: known application keys that must appear in alphabetical order.
-	// Order: cache-max-mb < docs-timeout-in-seconds < enable-document-preview < enable-document-thumbnail < timeout-in-seconds
 	appExpected := []string{
 		"cache-max-mb",
 		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
+		"pdf-workers",
+		"render-concurrency",
 		"timeout-in-seconds",
+		"video-concurrency",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {
