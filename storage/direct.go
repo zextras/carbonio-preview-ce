@@ -164,6 +164,19 @@ func (c *DirectClient) StoreData(
 	return "", ErrStoreNotSupported
 }
 
+// Delete is not supported in CE: cleanup after a failed StoreData runs only on
+// the Advanced edition (PowerStoreClient). Returning an explicit error keeps
+// the interface total.
+func (c *DirectClient) Delete(
+	_ context.Context,
+	_ string, // nodeID
+	_ int, // version
+	_ string, // serviceType
+	_ string, // ownerID
+) error {
+	return ErrDeleteNotSupported
+}
+
 // buildURL assembles the full download URL with query parameters.
 func buildURL(base, fileID string, version int, serviceType string) (string, error) {
 	u, err := url.Parse(base)

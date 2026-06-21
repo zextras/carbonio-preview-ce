@@ -20,6 +20,11 @@ type Blob = []byte
 // (the CE DirectClient). Generation runs only on the Advanced edition.
 var ErrStoreNotSupported = errors.New("storage: write not supported by this client")
 
+// ErrDeleteNotSupported is returned by storage clients that cannot delete
+// nodes (the CE DirectClient). Deletion is only used as a best-effort
+// cleanup after a failed StoreData, which only occurs on the Advanced edition.
+var ErrDeleteNotSupported = errors.New("storage: delete not supported by this client")
+
 // Client is the minimal interface the preview service requires from
 // the storage layer.
 type Client interface {
@@ -59,4 +64,13 @@ type Client interface {
 	// CE's DirectClient does not support writes and returns ErrStoreNotSupported;
 	// only the Advanced PowerStoreClient implements real upload.
 	StoreData(ctx context.Context, nodeID string, version int, serviceType string, ownerID string, data []byte) (string, error)
+
+	// Delete removes the storage node nodeID (version) from the given serviceType
+	// namespace on the server that owns ownerID. It is intended for best-effort
+	// cleanup after a failed StoreData (orphan prevention); errors should be
+	// logged and swallowed by the caller.
+	//
+	// CE's DirectClient does not support deletion and returns ErrDeleteNotSupported;
+	// only the Advanced PowerStoreClient implements the actual DELETE call.
+	Delete(ctx context.Context, nodeID string, version int, serviceType string, ownerID string) error
 }

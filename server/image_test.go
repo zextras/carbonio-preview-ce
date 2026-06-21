@@ -58,6 +58,10 @@ func (m *mockStore) StoreData(_ context.Context, nodeID string, _ int, _, _ stri
 	return nodeID, nil
 }
 
+func (m *mockStore) Delete(_ context.Context, _ string, _ int, _, _ string) error {
+	return nil
+}
+
 // ---- render stubs ----
 
 // stubImageThumbnail replaces imageThumbnailFunc for the duration of a test.

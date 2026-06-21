@@ -1311,7 +1311,21 @@ func generateFirstFrameJPEG(
 		return "", err
 	}
 
-	return store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg.Bytes())
+	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg.Bytes())
+	if err != nil {
+		// Best-effort cleanup: fire a DELETE for the partially-written node so it
+		// does not linger as an orphan in storage. Use a detached context with a
+		// short timeout — the request ctx is about to be cancelled when the handler
+		// returns and must NOT be used here (it would kill the delete immediately).
+		// Swallow any delete error; this is defence-in-depth only.
+		go func() {
+			dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = store.Delete(dctx, targetNodeID, version, serviceType, ownerID)
+		}()
+		return "", err
+	}
+	return storedID, nil
 }
 
 // mapStorageOrExtractError maps a generate-pipeline error to the correct HTTP

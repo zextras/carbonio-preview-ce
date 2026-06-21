@@ -46,6 +46,9 @@ func (f *genFakeStore) StoreData(_ context.Context, nodeID string, _ int, _ stri
 	f.storedID = nodeID
 	return nodeID, nil
 }
+func (f *genFakeStore) Delete(_ context.Context, _ string, _ int, _ string, _ string) error {
+	return nil
+}
 
 // buildGenerateHumaMux creates a huma-routed mux for the generate operation.
 func buildGenerateHumaMux(cfg *config.Config, store storage.Client, c *cache.Cache, vsem chan struct{}) *http.ServeMux {

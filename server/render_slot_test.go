@@ -33,6 +33,10 @@ func (s slotTestStore) StoreData(_ context.Context, nodeID string, _ int, _, _ s
 	return nodeID, nil
 }
 
+func (s slotTestStore) Delete(_ context.Context, _ string, _ int, _, _ string) error {
+	return nil
+}
+
 // buildImageMuxWithSem builds an image-only huma mux backed by a render slot
 // semaphore of the given capacity.
 func buildImageMuxWithSem(cfg *config.Config, store storage.Client, sem chan struct{}) *http.ServeMux {
