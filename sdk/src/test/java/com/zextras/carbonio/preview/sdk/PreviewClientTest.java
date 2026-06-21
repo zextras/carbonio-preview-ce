@@ -390,4 +390,53 @@ class PreviewClientTest {
     Query q = new QueryBuilder().area("100x100").serviceType("files").build();
     assertThrows(IllegalArgumentException.class, () -> client.getPreviewOfImage(q));
   }
+
+  // ── FileOwnerId header propagation ────────────────────────────────────────
+
+  @Test
+  void getThumbnailOfImage_withOwnerId_sendsFileOwnerIdHeader() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/image/owner-file-uuid/1/50x50/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("owner-file-uuid")
+        .version(1)
+        .area("50x50")
+        .serviceType("chats")
+        .ownerId("owner-123")
+        .build();
+
+    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+
+    verify(getRequestedFor(urlPathEqualTo("/preview/image/owner-file-uuid/1/50x50/thumbnail/"))
+        .withHeader("FileOwnerId", equalTo("owner-123")));
+  }
+
+  @Test
+  void getThumbnailOfImage_withoutOwnerId_doesNotSendFileOwnerIdHeader() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/image/no-owner-uuid/1/50x50/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("no-owner-uuid")
+        .version(1)
+        .area("50x50")
+        .serviceType("chats")
+        .build();
+
+    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+
+    verify(getRequestedFor(urlPathEqualTo("/preview/image/no-owner-uuid/1/50x50/thumbnail/"))
+        .withoutHeader("FileOwnerId"));
+  }
 }

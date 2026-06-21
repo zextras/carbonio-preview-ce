@@ -14,6 +14,7 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 /**
  * Thin REST client for the Carbonio Preview CE service.
@@ -44,16 +45,39 @@ public final class PreviewClient implements Closeable {
   private final HttpClient http;
 
   /**
-   * Creates a client connected to {@code baseUrl}.
+   * Per-request timeout applied ONLY to {@link #generateVideoPreview(Query, String)}.
+   * {@code null} means no explicit timeout (the default for the view-time / image client built
+   * via {@link #atURL(String)}). The generate-capable client built via
+   * {@link #atURL(String, Duration)} carries a (hardcoded by the caller) ceiling such as
+   * {@code Duration.ofMinutes(15)} so a single generate call cannot hang forever.
+   */
+  private final Duration requestTimeout;
+
+  /**
+   * Creates a client connected to {@code baseUrl} with no per-request timeout.
    *
    * @param baseUrl base URL of the service, e.g. {@code "http://localhost:20003"}.
    *                Must NOT have a trailing slash.
    * @param http    the {@link HttpClient} to use
    */
   public PreviewClient(String baseUrl, HttpClient http) {
+    this(baseUrl, http, null);
+  }
+
+  /**
+   * Creates a client connected to {@code baseUrl} with an optional per-request timeout that is
+   * applied to {@link #generateVideoPreview(Query, String)}.
+   *
+   * @param baseUrl        base URL of the service, e.g. {@code "http://localhost:20003"}.
+   *                       Must NOT have a trailing slash.
+   * @param http           the {@link HttpClient} to use
+   * @param requestTimeout per-request timeout for the generate call, or {@code null} for none
+   */
+  public PreviewClient(String baseUrl, HttpClient http, Duration requestTimeout) {
     // Normalise: strip trailing slash
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     this.http = http;
+    this.requestTimeout = requestTimeout;
   }
 
   /**
@@ -70,6 +94,23 @@ public final class PreviewClient implements Closeable {
         HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
   }
 
+  /**
+   * Creates a generate-capable client backed by a default HTTP/1.1 {@link HttpClient}, applying
+   * {@code requestTimeout} as the per-request timeout for {@link #generateVideoPreview(Query, String)}.
+   *
+   * <p>WSC builds this variant with a hardcoded {@code Duration.ofMinutes(15)} so a generate call
+   * (which preview normally answers within its own ~30s internal limit) cannot hang indefinitely
+   * under load/latency. The timeout does NOT apply to the GET download / multipart POST methods.
+   *
+   * @param baseUrl        base URL, e.g. {@code "http://localhost:20003"}
+   * @param requestTimeout per-request timeout applied to the generate call (never {@code null} here)
+   */
+  public static PreviewClient atURL(String baseUrl, Duration requestTimeout) {
+    return new PreviewClient(baseUrl,
+        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(),
+        requestTimeout);
+  }
+
   // -------------------------------------------------------------------------
   // GET downloads
   // -------------------------------------------------------------------------
@@ -81,7 +122,7 @@ public final class PreviewClient implements Closeable {
         + "/" + query.getVersion()
         + "/" + enc(query.getArea()) + "/"
         + buildImageQueryString(query, false);
-    return doGet(url);
+    return doGet(query, url);
   }
 
   public PreviewResponse getThumbnailOfImage(Query query) {
@@ -91,7 +132,7 @@ public final class PreviewClient implements Closeable {
         + "/" + query.getVersion()
         + "/" + enc(query.getArea()) + "/thumbnail/"
         + buildImageThumbnailQueryString(query);
-    return doGet(url);
+    return doGet(query, url);
   }
 
   public PreviewResponse getPreviewOfPdf(Query query) {
@@ -100,7 +141,7 @@ public final class PreviewClient implements Closeable {
         + "/preview/pdf/" + enc(query.getFileId())
         + "/" + query.getVersion() + "/"
         + buildPdfQueryString(query);
-    return doGet(url);
+    return doGet(query, url);
   }
 
   public PreviewResponse getThumbnailOfPdf(Query query) {
@@ -110,7 +151,7 @@ public final class PreviewClient implements Closeable {
         + "/" + query.getVersion()
         + "/" + enc(query.getArea()) + "/thumbnail/"
         + buildImageThumbnailQueryString(query);
-    return doGet(url);
+    return doGet(query, url);
   }
 
   public PreviewResponse getPreviewOfDocument(Query query) {
@@ -119,7 +160,7 @@ public final class PreviewClient implements Closeable {
         + "/preview/document/" + enc(query.getFileId())
         + "/" + query.getVersion() + "/"
         + buildDocumentQueryString(query);
-    return doGet(url);
+    return doGet(query, url);
   }
 
   public PreviewResponse getThumbnailOfDocument(Query query) {
@@ -129,29 +170,70 @@ public final class PreviewClient implements Closeable {
         + "/" + query.getVersion()
         + "/" + enc(query.getArea()) + "/thumbnail/"
         + buildDocumentThumbnailQueryString(query);
-    return doGet(url);
+    return doGet(query, url);
   }
 
-  /** Get video preview (first-frame image) — new endpoint, no gRPC equivalent. */
-  public PreviewResponse getPreviewOfVideo(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/"
-        + buildVideoQueryString(query, false);
-    return doGet(url);
-  }
+  // -------------------------------------------------------------------------
+  // Video generation (server-side first-frame extract + store)
+  // -------------------------------------------------------------------------
 
-  /** Get video thumbnail — new endpoint, no gRPC equivalent. */
-  public PreviewResponse getThumbnailOfVideo(Query query) {
+  /**
+   * Triggers server-side generation of a video's first-frame preview. The server streams the
+   * source video from storage, extracts the first frame, JPEG-encodes it (quality 90, full
+   * resolution), and stores it at the caller-supplied {@code targetNodeId}, echoing that id back.
+   *
+   * <p>Synchronous from the caller's view: it returns only once the frame has been stored. The
+   * server caps generation on a DEDICATED video semaphore and returns HTTP 429 (try-acquire,
+   * no waiting) when full; that surfaces as a {@link PreviewException} with
+   * {@code getHttpStatus() == 429}. Callers MUST treat 429 as transient backpressure — same as
+   * 503 (preview down), 504 (deadline) and other 5xx — leaving the work pending and retrying at
+   * the next trigger or sweep. A 422 means ffmpeg cannot decode the source (e.g. AV1 / corrupt)
+   * and is terminal.
+   *
+   * <p>HTTP contract (must match the CE/Advanced generate endpoint exactly):
+   * {@code POST /preview/video/generate/{fileId}/{version}/?service_type=<chats|files>&target=<targetNodeId>}
+   * with header {@code FileOwnerId: <ownerId>}. Response 200 body
+   * {@code {"preview_id":"<targetNodeId>"}}.
+   *
+   * @param query        must carry fileId (source node), version, serviceType and ownerId.
+   * @param targetNodeId the UUID (minted by the caller / WSC) under which the frame is stored.
+   * @return the storage node id of the stored first-frame image (equal to {@code targetNodeId}).
+   * @throws PreviewException with {@link PreviewException#getHttpStatus()} carrying the server
+   *                          status on any non-200 response (429 = busy/transient).
+   */
+  public String generateVideoPreview(Query query, String targetNodeId) {
     requireFileId(query);
     String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/thumbnail/"
-        + buildVideoQueryString(query, true);
-    return doGet(url);
+        + "/preview/video/generate/" + enc(query.getFileId())
+        + "/" + query.getVersion() + "/"
+        + "?service_type=" + enc(query.getServiceType())
+        + "&target=" + enc(targetNodeId);
+
+    HttpRequest.Builder b = HttpRequest.newBuilder()
+        .uri(URI.create(url))
+        .header("Content-Type", "application/json")
+        .POST(BodyPublishers.noBody());
+    if (requestTimeout != null) {
+      b.timeout(requestTimeout);
+    }
+    applyOwner(b, query);
+
+    HttpResponse<String> response;
+    try {
+      response = http.send(b.build(), BodyHandlers.ofString());
+    } catch (IOException e) {
+      throw new PreviewException(0, "I/O error sending generate request to " + url, e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new PreviewException(0, "Generate request interrupted", e);
+    }
+
+    int status = response.statusCode();
+    if (status != 200) {
+      throw new PreviewException(status,
+          "Server returned HTTP " + status + " for " + url);
+    }
+    return parsePreviewId(response.body());
   }
 
   // -------------------------------------------------------------------------
@@ -161,35 +243,35 @@ public final class PreviewClient implements Closeable {
   public PreviewResponse postPreviewOfImage(InputStream content, Query query) {
     String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/"
         + buildImageQueryString(query, false);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   public PreviewResponse postThumbnailOfImage(InputStream content, Query query) {
     String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/thumbnail/"
         + buildImageThumbnailQueryString(query);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   public PreviewResponse postPreviewOfPdf(InputStream content, Query query) {
     String url = baseUrl + "/preview/pdf/" + buildPdfUploadQueryString(query);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   public PreviewResponse postThumbnailOfPdf(InputStream content, Query query) {
     String url = baseUrl + "/preview/pdf/" + enc(query.getArea()) + "/thumbnail/"
         + buildImageThumbnailQueryString(query);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   public PreviewResponse postPreviewOfDocument(InputStream content, Query query) {
     String url = baseUrl + "/preview/document/" + buildDocumentUploadQueryString(query);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   public PreviewResponse postThumbnailOfDocument(InputStream content, Query query) {
     String url = baseUrl + "/preview/document/" + enc(query.getArea()) + "/thumbnail/"
         + buildDocumentThumbnailQueryString(query);
-    return doPost(url, content);
+    return doPost(query, url, content);
   }
 
   // -------------------------------------------------------------------------
@@ -237,13 +319,16 @@ public final class PreviewClient implements Closeable {
    * <p>The response body is NOT read eagerly — it is streamed to the caller via
    * {@link BodyHandlers#ofInputStream()}. The caller must close the returned
    * {@link PreviewResponse} to release the connection.
+   *
+   * <p>If {@code query} carries a non-empty {@code ownerId}, the {@code FileOwnerId} HTTP header
+   * is added to the request so that PowerStore-based infra can route to the correct storage node.
    */
-  private PreviewResponse doGet(String url) {
-    HttpRequest request = HttpRequest.newBuilder()
+  private PreviewResponse doGet(Query query, String url) {
+    HttpRequest.Builder b = HttpRequest.newBuilder()
         .uri(URI.create(url))
-        .GET()
-        .build();
-    return execute(request);
+        .GET();
+    applyOwner(b, query);
+    return execute(b.build());
   }
 
   /**
@@ -260,8 +345,11 @@ public final class PreviewClient implements Closeable {
    * <p>NOTE: {@code java.net.http.HttpClient} with {@code ofInputStream()} cannot know the
    * content-length in advance, so the request is sent chunked or with a large-enough buffer
    * depending on the JVM. The preview server accepts this without issue.
+   *
+   * <p>If {@code query} carries a non-empty {@code ownerId}, the {@code FileOwnerId} HTTP header
+   * is added to the request so that PowerStore-based infra can route to the correct storage node.
    */
-  private PreviewResponse doPost(String url, InputStream content) {
+  private PreviewResponse doPost(Query query, String url, InputStream content) {
     byte[] preamble = (
         "--" + MULTIPART_BOUNDARY + "\r\n"
         + "Content-Disposition: form-data; name=\"file\"; filename=\"file\"\r\n"
@@ -275,12 +363,22 @@ public final class PreviewClient implements Closeable {
 
     InputStream multipartBody = new SequencedInputStream(preamble, content, epilogue);
 
-    HttpRequest request = HttpRequest.newBuilder()
+    HttpRequest.Builder b = HttpRequest.newBuilder()
         .uri(URI.create(url))
         .header("Content-Type", "multipart/form-data; boundary=" + MULTIPART_BOUNDARY)
-        .POST(BodyPublishers.ofInputStream(() -> multipartBody))
-        .build();
-    return execute(request);
+        .POST(BodyPublishers.ofInputStream(() -> multipartBody));
+    applyOwner(b, query);
+    return execute(b.build());
+  }
+
+  /**
+   * Adds the {@code FileOwnerId} header to the request builder when the query carries a
+   * non-null, non-empty owner ID. The preview server uses this header for PowerStore storage
+   * routing; it is ignored by legacy storage nodes that do not require it.
+   */
+  private static void applyOwner(HttpRequest.Builder b, Query query) {
+    String owner = query.getOwnerId();
+    if (owner != null && !owner.isEmpty()) b.header("FileOwnerId", owner);
   }
 
   private PreviewResponse execute(HttpRequest request) {
@@ -377,19 +475,6 @@ public final class PreviewClient implements Closeable {
     return sb.toString();
   }
 
-  private String buildVideoQueryString(Query q, boolean thumbnailMode) {
-    StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    if (thumbnailMode) {
-      appendOptional(sb, "shape", q.getShape());
-    } else {
-      appendOptional(sb, "crop", q.isCrop() ? "true" : null);
-    }
-    appendOptional(sb, "quality", q.getQuality());
-    appendOptional(sb, "output_format", q.getOutputFormat());
-    return sb.toString();
-  }
-
   private static void appendRequired(StringBuilder sb, String key, String value) {
     if (value == null || value.isEmpty()) return;
     // sb starts with "?" so always use "&" if there is already a param
@@ -412,6 +497,33 @@ public final class PreviewClient implements Closeable {
     if (query.getFileId() == null || query.getFileId().isEmpty()) {
       throw new IllegalArgumentException("fileId is required for GET requests");
     }
+  }
+
+  /**
+   * Extracts the {@code preview_id} field from the generate endpoint's JSON response body
+   * ({@code {"preview_id":"<id>"}}). Uses a minimal dependency-free scan to avoid coupling the
+   * generate path to the Jackson runtime and to keep this wrapper byte-identical to the CE SDK.
+   *
+   * @throws PreviewException (status 0) when the field is absent or the body is malformed.
+   */
+  private static String parsePreviewId(String json) {
+    if (json != null) {
+      int key = json.indexOf("\"preview_id\"");
+      if (key >= 0) {
+        int colon = json.indexOf(':', key + "\"preview_id\"".length());
+        if (colon >= 0) {
+          int firstQuote = json.indexOf('"', colon + 1);
+          if (firstQuote >= 0) {
+            int secondQuote = json.indexOf('"', firstQuote + 1);
+            if (secondQuote > firstQuote) {
+              return json.substring(firstQuote + 1, secondQuote);
+            }
+          }
+        }
+      }
+    }
+    throw new PreviewException(0,
+        "Generate response missing \"preview_id\" field: " + json);
   }
 
   // -------------------------------------------------------------------------
