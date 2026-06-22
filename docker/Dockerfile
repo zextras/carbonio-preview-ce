@@ -68,6 +68,7 @@ COPY render/ ./render/
 COPY server/ ./server/
 COPY storage/ ./storage/
 COPY video/  ./video/
+COPY docs/   ./docs/
 
 # Build the Go binary.
 # CGO_LDFLAGS rpath: at runtime the binary looks for libpdfium.so in
