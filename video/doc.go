@@ -9,13 +9,14 @@
 // phone/screen-recording layout) cannot be decoded from a non-seekable pipe.
 package video
 
-// Tunables. main() may override these from config after config.Load(),
-// mirroring render.ImageMinRes.
 var (
-	// FFmpegPath is the ffmpeg executable. Default mirrors the Carbonio
-	// convention used by carbonio-videoserver / carbonio-videorecorder: the
-	// Zextras-published "carbonio-ffmpeg" package installs the binary at
-	// /opt/zextras/common/bin/ffmpeg. Overridable from config in main().
+	// FFmpegPath is the ffmpeg executable. It is a fixed packaging invariant,
+	// NOT a config key: the Zextras-published "carbonio-ffmpeg" package always
+	// installs the binary at /opt/zextras/common/bin/ffmpeg, mirroring the
+	// convention used by carbonio-videoserver / carbonio-videorecorder. It is
+	// not exposed as a networking- or application-config key on purpose — a
+	// path to a vendored binary fits neither category. If packaging ever moves
+	// the binary, change this constant (and the carbonio-ffmpeg dependency).
 	//
 	// Concurrency is bounded by the caller (the generate handler's dedicated
 	// video-semaphore middleware), not here — see ExtractFirstFramePNG.
