@@ -65,7 +65,9 @@ func RegisterStubs(api huma.API) {
 
 		GetHealthLive:  func(_ context.Context, _ *struct{}) (*HealthLiveOutput, error) { return &HealthLiveOutput{}, nil },
 		GetHealthReady: func(_ context.Context, _ *struct{}) (*HealthReadyOutput, error) { return &HealthReadyOutput{}, nil },
-		GetHealth:      func(_ context.Context, _ *struct{}) (*HealthFullOutput, error) { return &HealthFullOutput{Body: &HealthResponse{Ready: true}}, nil },
+		GetHealth: func(_ context.Context, _ *struct{}) (*HealthFullOutput, error) {
+			return &HealthFullOutput{Body: &HealthResponse{Ready: true}}, nil
+		},
 
 		GetPDFPreview:    func(_ context.Context, _ *PDFGetPreviewInput) (*BinOut, error) { return nil, nil },
 		GetPDFThumbnail:  func(_ context.Context, _ *PDFGetThumbnailInput) (*BinOut, error) { return nil, nil },
