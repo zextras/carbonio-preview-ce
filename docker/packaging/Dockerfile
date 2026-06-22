@@ -9,11 +9,13 @@ COPY ../../. .
 
 RUN mkdir -p staging && \
     cp -r package staging/ && \
+    cp -r cache staging/ && \
     cp -r cmd staging/ && \
     cp -r config staging/ && \
     cp -r render staging/ && \
     cp -r server staging/ && \
     cp -r storage staging/ && \
+    cp -r video staging/ && \
     cp go.mod staging/ && \
     cp go.sum staging/ && \
     { [ -f README.md ] && cp README.md staging/ || true; }
