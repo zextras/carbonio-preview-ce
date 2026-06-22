@@ -13,7 +13,7 @@ import (
 
 // newTestClient creates a DirectClient pointing at the given test server URL.
 func newTestClient(serverURL string) *DirectClient {
-	return NewDirectClient(serverURL, "download", 5*time.Second)
+	return NewDirectClient(serverURL, "download", "upload", "delete", 5*time.Second)
 }
 
 // TestRetrieveData_HappyPath verifies that a 200 response returns the body
@@ -143,7 +143,7 @@ func TestRetrieveData_CtxTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := client.RetrieveData(ctx, "some-id", 1, "files", "")
@@ -314,7 +314,7 @@ func TestRetrieveDataStreaming_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
 	rc, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
 	if err != nil {
 		t.Fatalf("RetrieveDataStreaming: %v", err)
@@ -331,7 +331,7 @@ func TestRetrieveDataStreaming_404(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
-	client := NewDirectClient(srv.URL, "download", 5*time.Second)
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
 	_, err := client.RetrieveDataStreaming(context.Background(), "x", 1, "files", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
@@ -362,12 +362,58 @@ func TestRetrieveData_2xxVariants(t *testing.T) {
 	}
 }
 
-// TestDirectClient_StoreData_NotSupported verifies that the CE DirectClient
-// rejects writes: generation is Advanced-only.
-func TestDirectClient_StoreData_NotSupported(t *testing.T) {
-	c := NewDirectClient("http://127.0.0.1:20000", "download", 0)
-	_, err := c.StoreData(context.Background(), "11111111-1111-1111-1111-111111111111", 0, "chats", "owner", []byte("jpg"))
-	if !errors.Is(err, ErrStoreNotSupported) {
-		t.Fatalf("expected ErrStoreNotSupported, got %v", err)
+// TestDirectClient_StoreData_HappyPath verifies that the CE DirectClient
+// uploads data via PUT multipart and returns the caller-supplied nodeID.
+func TestDirectClient_StoreData_HappyPath(t *testing.T) {
+	const nodeID = "11111111-1111-1111-1111-111111111111"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT, got %s", r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if q := r.URL.Query().Get("node"); q != nodeID {
+			t.Errorf("node param: got %q, want %q", q, nodeID)
+		}
+		if q := r.URL.Query().Get("version"); q != "0" {
+			t.Errorf("version param: got %q, want %q", q, "0")
+		}
+		if q := r.URL.Query().Get("type"); q != "chats" {
+			t.Errorf("type param: got %q, want %q", q, "chats")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
+	got, err := c.StoreData(context.Background(), nodeID, 0, "chats", "owner", []byte("jpg"))
+	if err != nil {
+		t.Fatalf("StoreData error: %v", err)
+	}
+	if got != nodeID {
+		t.Errorf("returned nodeID: got %q, want %q", got, nodeID)
+	}
+}
+
+// TestDirectClient_Delete_HappyPath verifies that the CE DirectClient
+// sends DELETE and treats 200 as success.
+func TestDirectClient_Delete_HappyPath(t *testing.T) {
+	const nodeID = "22222222-2222-2222-2222-222222222222"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("expected DELETE, got %s", r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if q := r.URL.Query().Get("node"); q != nodeID {
+			t.Errorf("node param: got %q, want %q", q, nodeID)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
+	if err := c.Delete(context.Background(), nodeID, 1, "files", ""); err != nil {
+		t.Fatalf("Delete error: %v", err)
 	}
 }

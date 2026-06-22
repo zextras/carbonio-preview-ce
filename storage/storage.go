@@ -16,13 +16,14 @@ import (
 // Blob is an alias for raw file content retrieved from storage.
 type Blob = []byte
 
-// ErrStoreNotSupported is returned by storage clients that cannot write
-// (the CE DirectClient). Generation runs only on the Advanced edition.
+// ErrStoreNotSupported may be returned by storage client implementations that
+// do not support writes. Neither DirectClient nor PowerStoreClient returns this
+// error; it is retained as a sentinel for future custom implementations.
 var ErrStoreNotSupported = errors.New("storage: write not supported by this client")
 
-// ErrDeleteNotSupported is returned by storage clients that cannot delete
-// nodes (the CE DirectClient). Deletion is only used as a best-effort
-// cleanup after a failed StoreData, which only occurs on the Advanced edition.
+// ErrDeleteNotSupported may be returned by storage client implementations that
+// do not support deletion. Neither DirectClient nor PowerStoreClient returns
+// this error; it is retained as a sentinel for future custom implementations.
 var ErrDeleteNotSupported = errors.New("storage: delete not supported by this client")
 
 // Client is the minimal interface the preview service requires from
@@ -61,8 +62,8 @@ type Client interface {
 	// CALLER supplies nodeID (a plain UUID minted by WSC — storage does not mint
 	// it). Returns the stored node id (echoes nodeID) on success.
 	//
-	// CE's DirectClient does not support writes and returns ErrStoreNotSupported;
-	// only the Advanced PowerStoreClient implements real upload.
+	// CE's DirectClient uploads via PUT multipart to carbonio-storages.
+	// Advanced's PowerStoreClient routes by ownerID to the appropriate PowerStore server.
 	StoreData(ctx context.Context, nodeID string, version int, serviceType string, ownerID string, data []byte) (string, error)
 
 	// Delete removes the storage node nodeID (version) from the given serviceType
@@ -70,7 +71,7 @@ type Client interface {
 	// cleanup after a failed StoreData (orphan prevention); errors should be
 	// logged and swallowed by the caller.
 	//
-	// CE's DirectClient does not support deletion and returns ErrDeleteNotSupported;
-	// only the Advanced PowerStoreClient implements the actual DELETE call.
+	// Both CE DirectClient and Advanced PowerStoreClient implement this.
+	// 2xx responses (including soft-delete 200) are treated as success.
 	Delete(ctx context.Context, nodeID string, version int, serviceType string, ownerID string) error
 }

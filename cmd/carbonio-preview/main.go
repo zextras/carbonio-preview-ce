@@ -72,6 +72,8 @@ func main() {
 	storageClient := storage.NewDirectClient(
 		cfg.StorageFullAddress,
 		cfg.StorageDownloadAPI,
+		"upload",
+		"delete",
 		storageTimeout,
 	)
 

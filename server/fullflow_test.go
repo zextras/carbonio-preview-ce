@@ -67,7 +67,7 @@ func buildFullFlowServer(
 	cfg.StorageFullAddress = storages.BaseURL()
 	cfg.DocumentConversionFullConvertAddress = collabora.ConvertAddress()
 
-	store := storage.NewDirectClient(cfg.StorageFullAddress, cfg.StorageDownloadAPI, 10*time.Second)
+	store := storage.NewDirectClient(cfg.StorageFullAddress, cfg.StorageDownloadAPI, "upload", "delete", 10*time.Second)
 
 	s := New(cfg, store, c)
 	// Use the public Handler(): same handler chain Run serves (render
