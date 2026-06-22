@@ -1,0 +1,43 @@
+version = 1
+SPDX-PackageName = "carbonio-preview-ce"
+SPDX-PackageSupplier = "Zextras <packages@zextras.com>"
+SPDX-PackageDownloadLocation = "https://github.com/Zextras/carbonio-preview-ce"
+
+[[annotations]]
+path = ".github/CODEOWNERS"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2023 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "COPYING"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2022 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = "CHANGELOG.md"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2022 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = [
+  ".releaserc.json",
+  ".github/renovate.json",
+  "docker/minimal/composed-ui/nginx-unified.conf",
+  "docker/minimal/composed-ui/nginx.carbonio.admin.conf",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2022 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = [
+  "docs/openapi.yaml",
+  "docs/openapi.json",
+  "server/static/openapi.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"

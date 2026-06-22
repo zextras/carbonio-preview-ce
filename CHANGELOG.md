@@ -1,3 +1,13 @@
+## [1.3.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.2.0...v1.3.0) (2026-06-18)
+
+### Features
+
+* **ci:** [IN-951] add arm64 platform to docker image builds ([#143](https://github.com/zextras/carbonio-preview-ce/issues/143)) ([5585011](https://github.com/zextras/carbonio-preview-ce/commit/55850119e96801e5b00a71283704a2b2b63d99c3))
+
+### Bug Fixes
+
+* **reuse:** project-owned REUSE.toml (drop catch-all + legacy dep5) ([#162](https://github.com/zextras/carbonio-preview-ce/issues/162)) ([9c70325](https://github.com/zextras/carbonio-preview-ce/commit/9c7032538ed1843dfb366718d4e1bd8bd0e80b0d))
+
 ## [1.2.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.1.1...v1.2.0) (2026-05-27)
 
 ### Features
