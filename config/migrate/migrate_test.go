@@ -224,9 +224,11 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 		mustContain(t, propsContent, "carbonio.docs-editor.host=1.2.3.4")
 		mustContain(t, propsContent, "# Migrated by carbonio-preview setup")
 
-		// Consul KV: only the two remaining application entries must have been PUT.
+		// Consul KV: the four application entries must have been PUT.
 		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-preview", "true")
 		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-thumbnail", "false")
+		mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "30")
+		mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "15")
 
 		// The INI file must have been renamed since all CE keys migrated.
 		if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
@@ -672,6 +674,62 @@ func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
 		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
 			t.Error("properties file must not be created when no networking entries ran")
 		}
+	})
+}
+
+// TestV1_TimeoutKeysMigrateToConsulKV verifies that timeout keys from a Python
+// config.ini are carried into Consul KV as application entries (not dropped).
+// An ini containing timeout_in_seconds=60 and docs-timeout=45 must result in
+// carbonio-preview/timeout-in-seconds=60 and carbonio-preview/docs-timeout-in-seconds=45
+// being PUT to Consul.
+func TestV1_TimeoutKeysMigrateToConsulKV(t *testing.T) {
+	withCleanRegistry(t, func() {
+		dir := t.TempDir()
+		iniContent := "[carbonio.preview]\ntimeout_in_seconds = 60\ndocs-timeout = 45\n"
+		iniPath := writeFile(t, dir, "config.ini", iniContent)
+		propsPath := filepath.Join(dir, "config.properties")
+
+		kvPuts := map[string]string{}
+		var kvMu sync.Mutex
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path := r.URL.Path[len("/v1/kv/"):]
+			kvMu.Lock()
+			defer kvMu.Unlock()
+			switch r.Method {
+			case http.MethodPut:
+				body, _ := io.ReadAll(r.Body)
+				kvPuts[path] = string(body)
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, "true")
+			case http.MethodGet:
+				w.WriteHeader(http.StatusNotFound)
+			case http.MethodDelete:
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, "true")
+			}
+		}))
+		defer srv.Close()
+
+		if err := Register(V1MigrateFromPythonIni()); err != nil {
+			t.Fatalf("register V1: %v", err)
+		}
+
+		runner, err := NewRunner(Paths{
+			IniPath:     iniPath,
+			PropsPath:   propsPath,
+			ConsulURL:   srv.URL,
+			ConsulToken: "tok",
+		})
+		if err != nil {
+			t.Fatalf("NewRunner: %v", err)
+		}
+		runner.Run()
+
+		kvMu.Lock()
+		defer kvMu.Unlock()
+		mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "60")
+		mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "45")
 	})
 }
 

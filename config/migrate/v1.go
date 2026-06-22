@@ -67,13 +67,21 @@ func V1MigrateFromPythonIni() Migration {
 		ApplicationEntries: map[string]EntryFunc{
 			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/enable-document-preview"),
 			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/enable-document-thumbnail"),
+			// Operator timeout overrides are carried into Consul KV so that an
+			// apt upgrade from the old Python preview preserves customised values.
+			// If the operator's value happens to equal the Go default it is still
+			// written (harmless: the registry default wins on any equal value).
+			"carbonio.preview.timeout_in_seconds": rename("carbonio-preview/timeout-in-seconds"),
+			"carbonio.preview.docs-timeout":        rename("carbonio-preview/docs-timeout-in-seconds"),
 		},
 
 		// ── Drop-only entries (value discarded, no replacement) ──────────────────
 		// log.format and log.path are dropped (no Go equivalent needed).
 		// log.level is in DropInEnvEntries, not here.
-		// Timeout, concurrency, and endpoint-path keys are now hardcoded constants
-		// or env-var knobs — their ini values are intentionally discarded.
+		// Timeout keys (timeout_in_seconds, docs-timeout) are now migrated to
+		// Consul KV application keys — see ApplicationEntries above.
+		// Worker/concurrency (workers) and endpoint-path keys have no Go
+		// equivalent and are intentionally discarded.
 		DropEntries: []string{
 			"carbonio.preview.name",
 			"carbonio.preview.image_name",
@@ -83,9 +91,7 @@ func V1MigrateFromPythonIni() Migration {
 			"log.format",
 			"log.path",
 			"carbonio.storages.name",
-			// newly dropped (no KV destination; value obsoleted by hardcoded constants / env vars)
-			"carbonio.preview.timeout_in_seconds",
-			"carbonio.preview.docs-timeout",
+			// concurrency/endpoint-path keys obsoleted by hardcoded constants / env vars
 			"carbonio.preview.workers",
 			"image_constants.minimum_resolution",
 			"carbonio.storages.download_api",
