@@ -21,195 +21,10 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/render"
+	"github.com/zextras/carbonio-preview-ce/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/storage"
 	"github.com/zextras/carbonio-preview-ce/video"
 )
-
-// ---------------------------------------------------------------------------
-// Enum types (huma generates component schemas from these)
-// ---------------------------------------------------------------------------
-
-// enumStringSchema builds the inline JSON-Schema for a string enum type.
-// Returning a SchemaProvider schema makes huma both (a) validate that the
-// incoming value is one of the listed members — returning a 422 otherwise —
-// and (b) emit the enum constraint into the generated OpenAPI. The schema is
-// inlined (not a named $ref) because huma's mapRegistry only refs struct
-// kinds; per the plan this is acceptable (the SDK is decoupled from component
-// names).
-func enumStringSchema(description string, values ...string) *huma.Schema {
-	enum := make([]any, len(values))
-	for i, v := range values {
-		enum[i] = v
-	}
-	s := &huma.Schema{
-		Type:        huma.TypeString,
-		Enum:        enum,
-		Description: description,
-	}
-	s.PrecomputeMessages()
-	return s
-}
-
-// ServiceType represents the service that owns the stored resource.
-type ServiceType string
-
-const (
-	ServiceTypeFiles ServiceType = "files"
-	ServiceTypeChats ServiceType = "chats"
-)
-
-// Schema implements huma.SchemaProvider so the value is validated against the
-// allowed members and the enum is documented.
-func (ServiceType) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Service that owns the resource",
-		string(ServiceTypeFiles), string(ServiceTypeChats))
-}
-
-// Quality represents the image rendering quality.
-type Quality string
-
-const (
-	QualityLowest  Quality = "lowest"
-	QualityLow     Quality = "low"
-	QualityMedium  Quality = "medium"
-	QualityHigh    Quality = "high"
-	QualityHighest Quality = "highest"
-)
-
-// Schema implements huma.SchemaProvider.
-func (Quality) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Output image quality",
-		string(QualityLowest), string(QualityLow), string(QualityMedium),
-		string(QualityHigh), string(QualityHighest))
-}
-
-// Shape represents the image thumbnail border shape.
-type Shape string
-
-const (
-	ShapeRounded     Shape = "rounded"
-	ShapeRectangular Shape = "rectangular"
-)
-
-// Schema implements huma.SchemaProvider.
-func (Shape) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Thumbnail border shape",
-		string(ShapeRounded), string(ShapeRectangular))
-}
-
-// ImageType represents the output image format.
-type ImageType string
-
-const (
-	ImageTypeJPEG ImageType = "jpeg"
-	ImageTypePNG  ImageType = "png"
-	ImageTypeGIF  ImageType = "gif"
-)
-
-// Schema implements huma.SchemaProvider.
-func (ImageType) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Output image format",
-		string(ImageTypeJPEG), string(ImageTypePNG), string(ImageTypeGIF))
-}
-
-// ---------------------------------------------------------------------------
-// Binary output type shared by all image operations
-// ---------------------------------------------------------------------------
-
-// BinOut is the output struct for operations that return binary image data.
-// The ContentType header is set per-request by the handler.
-type BinOut struct {
-	ContentType string `header:"Content-Type"`
-	Body        []byte
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — image GET
-// ---------------------------------------------------------------------------
-
-// imageGetPreviewInput holds all path + query params for GET image preview.
-// Fields are listed inline (not embedded) to avoid huma's embedded struct skipping.
-type imageGetPreviewInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the image (UUID1–UUID4)"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the image (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Crop         bool        `query:"crop"          default:"false"             doc:"Crop to fill (true) or scale to fit (false)"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
-}
-
-// imageGetThumbnailInput holds all path + query params for GET image thumbnail.
-type imageGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the image (UUID1–UUID4)"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the image (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — image POST (multipart)
-// ---------------------------------------------------------------------------
-
-// imagePostFiles is the multipart body schema for POST image operations.
-type imagePostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"Image file to process"`
-}
-
-// imagePostPreviewInput holds path + query params + multipart body for POST preview.
-type imagePostPreviewInput struct {
-	Area         string    `path:"area" pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	Quality      Quality   `query:"quality"       default:"medium" doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"   doc:"Output image format"`
-	Crop         bool      `query:"crop"          default:"false"  doc:"Crop to fill (true) or scale to fit (false)"`
-	RawBody      huma.MultipartFormFiles[imagePostFiles]
-}
-
-// imagePostThumbnailInput holds path + query params + multipart body for POST thumbnail.
-type imagePostThumbnailInput struct {
-	Area         string    `path:"area" pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	Quality      Quality   `query:"quality"       default:"medium" doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"   doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular" doc:"Thumbnail border shape"`
-	RawBody      huma.MultipartFormFiles[imagePostFiles]
-}
-
-// ---------------------------------------------------------------------------
-// Health output structs
-// ---------------------------------------------------------------------------
-
-// healthLiveOutput is returned by GET /health/live/.
-type healthLiveOutput struct{}
-
-// healthReadyOutput is returned by GET /health/ready/ (empty body on success).
-type healthReadyOutput struct{}
-
-// healthFullOutput wraps the JSON health response.
-type healthFullOutput struct {
-	Body *healthResponse
-}
-
-// ---------------------------------------------------------------------------
-// Binary response schema helper
-// ---------------------------------------------------------------------------
-
-var imageBinaryResponseSchema = &huma.Schema{Type: "string", Format: "binary"}
-
-// imageBinaryResponse defines the 200 response for image operations with
-// multiple possible content types.
-var imageBinaryResponse = &huma.Response{
-	Description: "Successful Response — binary image data",
-	Content: map[string]*huma.MediaType{
-		"image/jpeg": {Schema: imageBinaryResponseSchema},
-		"image/png":  {Schema: imageBinaryResponseSchema},
-		"image/gif":  {Schema: imageBinaryResponseSchema},
-	},
-}
 
 // ---------------------------------------------------------------------------
 // Deps bundles the server dependencies needed by huma handlers.
@@ -235,11 +50,24 @@ type Deps struct {
 // ---------------------------------------------------------------------------
 
 func RegisterOperations(api huma.API, deps Deps) {
-	registerImageOps(api, deps)
-	registerHealthOps(api, deps)
-	registerPDFOps(api, deps)
-	registerDocumentOps(api, deps)
-	registerGenerateOps(api, deps)
+	semMW := semaphoreMiddleware(api, deps.Sem)
+	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem)
+
+	apispec.RegisterImageOps(api,
+		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
+		buildPostImagePreview(deps), buildPostImageThumbnail(deps),
+		semMW)
+	apispec.RegisterHealthOps(api,
+		buildGetHealthLive(), buildGetHealthReady(deps), buildGetHealth(deps))
+	apispec.RegisterPDFOps(api,
+		buildGetPDFPreview(deps), buildGetPDFThumbnail(deps),
+		buildPostPDFPreview(deps), buildPostPDFThumbnail(deps),
+		semMW)
+	apispec.RegisterDocumentOps(api,
+		buildGetDocumentPreview(deps), buildGetDocumentThumbnail(deps),
+		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps),
+		semMW)
+	apispec.RegisterGenerateOps(api, buildGenerateVideoPreview(deps), vsemMW)
 }
 
 // newHumaAPI constructs a huma API over the given mux with all Carbonio settings.
@@ -336,268 +164,36 @@ func semaphoreMiddleware(api huma.API, sem chan struct{}) func(huma.Context, fun
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Image operations
-// ---------------------------------------------------------------------------
+// videoRetryAfterSeconds is the Retry-After header value (seconds) returned with
+// a 429 when the dedicated video semaphore is full.
+const videoRetryAfterSeconds = "1"
 
-func registerImageOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
-
-	// GET /preview/image/{id}/{version}/{area}/
-	huma.Register(api, huma.Operation{
-		OperationID: "getImagePreview",
-		Method:      http.MethodGet,
-		Path:        "/preview/image/{id}/{version}/{area}/",
-		Summary:     "Get Image Preview",
-		Tags:        []string{"image"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses: map[string]*huma.Response{
-			"200": imageBinaryResponse,
-		},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *imageGetPreviewInput) (*BinOut, error) {
-		id, err := validateUUID(input.ID)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+// videoSemaphoreMiddleware bounds generate to cfg.VideoConcurrency (APPLICATION
+// key video-concurrency, default NumCPU) using a DEDICATED semaphore — NOT the
+// shared render semMW — so a flood of generate calls can never starve image
+// previews. Try-acquire immediately; on a full semaphore return HTTP 429 with a
+// Retry-After header (no waiting).
+//
+// 429 (not 503): 4xx = expected backpressure, so it does not inflate preview's
+// 5xx error metrics or trip outage alerts; it clearly signals "retryable, back
+// off". 503 is reserved for "preview genuinely down" and is retained only on the
+// existing semMW (image/render). Pass vsem=nil for unlimited concurrency
+// (tests / gendocs).
+func videoSemaphoreMiddleware(api huma.API, vsem chan struct{}) func(huma.Context, func(huma.Context)) {
+	return func(hctx huma.Context, next func(huma.Context)) {
+		if vsem == nil {
+			next(hctx)
+			return
 		}
-		width, height, err := parseArea(input.Area)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		select {
+		case vsem <- struct{}{}:
+			defer func() { <-vsem }()
+			next(hctx)
+		default:
+			hctx.SetHeader("Retry-After", videoRetryAfterSeconds)
+			_ = huma.WriteErr(api, hctx, http.StatusTooManyRequests, "server busy, retry")
 		}
-		serviceType := string(input.ServiceType)
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		crop := input.Crop
-
-		ownerHeader := input.FileOwnerID
-		key := cacheKey("img-preview", id, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
-		}
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			log.Printf("getImagePreview render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
-	})
-
-	// GET /preview/image/{id}/{version}/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "getImageThumbnail",
-		Method:      http.MethodGet,
-		Path:        "/preview/image/{id}/{version}/{area}/thumbnail/",
-		Summary:     "Get Image Thumbnail",
-		Tags:        []string{"image"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses: map[string]*huma.Response{
-			"200": imageBinaryResponse,
-		},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *imageGetThumbnailInput) (*BinOut, error) {
-		id, err := validateUUID(input.ID)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
-		}
-		width, height, err := parseArea(input.Area)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
-		}
-		serviceType := string(input.ServiceType)
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		shape := string(input.Shape)
-
-		ownerHeader := input.FileOwnerID
-		key := cacheKey("img-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			log.Printf("getImageThumbnail render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
-	})
-
-	// POST /preview/image/{area}/
-	huma.Register(api, huma.Operation{
-		OperationID: "postImagePreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/image/{area}/",
-		Summary:     "Post Image Preview",
-		Tags:        []string{"image"},
-		Errors:      []int{400, 422},
-		Responses: map[string]*huma.Response{
-			"200": imageBinaryResponse,
-		},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *imagePostPreviewInput) (*BinOut, error) {
-		width, height, err := parseArea(input.Area)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
-		}
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		crop := input.Crop
-
-		fileData, ferr := readHumaFile(input.RawBody.Data())
-		if ferr != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.FileNotValid,
-				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
-		}
-
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
-		}
-		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			log.Printf("postImagePreview render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		return &BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
-	})
-
-	// POST /preview/image/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "postImageThumbnail",
-		Method:      http.MethodPost,
-		Path:        "/preview/image/{area}/thumbnail/",
-		Summary:     "Post Image Thumbnail",
-		Tags:        []string{"image"},
-		Errors:      []int{400, 422},
-		Responses: map[string]*huma.Response{
-			"200": imageBinaryResponse,
-		},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *imagePostThumbnailInput) (*BinOut, error) {
-		width, height, err := parseArea(input.Area)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
-		}
-		quality := string(input.Quality)
-		outputFormat := string(input.OutputFormat)
-		shape := string(input.Shape)
-
-		fileData, ferr := readHumaFile(input.RawBody.Data())
-		if ferr != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.FileNotValid,
-				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
-		}
-
-		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			log.Printf("postImageThumbnail render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		return &BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Health operations
-// ---------------------------------------------------------------------------
-
-func registerHealthOps(api huma.API, deps Deps) {
-	// GET /health/live/
-	huma.Register(api, huma.Operation{
-		OperationID:   "getHealthLive",
-		Method:        http.MethodGet,
-		Path:          "/health/live/",
-		Summary:       "Liveness Probe",
-		Tags:          []string{"health"},
-		DefaultStatus: http.StatusOK,
-	}, func(ctx context.Context, _ *struct{}) (*healthLiveOutput, error) {
-		return &healthLiveOutput{}, nil
-	})
-
-	// GET /health/ready/
-	huma.Register(api, huma.Operation{
-		OperationID:   "getHealthReady",
-		Method:        http.MethodGet,
-		Path:          "/health/ready/",
-		Summary:       "Readiness Probe",
-		Tags:          []string{"health"},
-		DefaultStatus: http.StatusOK,
-		Errors:        []int{429},
-	}, func(ctx context.Context, _ *struct{}) (*healthReadyOutput, error) {
-		cfg := deps.Cfg
-		if cfg == nil || !cfg.AreDocsEnabled {
-			return &healthReadyOutput{}, nil
-		}
-		if isDependencyUp(cfg.DocumentConversionFullServiceAddress) {
-			return &healthReadyOutput{}, nil
-		}
-		// Return 429 via huma error — huma will write the status; the body
-		// will be plain text matching the legacy handler.
-		return nil, huma.NewError(http.StatusTooManyRequests, config.Msg.DocsEditorUnavailable)
-	})
-
-	// GET /health/
-	huma.Register(api, huma.Operation{
-		OperationID:   "getHealth",
-		Method:        http.MethodGet,
-		Path:          "/health/",
-		Summary:       "Health Summary",
-		Tags:          []string{"health"},
-		DefaultStatus: http.StatusOK,
-	}, func(ctx context.Context, _ *struct{}) (*healthFullOutput, error) {
-		cfg := deps.Cfg
-		if cfg == nil {
-			// gendocs mode — return empty response
-			return &healthFullOutput{Body: &healthResponse{Ready: true}}, nil
-		}
-		storageHealthURL := cfg.StorageFullAddress + "/" + cfg.StorageHealthCheck
-		docsHealthURL := cfg.DocumentConversionFullServiceAddress
-		storageUp := isDependencyUp(storageHealthURL)
-		docsUp := isDependencyUp(docsHealthURL)
-		resp := &healthResponse{
-			Ready: true,
-			Dependencies: []healthDependency{
-				{Name: "carbonio-storages", Ready: storageUp, Live: storageUp, Type: "OPTIONAL"},
-				{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"},
-			},
-		}
-		return &healthFullOutput{Body: resp}, nil
-	})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +209,7 @@ func validateUUID(id string) (string, error) {
 
 // readHumaFile reads bytes from a huma multipart file field, enforcing non-empty.
 // Returns (nil, error) if the file is absent or empty — the caller maps this to 422.
-func readHumaFile(data *imagePostFiles) ([]byte, error) {
+func readHumaFile(data *apispec.ImagePostFiles) ([]byte, error) {
 	if data == nil || !data.File.IsSet {
 		return nil, errors.New("file required")
 	}
@@ -630,7 +226,7 @@ func readHumaFile(data *imagePostFiles) ([]byte, error) {
 
 // readHumaPDFFile reads bytes from a huma multipart file field for PDF operations.
 // Returns (nil, error) if the file is absent or empty — the caller maps this to 422.
-func readHumaPDFFile(data *pdfPostFiles) ([]byte, error) {
+func readHumaPDFFile(data *apispec.PDFPostFiles) ([]byte, error) {
 	if data == nil || !data.File.IsSet {
 		return nil, errors.New("file required")
 	}
@@ -647,7 +243,7 @@ func readHumaPDFFile(data *pdfPostFiles) ([]byte, error) {
 
 // readHumaDocFile reads bytes from a huma multipart file field for document operations.
 // Returns (nil, error) if the file is absent or empty — the caller maps this to 422.
-func readHumaDocFile(data *docPostFiles) ([]byte, error) {
+func readHumaDocFile(data *apispec.DocPostFiles) ([]byte, error) {
 	if data == nil || !data.File.IsSet {
 		return nil, errors.New("file required")
 	}
@@ -679,164 +275,210 @@ func validatePages(firstPage, lastPage int) error {
 }
 
 // ---------------------------------------------------------------------------
-// Input structs — PDF GET
+// Image handler builders
 // ---------------------------------------------------------------------------
 
-// pdfGetPreviewInput holds all path + query params for GET PDF preview.
-type pdfGetPreviewInput struct {
-	ID          string      `path:"id"            format:"uuid"              doc:"UUID of the PDF"`
-	Version     int         `path:"version"       minimum:"0"                doc:"Version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true"            doc:"Service that owns the resource"`
-	FirstPage   int         `query:"first_page"   default:"1" doc:"First page (1-based, default 1)"`
-	LastPage    int         `query:"last_page"    default:"0" doc:"Last page (0 = all, default 0)"`
-	FileOwnerID string      `header:"fileownerid"             doc:"File owner ID" required:"false"`
+func buildGetImagePreview(deps Deps) func(context.Context, *apispec.ImageGetPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.ImageGetPreviewInput) (*apispec.BinOut, error) {
+		id, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		serviceType := string(input.ServiceType)
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		crop := input.Crop
+
+		ownerHeader := input.FileOwnerID
+		key := cacheKey("img-preview", id, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
+		if e, ok := deps.Cache.Get(key); ok {
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+		}
+
+		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
+		if rerr != nil {
+			if errors.Is(rerr, storage.ErrNotFound) {
+				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+			}
+			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+		}
+
+		cropMode := "none"
+		if crop {
+			cropMode = "center"
+		}
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
+		if rerr != nil {
+			log.Printf("getImagePreview render: %v", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
+
+		ct := contentTypeForFormat(outputFormat)
+		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
 }
 
-// pdfGetThumbnailInput holds all path + query params for GET PDF thumbnail.
-type pdfGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the PDF"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
+func buildGetImageThumbnail(deps Deps) func(context.Context, *apispec.ImageGetThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.ImageGetThumbnailInput) (*apispec.BinOut, error) {
+		id, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		serviceType := string(input.ServiceType)
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		shape := string(input.Shape)
+
+		ownerHeader := input.FileOwnerID
+		key := cacheKey("img-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
+		if e, ok := deps.Cache.Get(key); ok {
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+		}
+
+		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
+		if rerr != nil {
+			if errors.Is(rerr, storage.ErrNotFound) {
+				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+			}
+			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+		}
+
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
+		if rerr != nil {
+			log.Printf("getImageThumbnail render: %v", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
+
+		ct := contentTypeForFormat(outputFormat)
+		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
 }
 
-// ---------------------------------------------------------------------------
-// Input structs — PDF POST
-// ---------------------------------------------------------------------------
+func buildPostImagePreview(deps Deps) func(context.Context, *apispec.ImagePostPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.ImagePostPreviewInput) (*apispec.BinOut, error) {
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		crop := input.Crop
 
-// pdfPostFiles is the multipart body schema for POST PDF operations.
-type pdfPostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"PDF file to process"`
+		fileData, ferr := readHumaFile(input.RawBody.Data())
+		if ferr != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.FileNotValid,
+				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
+		}
+
+		cropMode := "none"
+		if crop {
+			cropMode = "center"
+		}
+		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, "rectangular", cropMode)
+		if rerr != nil {
+			log.Printf("postImagePreview render: %v", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
+
+		return &apispec.BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
+	}
 }
 
-// pdfPostPreviewInput holds query params + multipart body for POST PDF preview.
-type pdfPostPreviewInput struct {
-	FirstPage int `query:"first_page" default:"1" doc:"First page (1-based, default 1)"`
-	LastPage  int `query:"last_page"  default:"0" doc:"Last page (0 = all, default 0)"`
-	RawBody   huma.MultipartFormFiles[pdfPostFiles]
-}
+func buildPostImageThumbnail(deps Deps) func(context.Context, *apispec.ImagePostThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.ImagePostThumbnailInput) (*apispec.BinOut, error) {
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		shape := string(input.Shape)
 
-// pdfPostThumbnailInput holds path + query params + multipart body for POST PDF thumbnail.
-type pdfPostThumbnailInput struct {
-	Area         string    `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	Quality      Quality   `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	RawBody      huma.MultipartFormFiles[pdfPostFiles]
-}
+		fileData, ferr := readHumaFile(input.RawBody.Data())
+		if ferr != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.FileNotValid,
+				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
+		}
 
-// ---------------------------------------------------------------------------
-// Input structs — Document GET
-// ---------------------------------------------------------------------------
+		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, shape, "center")
+		if rerr != nil {
+			log.Printf("postImageThumbnail render: %v", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
 
-// docGetPreviewInput holds all path + query params for GET document preview.
-type docGetPreviewInput struct {
-	ID          string      `path:"id"            format:"uuid"              doc:"UUID of the document"`
-	Version     int         `path:"version"       minimum:"0"                doc:"Version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true"            doc:"Service that owns the resource"`
-	FirstPage   int         `query:"first_page"   default:"1" doc:"First page (1-based, default 1)"`
-	LastPage    int         `query:"last_page"    default:"0" doc:"Last page (0 = all, default 0)"`
-	LangTag     string      `query:"lang_tag"     default:"en-US" doc:"Language tag for conversion (default en-US)"`
-	FileOwnerID string      `header:"fileownerid"               doc:"File owner ID" required:"false"`
-}
-
-// docGetThumbnailInput holds all path + query params for GET document thumbnail.
-type docGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the document"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string      `query:"lang_tag"                      default:"en-US" doc:"Language tag for conversion"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — Document POST
-// ---------------------------------------------------------------------------
-
-// docPostFiles is the multipart body schema for POST document operations.
-type docPostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"Document file to process"`
-}
-
-// docPostPreviewInput holds query params + multipart body for POST document preview.
-type docPostPreviewInput struct {
-	FirstPage int    `query:"first_page" default:"1"     doc:"First page (1-based, default 1)"`
-	LastPage  int    `query:"last_page"  default:"0"     doc:"Last page (0 = all, default 0)"`
-	LangTag   string `query:"lang_tag"   default:"en-US" doc:"Language tag for conversion"`
-	RawBody   huma.MultipartFormFiles[docPostFiles]
-}
-
-// docPostThumbnailInput holds path + query params + multipart body for POST document thumbnail.
-type docPostThumbnailInput struct {
-	Area         string    `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	Quality      Quality   `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string    `query:"lang_tag"                      default:"en-US" doc:"Language tag for conversion"`
-	RawBody      huma.MultipartFormFiles[docPostFiles]
-}
-
-// ---------------------------------------------------------------------------
-// Input/output structs — Video generate (POST)
-// ---------------------------------------------------------------------------
-
-// generateVideoInput holds the path + query params + owner header for the
-// POST /preview/video/generate endpoint. The caller (WSC) supplies BOTH the
-// source coordinates (id/version/service_type/owner) AND the target node id
-// (a UUID it minted) under which the extracted first frame is stored.
-type generateVideoInput struct {
-	ID          string      `path:"id"            format:"uuid"   doc:"UUID of the SOURCE video node"`
-	Version     int         `path:"version"       minimum:"0"     doc:"Source version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
-	Target      string      `query:"target"       format:"uuid" required:"true" doc:"Caller-minted UUID for the stored frame"`
-	FileOwnerID string      `header:"fileownerid"                doc:"File owner ID (PowerStore routing)" required:"false"`
-}
-
-// generateVideoOutput echoes the stored node id of the generated frame.
-type generateVideoOutput struct {
-	Body struct {
-		PreviewID string `json:"preview_id" doc:"Storage node id of the stored first-frame image (echoes target)"`
+		return &apispec.BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Binary response vars — PDF
+// Health handler builders
 // ---------------------------------------------------------------------------
 
-// pdfBinaryResponse defines the 200 response for PDF operations.
-var pdfBinaryResponse = &huma.Response{
-	Description: "Successful Response — PDF bytes",
-	Content: map[string]*huma.MediaType{
-		"application/pdf": {Schema: imageBinaryResponseSchema},
-	},
+func buildGetHealthLive() func(context.Context, *struct{}) (*apispec.HealthLiveOutput, error) {
+	return func(ctx context.Context, _ *struct{}) (*apispec.HealthLiveOutput, error) {
+		return &apispec.HealthLiveOutput{}, nil
+	}
+}
+
+func buildGetHealthReady(deps Deps) func(context.Context, *struct{}) (*apispec.HealthReadyOutput, error) {
+	return func(ctx context.Context, _ *struct{}) (*apispec.HealthReadyOutput, error) {
+		cfg := deps.Cfg
+		if cfg == nil || !cfg.AreDocsEnabled {
+			return &apispec.HealthReadyOutput{}, nil
+		}
+		if isDependencyUp(cfg.DocumentConversionFullServiceAddress) {
+			return &apispec.HealthReadyOutput{}, nil
+		}
+		// Return 429 via huma error — huma will write the status; the body
+		// will be plain text matching the legacy handler.
+		return nil, huma.NewError(http.StatusTooManyRequests, config.Msg.DocsEditorUnavailable)
+	}
+}
+
+func buildGetHealth(deps Deps) func(context.Context, *struct{}) (*apispec.HealthFullOutput, error) {
+	return func(ctx context.Context, _ *struct{}) (*apispec.HealthFullOutput, error) {
+		cfg := deps.Cfg
+		if cfg == nil {
+			// gendocs mode — return empty response
+			return &apispec.HealthFullOutput{Body: &apispec.HealthResponse{Ready: true}}, nil
+		}
+		storageHealthURL := cfg.StorageFullAddress + "/" + cfg.StorageHealthCheck
+		docsHealthURL := cfg.DocumentConversionFullServiceAddress
+		storageUp := isDependencyUp(storageHealthURL)
+		docsUp := isDependencyUp(docsHealthURL)
+		resp := &apispec.HealthResponse{
+			Ready: true,
+			Dependencies: []apispec.HealthDependency{
+				{Name: "carbonio-storages", Ready: storageUp, Live: storageUp, Type: "OPTIONAL"},
+				{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"},
+			},
+		}
+		return &apispec.HealthFullOutput{Body: resp}, nil
+	}
 }
 
 // ---------------------------------------------------------------------------
-// PDF operations
+// PDF handler builders
 // ---------------------------------------------------------------------------
 
-func registerPDFOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
-
-	// GET /preview/pdf/{id}/{version}/
-	huma.Register(api, huma.Operation{
-		OperationID: "getPdfPreview",
-		Method:      http.MethodGet,
-		Path:        "/preview/pdf/{id}/{version}/",
-		Summary:     "Get PDF Preview",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": pdfBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *pdfGetPreviewInput) (*BinOut, error) {
+func buildGetPDFPreview(deps Deps) func(context.Context, *apispec.PDFGetPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.PDFGetPreviewInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
@@ -850,7 +492,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 		ownerHeader := input.FileOwnerID
 		key := cacheKey("pdf-preview", id, input.Version, serviceType, 0, 0, "medium", "jpeg", false, "rectangular", input.FirstPage, input.LastPage, "en-US", ownerHeader)
 		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
 		}
 
 		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
@@ -871,20 +513,12 @@ func registerPDFOps(api huma.API, deps Deps) {
 		}
 
 		deps.Cache.Put(key, cache.Entry{Body: sliced, ContentType: "application/pdf"})
-		return &BinOut{ContentType: "application/pdf", Body: sliced}, nil
-	})
+		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+	}
+}
 
-	// GET /preview/pdf/{id}/{version}/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "getPdfThumbnail",
-		Method:      http.MethodGet,
-		Path:        "/preview/pdf/{id}/{version}/{area}/thumbnail/",
-		Summary:     "Get PDF Thumbnail",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *pdfGetThumbnailInput) (*BinOut, error) {
+func buildGetPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFGetThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.PDFGetThumbnailInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
@@ -903,7 +537,7 @@ func registerPDFOps(api huma.API, deps Deps) {
 
 		key := cacheKey("pdf-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, false, shape, 1, 0, "en-US", ownerHeader)
 		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
 		}
 
 		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
@@ -930,20 +564,12 @@ func registerPDFOps(api huma.API, deps Deps) {
 		}
 		ct := contentTypeForFormat(actualFormat)
 		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
-	})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
+}
 
-	// POST /preview/pdf/
-	huma.Register(api, huma.Operation{
-		OperationID: "postPdfPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/pdf/",
-		Summary:     "Post PDF Preview",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 422, 503},
-		Responses:   map[string]*huma.Response{"200": pdfBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *pdfPostPreviewInput) (*BinOut, error) {
+func buildPostPDFPreview(deps Deps) func(context.Context, *apispec.PDFPostPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.PDFPostPreviewInput) (*apispec.BinOut, error) {
 		if err := validatePages(input.FirstPage, input.LastPage); err != nil {
 			return nil, err
 		}
@@ -963,20 +589,12 @@ func registerPDFOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
 		}
 
-		return &BinOut{ContentType: "application/pdf", Body: sliced}, nil
-	})
+		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+	}
+}
 
-	// POST /preview/pdf/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "postPdfThumbnail",
-		Method:      http.MethodPost,
-		Path:        "/preview/pdf/{area}/thumbnail/",
-		Summary:     "Post PDF Thumbnail",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 422, 503},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *pdfPostThumbnailInput) (*BinOut, error) {
+func buildPostPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFPostThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.PDFPostThumbnailInput) (*apispec.BinOut, error) {
 		width, height, err := parseArea(input.Area)
 		if err != nil {
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
@@ -1005,28 +623,16 @@ func registerPDFOps(api huma.API, deps Deps) {
 		if shape == "rounded" {
 			actualFormat = "png"
 		}
-		return &BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
-	})
+		return &apispec.BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
+	}
 }
 
 // ---------------------------------------------------------------------------
-// Document operations
+// Document handler builders
 // ---------------------------------------------------------------------------
 
-func registerDocumentOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
-
-	// GET /preview/document/{id}/{version}/
-	huma.Register(api, huma.Operation{
-		OperationID: "getDocumentPreview",
-		Method:      http.MethodGet,
-		Path:        "/preview/document/{id}/{version}/",
-		Summary:     "Get Document Preview",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": pdfBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *docGetPreviewInput) (*BinOut, error) {
+func buildGetDocumentPreview(deps Deps) func(context.Context, *apispec.DocGetPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.DocGetPreviewInput) (*apispec.BinOut, error) {
 		// Document-enable gate (#17)
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentPreview {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.DocumentPreviewDisabled)
@@ -1048,7 +654,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 
 		key := cacheKey("doc-preview", id, input.Version, serviceType, 0, 0, "medium", "jpeg", false, "rectangular", input.FirstPage, input.LastPage, langTag, ownerHeader)
 		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
 		}
 
 		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
@@ -1077,20 +683,12 @@ func registerDocumentOps(api huma.API, deps Deps) {
 		}
 
 		deps.Cache.Put(key, cache.Entry{Body: sliced, ContentType: "application/pdf"})
-		return &BinOut{ContentType: "application/pdf", Body: sliced}, nil
-	})
+		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+	}
+}
 
-	// GET /preview/document/{id}/{version}/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "getDocumentThumbnail",
-		Method:      http.MethodGet,
-		Path:        "/preview/document/{id}/{version}/{area}/thumbnail/",
-		Summary:     "Get Document Thumbnail",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 404, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *docGetThumbnailInput) (*BinOut, error) {
+func buildGetDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocGetThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.DocGetThumbnailInput) (*apispec.BinOut, error) {
 		// Document-enable gate (#17)
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentThumbnail {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.DocumentThumbnailDisabled)
@@ -1117,7 +715,7 @@ func registerDocumentOps(api huma.API, deps Deps) {
 
 		key := cacheKey("doc-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, false, shape, 1, 0, langTag, ownerHeader)
 		if e, ok := deps.Cache.Get(key); ok {
-			return &BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
 		}
 
 		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
@@ -1151,20 +749,12 @@ func registerDocumentOps(api huma.API, deps Deps) {
 		}
 		ct := contentTypeForFormat(actualFormat)
 		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &BinOut{ContentType: ct, Body: out}, nil
-	})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
+}
 
-	// POST /preview/document/
-	huma.Register(api, huma.Operation{
-		OperationID: "postDocumentPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/document/",
-		Summary:     "Post Document Preview",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": pdfBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *docPostPreviewInput) (*BinOut, error) {
+func buildPostDocumentPreview(deps Deps) func(context.Context, *apispec.DocPostPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.DocPostPreviewInput) (*apispec.BinOut, error) {
 		// Document-enable gate: POST preview uses ServiceEnableDocumentPreview
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentPreview {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.DocumentPreviewDisabled)
@@ -1200,20 +790,12 @@ func registerDocumentOps(api huma.API, deps Deps) {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
 		}
 
-		return &BinOut{ContentType: "application/pdf", Body: sliced}, nil
-	})
+		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+	}
+}
 
-	// POST /preview/document/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "postDocumentThumbnail",
-		Method:      http.MethodPost,
-		Path:        "/preview/document/{area}/thumbnail/",
-		Summary:     "Post Document Thumbnail",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": imageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
-	}, func(ctx context.Context, input *docPostThumbnailInput) (*BinOut, error) {
+func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPostThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.DocPostThumbnailInput) (*apispec.BinOut, error) {
 		// Document-enable gate: POST thumbnail uses ServiceEnableDocumentThumbnail
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentThumbnail {
 			return nil, huma.NewError(http.StatusBadRequest, config.Msg.DocumentThumbnailDisabled)
@@ -1258,8 +840,8 @@ func registerDocumentOps(api huma.API, deps Deps) {
 		if shape == "rounded" {
 			actualFormat = "png"
 		}
-		return &BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
-	})
+		return &apispec.BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,10 +851,6 @@ func registerDocumentOps(api huma.API, deps Deps) {
 // JPEGQuality is the JPEG encoding quality used when re-encoding the extracted
 // first frame. Internal constant — not a config layer, not env-overridable.
 const JPEGQuality = 90
-
-// videoRetryAfterSeconds is the Retry-After header value (seconds) returned with
-// a 429 when the dedicated video semaphore is full.
-const videoRetryAfterSeconds = "1"
 
 // generateFirstFrameJPEG streams the source video, extracts the first frame
 // (PNG via the existing extractor), re-encodes it to JPEG q90 at full resolution
@@ -1349,47 +927,8 @@ func mapStorageOrExtractError(ctx context.Context, err error) error {
 	}
 }
 
-// videoSemaphoreMiddleware bounds generate to cfg.VideoConcurrency (APPLICATION
-// key video-concurrency, default NumCPU) using a DEDICATED semaphore — NOT the
-// shared render semMW — so a flood of generate calls can never starve image
-// previews. Try-acquire immediately; on a full semaphore return HTTP 429 with a
-// Retry-After header (no waiting).
-//
-// 429 (not 503): 4xx = expected backpressure, so it does not inflate preview's
-// 5xx error metrics or trip outage alerts; it clearly signals "retryable, back
-// off". 503 is reserved for "preview genuinely down" and is retained only on the
-// existing semMW (image/render). Pass vsem=nil for unlimited concurrency
-// (tests / gendocs).
-func videoSemaphoreMiddleware(api huma.API, vsem chan struct{}) func(huma.Context, func(huma.Context)) {
-	return func(hctx huma.Context, next func(huma.Context)) {
-		if vsem == nil {
-			next(hctx)
-			return
-		}
-		select {
-		case vsem <- struct{}{}:
-			defer func() { <-vsem }()
-			next(hctx)
-		default:
-			hctx.SetHeader("Retry-After", videoRetryAfterSeconds)
-			_ = huma.WriteErr(api, hctx, http.StatusTooManyRequests, "server busy, retry")
-		}
-	}
-}
-
-func registerGenerateOps(api huma.API, deps Deps) {
-	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem) // dedicated video semaphore, NOT semMW
-
-	// POST /preview/video/generate/{id}/{version}/
-	huma.Register(api, huma.Operation{
-		OperationID: "generateVideoPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/video/generate/{id}/{version}/",
-		Summary:     "Generate (extract + JPEG-encode + store) a video first-frame preview",
-		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 429, 502, 504},
-		Middlewares: huma.Middlewares{vsemMW},
-	}, func(ctx context.Context, input *generateVideoInput) (*generateVideoOutput, error) {
+func buildGenerateVideoPreview(deps Deps) func(context.Context, *apispec.GenerateVideoInput) (*apispec.GenerateVideoOutput, error) {
+	return func(ctx context.Context, input *apispec.GenerateVideoInput) (*apispec.GenerateVideoOutput, error) {
 		// Single authoritative deadline: governs the FULL lifecycle of this
 		// request (storage download + ffmpeg first-frame + JPEG encode + store).
 		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
@@ -1417,8 +956,8 @@ func registerGenerateOps(api huma.API, deps Deps) {
 			return nil, mapStorageOrExtractError(ctx, gerr)
 		}
 
-		out := &generateVideoOutput{}
+		out := &apispec.GenerateVideoOutput{}
 		out.Body.PreviewID = storedID
 		return out, nil
-	})
+	}
 }

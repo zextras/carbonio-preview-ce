@@ -7,22 +7,9 @@ package server
 import (
 	"net/http"
 	"time"
+
+	"github.com/zextras/carbonio-preview-ce/server/apispec"
 )
-
-// healthDependency is the JSON object for a single dependency in /health/.
-// Shape mirrors the old FastAPI implementation (health.py:50-66).
-type healthDependency struct {
-	Name  string `json:"name"`
-	Ready bool   `json:"ready"`
-	Live  bool   `json:"live"`
-	Type  string `json:"type"`
-}
-
-// healthResponse is the JSON body for GET /health/.
-type healthResponse struct {
-	Ready        bool               `json:"ready"`
-	Dependencies []healthDependency `json:"dependencies"`
-}
 
 // isDependencyUp performs a GET to url with a 5-second timeout.
 // Returns true if the response is HTTP 2xx.
@@ -35,3 +22,9 @@ func isDependencyUp(url string) bool {
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
+
+// healthDependency and healthResponse are package-local aliases for the
+// apispec types so that existing same-package tests can continue to use the
+// unexported names without modification.
+type healthDependency = apispec.HealthDependency
+type healthResponse = apispec.HealthResponse

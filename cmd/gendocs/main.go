@@ -32,7 +32,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
-	"github.com/zextras/carbonio-preview-ce/server"
+	"github.com/zextras/carbonio-preview-ce/server/apispec"
 )
 
 func main() {
@@ -42,9 +42,10 @@ func main() {
 	jsonPath := filepath.Join(root, "docs", "openapi.json")
 	staticJSONPath := filepath.Join(root, "server", "static", "openapi.json")
 
-	// Build a throwaway huma API, register all operations, then downgrade to OAS 3.0.3.
+	// Build a throwaway huma API, register all operations via stubs (cgo-free),
+	// then downgrade to OAS 3.0.3.
 	api := buildAPI()
-	server.RegisterOperations(api, server.Deps{})
+	apispec.RegisterStubs(api)
 
 	// ── YAML ────────────────────────────────────────────────────────────────
 	yamlBytes, err := api.OpenAPI().DowngradeYAML()

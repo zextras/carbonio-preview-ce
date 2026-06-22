@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package server
+package apispec
 
 import (
 	"encoding/json"
