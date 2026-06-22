@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package render implements the image/PDF/document processing pipeline.
 // It wraps libvips (via CGO) for image transformations and go-pdfium for PDF
 // rendering. The benchmark reference is

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 module github.com/zextras/carbonio-preview-ce
 
 go 1.25.0

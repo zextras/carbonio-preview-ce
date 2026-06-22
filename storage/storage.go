@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package storage defines the seam interface between the preview service
 // and whatever backing store holds the original files.
 //
