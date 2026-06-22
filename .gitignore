@@ -11,7 +11,6 @@ coverage.html
 .run/
 /carbonio-preview
 /carbonio-preview-bin
-LICENSES
 __pycache__
 app/core/resources/config.ini
 app/core/resources/messages.ini
