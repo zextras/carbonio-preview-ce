@@ -38,6 +38,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/docs"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/server"
 	"github.com/zextras/carbonio-preview-ce/storage"
@@ -117,7 +118,7 @@ func runSetupIfRequested(args []string) (handled bool, exitCode int) {
 		IniPath:   "/etc/carbonio/preview/config.ini",
 		PropsPath: "/etc/carbonio/preview/config.properties",
 	}
-	if err := migrate.RunSetup(consulURL, paths, config.ConfigsMd()); err != nil {
+	if err := migrate.RunSetup(consulURL, paths, docs.ConfigsMd()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return true, 1
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/configdocs"
+	"github.com/zextras/carbonio-preview-ce/docs"
 )
 
 // ── Drift-guard tests ─────────────────────────────────────────────────────────
@@ -55,14 +56,14 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// TestDriftGuard_ConfigsMd_Embedded verifies that the embedded config/configs.md
-// (via config.ConfigsMd()) is byte-for-byte identical to rendering the live
+// TestDriftGuard_ConfigsMd_Embedded verifies that the embedded docs/configs.md
+// (via docs.ConfigsMd()) is byte-for-byte identical to rendering the live
 // registry. If this test fails the generator must be re-run: go run ./cmd/configdocs
 func TestDriftGuard_ConfigsMd_Embedded(t *testing.T) {
-	want := config.ConfigsMd()
+	want := docs.ConfigsMd()
 	got := configdocs.RenderMd(buildDocsFromRegistry())
 	if got != want {
-		t.Errorf("config/configs.md (embedded) has drifted from the registry.\n"+
+		t.Errorf("docs/configs.md (embedded) has drifted from the registry.\n"+
 			"Run: go run ./cmd/configdocs\n\n"+
 			"--- want (embedded) ---\n%s\n--- got (rendered) ---\n%s",
 			want, got)
@@ -107,10 +108,10 @@ func TestDriftGuard_Mutation(t *testing.T) {
 		Namespace: "application",
 		Default:   "sentinel",
 	}
-	docs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
+	mutatedDocs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
 
-	got := configdocs.RenderMd(docs)
-	committed := config.ConfigsMd()
+	got := configdocs.RenderMd(mutatedDocs)
+	committed := docs.ConfigsMd()
 	if got == committed {
 		t.Error("mutated registry produced identical output — drift-guard cannot detect drift")
 	}

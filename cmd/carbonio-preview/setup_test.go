@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/docs"
 )
 
 // TestFindArg verifies the pure --setup flag locator.
@@ -126,7 +126,7 @@ func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 
 	// Call migrate.RunSetup directly with the test's Consul stub.
 	// When ini is absent there is no application work, so no token is needed.
-	if err := migrate.RunSetup(srv.URL, paths, config.ConfigsMd()); err != nil {
+	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
 		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", err)
 	}
 }
