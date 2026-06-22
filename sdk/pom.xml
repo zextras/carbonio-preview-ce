@@ -154,6 +154,13 @@ SPDX-License-Identifier: AGPL-3.0-only
         </executions>
       </plugin>
 
+      <!-- Pin compiler to a version that honours maven.compiler.release -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
       <!-- Surefire for JUnit 5 -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

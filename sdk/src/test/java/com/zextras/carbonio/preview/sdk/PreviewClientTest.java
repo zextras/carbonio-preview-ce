@@ -341,46 +341,45 @@ class PreviewClientTest {
     assertFalse(client.healthReady());
   }
 
-  // ── Video (new endpoints) ─────────────────────────────────────────────────
+  // ── Video generation (POST endpoint) ─────────────────────────────────────
 
   @Test
-  void getPreviewOfVideo_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/320x240/"))
+  void generateVideoPreview_routesToCorrectPathAndReturnsPreviewId() {
+    stubFor(post(urlPathEqualTo("/preview/video/generate/vid-uuid/1/"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("target", equalTo("tgt-uuid"))
         .willReturn(aResponse()
             .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+            .withHeader("Content-Type", "application/json")
+            .withBody("{\"preview_id\":\"tgt-uuid\"}")));
 
     Query q = new QueryBuilder()
         .fileId("vid-uuid")
         .version(1)
-        .area("320x240")
         .serviceType("files")
         .build();
 
-    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
+    String id = client.generateVideoPreview(q, "tgt-uuid");
+    assertEquals("tgt-uuid", id);
   }
 
   @Test
-  void getThumbnailOfVideo_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/160x120/thumbnail/"))
+  void generateVideoPreview_429_throwsPreviewException() {
+    stubFor(post(urlPathEqualTo("/preview/video/generate/vid-uuid/1/"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("target", equalTo("tgt-uuid"))
         .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+            .withStatus(429)));
 
     Query q = new QueryBuilder()
         .fileId("vid-uuid")
         .version(1)
-        .area("160x120")
         .serviceType("files")
         .build();
 
-    try (PreviewResponse r = client.getThumbnailOfVideo(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
+    PreviewException ex = assertThrows(PreviewException.class,
+        () -> client.generateVideoPreview(q, "tgt-uuid"));
+    assertEquals(429, ex.getHttpStatus());
   }
 
   // ── Query without fileId: IllegalArgumentException ───────────────────────
