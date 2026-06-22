@@ -341,20 +341,22 @@ func TestHiddenFromDocs_Filtered(t *testing.T) {
 	}
 }
 
-// TestTimeoutKeysAbsentFromGeneratedDocs verifies that the live registry's
-// timeout keys ("timeout-in-seconds", "docs-timeout-in-seconds") are NOT
-// present in the rendered txt or md output, because they are HiddenFromDocs.
-func TestTimeoutKeysAbsentFromGeneratedDocs(t *testing.T) {
+// TestTimeoutKeysPresentInGeneratedDocs verifies that the live registry's
+// timeout keys ("timeout-in-seconds", "docs-timeout-in-seconds") ARE present
+// in the rendered txt and md output. They are documented (not hidden) because
+// the V1 upgrade migration carries an operator's customized timeout into these
+// Consul KV keys, so operators must be able to discover them.
+func TestTimeoutKeysPresentInGeneratedDocs(t *testing.T) {
 	docs := buildDocsFromRegistry()
 	txt := configdocs.RenderTxt(docs)
 	md := configdocs.RenderMd(docs)
 
 	for _, key := range []string{"timeout-in-seconds", "docs-timeout-in-seconds"} {
-		if strings.Contains(txt, key) {
-			t.Errorf("txt: key %q must be hidden from docs but appears in output:\n%s", key, txt)
+		if !strings.Contains(txt, key) {
+			t.Errorf("txt: documented key %q must appear in output but is missing:\n%s", key, txt)
 		}
-		if strings.Contains(md, key) {
-			t.Errorf("md: key %q must be hidden from docs but appears in output:\n%s", key, md)
+		if !strings.Contains(md, key) {
+			t.Errorf("md: documented key %q must appear in output but is missing:\n%s", key, md)
 		}
 	}
 }

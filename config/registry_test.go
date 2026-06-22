@@ -75,11 +75,13 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 	hiddenExpected := map[string]bool{
 		"enable-document-preview":   false,
 		"enable-document-thumbnail": false,
-		"timeout-in-seconds":        true,
-		"docs-timeout-in-seconds":   true,
-		"render-concurrency":        false,
-		"pdf-workers":               false,
-		"video-concurrency":         false,
+		// Documented (not hidden): an operator's customized timeout is migrated
+		// into these KV keys on upgrade, so they must be discoverable in docs.
+		"timeout-in-seconds":      false,
+		"docs-timeout-in-seconds": false,
+		"render-concurrency":      false,
+		"pdf-workers":             false,
+		"video-concurrency":       false,
 	}
 	for k, wantHidden := range hiddenExpected {
 		e, ok := idx[k]

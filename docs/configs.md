@@ -30,9 +30,11 @@ Overridable by Consul KV
 | Key | Default | If not set |
 | --- | ------- | ---------- |
 | `carbonio-preview/cache-max-mb` | `256` |  |
+| `carbonio-preview/docs-timeout-in-seconds` | `15` |  |
 | `carbonio-preview/enable-document-preview` | `true` |  |
 | `carbonio-preview/enable-document-thumbnail` | `false` |  |
 | `carbonio-preview/pdf-workers` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/render-concurrency` | *(not set)* | Defaults to the number of CPUs |
+| `carbonio-preview/timeout-in-seconds` | `30` |  |
 | `carbonio-preview/video-concurrency` | *(not set)* | Defaults to the number of CPUs |
 

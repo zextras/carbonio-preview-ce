@@ -72,7 +72,7 @@ func V1MigrateFromPythonIni() Migration {
 			// If the operator's value happens to equal the Go default it is still
 			// written (harmless: the registry default wins on any equal value).
 			"carbonio.preview.timeout_in_seconds": rename("carbonio-preview/timeout-in-seconds"),
-			"carbonio.preview.docs-timeout":        rename("carbonio-preview/docs-timeout-in-seconds"),
+			"carbonio.preview.docs-timeout":       rename("carbonio-preview/docs-timeout-in-seconds"),
 		},
 
 		// ── Drop-only entries (value discarded, no replacement) ──────────────────
