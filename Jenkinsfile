@@ -22,6 +22,12 @@ dt3_pipeline(
     repoName: 'carbonio-preview-ce',
     mavenPublish: ['sdk'],
     nonJavaSdkPublish: true,
+    // Generate OpenAPI + config docs on the agent (cgo-free via the apispec
+    // package) and let the Generated Files Sync bot commit them — see goGenerate
+    // in jenkins-lib-common. Keeps docs/ and the embedded config/configs.md in sync.
+    goGenerate: [
+        paths: ['docs/', 'config/configs.md', 'server/static/openapi.json'],
+    ],
     packaging: [
         addCarbonioRepos: true,
         preBuildScript: '''
