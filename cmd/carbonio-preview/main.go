@@ -117,7 +117,7 @@ func runSetupIfRequested(args []string) (handled bool, exitCode int) {
 		IniPath:   "/etc/carbonio/preview/config.ini",
 		PropsPath: "/etc/carbonio/preview/config.properties",
 	}
-	if err := migrate.RunSetup(consulURL, paths, config.ConfigsTxt()); err != nil {
+	if err := migrate.RunSetup(consulURL, paths, config.ConfigsMd()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return true, 1
 	}

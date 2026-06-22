@@ -47,7 +47,7 @@ type KeyEntry struct {
 	Description string
 
 	// HiddenFromDocs, when true, causes the key to be excluded from the
-	// generated configs.txt and docs/configs.md documentation.
+	// generated config/configs.md and docs/configs.md documentation.
 	// Use for operator-facing keys that are intentionally undocumented
 	// (e.g. internal tuning knobs not intended for general use).
 	HiddenFromDocs bool

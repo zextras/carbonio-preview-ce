@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package configdocs contains the shared renderer used by the config-docs
+// Package configdocs contains the Markdown renderer used by the config-docs
 // generator (cmd/configdocs) and by the drift-guard tests.
 //
-// The output formats replicate exactly the Java generator in
+// The Markdown pipe-table format replicates the Java generator in
 // carbonio-quarkus-extensions (ExtensionsBootstrapProcessor.generateConfigDocumentation).
 package configdocs
 
@@ -122,32 +122,6 @@ type Docs struct {
 	ApplicationEntries []Entry
 }
 
-// RenderTxt produces the plain-text Unicode-box-table format, matching
-// buildPlainText / appendUnicodeTable in ExtensionsBootstrapProcessor.
-func RenderTxt(d Docs) string {
-	net := SectionDoc{Entries: d.NetworkingEntries}
-	app := SectionDoc{Entries: d.ApplicationEntries}
-
-	configPropertiesPath := "/etc/carbonio/" + d.ShortName + "/config.properties"
-
-	var sb strings.Builder
-	sb.WriteString("Default Configuration\n\n")
-
-	if len(net.Entries) > 0 {
-		sb.WriteString("Networking Config (overridable by ")
-		sb.WriteString(configPropertiesPath)
-		sb.WriteString(")\n\n")
-		appendUnicodeTable(&sb, net)
-	}
-
-	if len(app.Entries) > 0 {
-		sb.WriteString("Application Config (overridable by Consul KV)\n\n")
-		appendUnicodeTable(&sb, app)
-	}
-
-	return sb.String()
-}
-
 // RenderMd produces the Markdown pipe-table format, matching
 // generateConfigDocumentation / appendTable in ExtensionsBootstrapProcessor.
 // The output begins with an SPDX HTML comment block (year 2026, Zextras) so
@@ -192,118 +166,6 @@ func RenderMd(d Docs) string {
 	return sb.String()
 }
 
-// appendUnicodeTable renders a single Unicode-box section, identical to the
-// Java appendUnicodeTable method.
-func appendUnicodeTable(sb *strings.Builder, sec SectionDoc) {
-	entries := sec.sorted()
-	showIfN := sec.hasIfNotPresent()
-
-	// Compute column widths starting from header lengths.
-	keyWidth := len("Key")
-	defWidth := len("Default")
-	ifnWidth := 0
-	if showIfN {
-		ifnWidth = len("If not set")
-	}
-
-	for _, e := range entries {
-		if len(e.DisplayKey) > keyWidth {
-			keyWidth = len(e.DisplayKey)
-		}
-		defVal := e.Default
-		if defVal == "" {
-			defVal = "(not set)"
-		}
-		if len(defVal) > defWidth {
-			defWidth = len(defVal)
-		}
-		if showIfN && e.Default == "" {
-			if len(e.IfNotPresent) > ifnWidth {
-				ifnWidth = len(e.IfNotPresent)
-			}
-		}
-	}
-
-	// Add padding (+2 for one leading space + one trailing space).
-	keyWidth += 2
-	defWidth += 2
-	if showIfN {
-		ifnWidth += 2
-	}
-
-	keyBar := strings.Repeat("─", keyWidth)
-	defBar := strings.Repeat("─", defWidth)
-	ifnBar := ""
-	if showIfN {
-		ifnBar = strings.Repeat("─", ifnWidth)
-	}
-
-	// Top border.
-	sb.WriteString("┌")
-	sb.WriteString(keyBar)
-	sb.WriteString("┬")
-	sb.WriteString(defBar)
-	if showIfN {
-		sb.WriteString("┬")
-		sb.WriteString(ifnBar)
-	}
-	sb.WriteString("┐\n")
-
-	// Header row.
-	sb.WriteString("│")
-	sb.WriteString(padCell("Key", keyWidth))
-	sb.WriteString("│")
-	sb.WriteString(padCell("Default", defWidth))
-	if showIfN {
-		sb.WriteString("│")
-		sb.WriteString(padCell("If not set", ifnWidth))
-	}
-	sb.WriteString("│\n")
-
-	// Header separator.
-	sb.WriteString("├")
-	sb.WriteString(keyBar)
-	sb.WriteString("┼")
-	sb.WriteString(defBar)
-	if showIfN {
-		sb.WriteString("┼")
-		sb.WriteString(ifnBar)
-	}
-	sb.WriteString("┤\n")
-
-	// Data rows.
-	for _, e := range entries {
-		defVal := e.Default
-		if defVal == "" {
-			defVal = "(not set)"
-		}
-		sb.WriteString("│")
-		sb.WriteString(padCell(e.DisplayKey, keyWidth))
-		sb.WriteString("│")
-		sb.WriteString(padCell(defVal, defWidth))
-		if showIfN {
-			ifnVal := ""
-			if e.Default == "" {
-				ifnVal = e.IfNotPresent
-			}
-			sb.WriteString("│")
-			sb.WriteString(padCell(ifnVal, ifnWidth))
-		}
-		sb.WriteString("│\n")
-	}
-
-	// Bottom border.
-	sb.WriteString("└")
-	sb.WriteString(keyBar)
-	sb.WriteString("┴")
-	sb.WriteString(defBar)
-	if showIfN {
-		sb.WriteString("┴")
-		sb.WriteString(ifnBar)
-	}
-	sb.WriteString("┘\n\n")
-}
-
 // appendMdTable renders a single Markdown pipe-table section, identical to
 // the Java appendTable method.
 func appendMdTable(sb *strings.Builder, sec SectionDoc) {
@@ -339,23 +201,4 @@ func appendMdTable(sb *strings.Builder, sec SectionDoc) {
 	}
 
 	sb.WriteString("\n")
-}
-
-// padCell pads value to exactly width runes, with one leading space and
-// trailing spaces to fill. Matches the Java pad() method exactly:
-//
-//	if (value.length() >= width) return " " + value + " ";
-//	return " " + value + " ".repeat(width - value.length() - 1);
-//
-// Width is measured with len(), which counts bytes, not Unicode code points —
-// matching Java's String.length() semantics. This is correct only for ASCII
-// input. Registry keys, defaults, and IfNotPresent strings are ASCII by
-// construction, so the output is well-defined.
-func padCell(value string, width int) string {
-	vlen := len(value)
-	if vlen >= width {
-		return " " + value + " "
-	}
-	trailing := width - vlen - 1
-	return " " + value + strings.Repeat(" ", trailing)
 }

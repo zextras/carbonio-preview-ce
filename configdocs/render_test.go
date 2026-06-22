@@ -55,14 +55,14 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// TestDriftGuard_ConfigsTxt verifies that rendering the live registry produces
-// output that is byte-for-byte identical to the committed config/configs.txt.
-// If this test fails the generator must be re-run: go run ./cmd/configdocs
-func TestDriftGuard_ConfigsTxt(t *testing.T) {
-	want := config.ConfigsTxt()
-	got := configdocs.RenderTxt(buildDocsFromRegistry())
+// TestDriftGuard_ConfigsMd_Embedded verifies that the embedded config/configs.md
+// (via config.ConfigsMd()) is byte-for-byte identical to rendering the live
+// registry. If this test fails the generator must be re-run: go run ./cmd/configdocs
+func TestDriftGuard_ConfigsMd_Embedded(t *testing.T) {
+	want := config.ConfigsMd()
+	got := configdocs.RenderMd(buildDocsFromRegistry())
 	if got != want {
-		t.Errorf("configs.txt has drifted from the registry.\n"+
+		t.Errorf("config/configs.md (embedded) has drifted from the registry.\n"+
 			"Run: go run ./cmd/configdocs\n\n"+
 			"--- want (embedded) ---\n%s\n--- got (rendered) ---\n%s",
 			want, got)
@@ -109,8 +109,8 @@ func TestDriftGuard_Mutation(t *testing.T) {
 	}
 	docs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
 
-	got := configdocs.RenderTxt(docs)
-	committed := config.ConfigsTxt()
+	got := configdocs.RenderMd(docs)
+	committed := config.ConfigsMd()
 	if got == committed {
 		t.Error("mutated registry produced identical output — drift-guard cannot detect drift")
 	}
@@ -126,43 +126,34 @@ func TestAlphabeticalOrder(t *testing.T) {
 		{Key: "alpha", Namespace: "application", Default: "a"},
 		{Key: "middle", Namespace: "application", Default: "m"},
 	})
-	txt := configdocs.RenderTxt(docs)
+	md := configdocs.RenderMd(docs)
 
-	idxAlpha := strings.Index(txt, "carbonio-svc/alpha")
-	idxMiddle := strings.Index(txt, "carbonio-svc/middle")
-	idxZebra := strings.Index(txt, "carbonio-svc/zebra")
+	idxAlpha := strings.Index(md, "carbonio-svc/alpha")
+	idxMiddle := strings.Index(md, "carbonio-svc/middle")
+	idxZebra := strings.Index(md, "carbonio-svc/zebra")
 
 	if idxAlpha < 0 || idxMiddle < 0 || idxZebra < 0 {
-		t.Fatalf("expected all keys in output; got:\n%s", txt)
+		t.Fatalf("expected all keys in output; got:\n%s", md)
 	}
 	if !(idxAlpha < idxMiddle && idxMiddle < idxZebra) {
 		t.Errorf("keys not in alphabetical order: alpha=%d middle=%d zebra=%d\n%s",
-			idxAlpha, idxMiddle, idxZebra, txt)
+			idxAlpha, idxMiddle, idxZebra, md)
 	}
 }
 
-// TestNotSetRendering verifies that an empty Default is rendered as "(not set)"
-// in the txt output and "*(not set)*" in the md output.
+// TestNotSetRendering verifies that an empty Default is rendered as
+// "*(not set)*" in the md output.
 func TestNotSetRendering(t *testing.T) {
 	docs := configdocs.BuildDocs("carbonio-svc", "svc", []configdocs.RawKey{
 		{Key: "empty-key", Namespace: "application", Default: "", IfNotPresent: "some note"},
 		{Key: "set-key", Namespace: "application", Default: "val"},
 	})
 
-	txt := configdocs.RenderTxt(docs)
-	if !strings.Contains(txt, "(not set)") {
-		t.Errorf("txt: expected '(not set)' for empty default; got:\n%s", txt)
-	}
-	// Make sure non-empty default is NOT rendered as (not set)
-	if strings.Contains(txt, "(not set)") && strings.Contains(txt, "val") {
-		// ok — both exist
-	}
-
 	md := configdocs.RenderMd(docs)
 	if !strings.Contains(md, "*(not set)*") {
 		t.Errorf("md: expected '*(not set)*' for empty default; got:\n%s", md)
 	}
-	// Non-empty default should be backtick-quoted
+	// Non-empty default should be backtick-quoted.
 	if !strings.Contains(md, "`val`") {
 		t.Errorf("md: expected backtick-quoted value; got:\n%s", md)
 	}
@@ -175,10 +166,6 @@ func TestConditionalThirdColumn_Present(t *testing.T) {
 		{Key: "a", Namespace: "application", Default: ""},
 		{Key: "b", Namespace: "application", Default: "", IfNotPresent: "some note"},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if !strings.Contains(txt, "If not set") {
-		t.Errorf("expected 'If not set' column header when IfNotPresent present; got:\n%s", txt)
-	}
 	md := configdocs.RenderMd(docs)
 	if !strings.Contains(md, "If not set") {
 		t.Errorf("md: expected 'If not set' column; got:\n%s", md)
@@ -192,13 +179,9 @@ func TestConditionalThirdColumn_Absent(t *testing.T) {
 		{Key: "a", Namespace: "application", Default: "val1"},
 		{Key: "b", Namespace: "application", Default: "val2"},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if strings.Contains(txt, "If not set") {
-		t.Errorf("expected NO 'If not set' column when no entry qualifies; got:\n%s", txt)
-	}
 	md := configdocs.RenderMd(docs)
 	if strings.Contains(md, "If not set") {
-		t.Errorf("md: expected NO 'If not set' column; got:\n%s", md)
+		t.Errorf("md: expected NO 'If not set' column when no entry qualifies; got:\n%s", md)
 	}
 }
 
@@ -209,9 +192,9 @@ func TestConditionalThirdColumn_EmptyDefaultNoNote(t *testing.T) {
 		{Key: "no-note", Namespace: "application", Default: "", IfNotPresent: ""},
 		{Key: "has-val", Namespace: "application", Default: "present"},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if strings.Contains(txt, "If not set") {
-		t.Errorf("empty IfNotPresent should NOT trigger third column; got:\n%s", txt)
+	md := configdocs.RenderMd(docs)
+	if strings.Contains(md, "If not set") {
+		t.Errorf("empty IfNotPresent should NOT trigger third column; got:\n%s", md)
 	}
 }
 
@@ -227,16 +210,16 @@ func TestConditionalThirdColumn_PerSection(t *testing.T) {
 		{Key: "workers", Namespace: "application", Default: "2"},
 		{Key: "pdf-workers", Namespace: "application", Default: "", IfNotPresent: "Defaults to CPUs"},
 	})
-	txt := configdocs.RenderTxt(docs)
+	md := configdocs.RenderMd(docs)
 
 	// Split into sections by looking at the section headers.
-	netStart := strings.Index(txt, "Networking Config")
-	appStart := strings.Index(txt, "Application Config")
+	netStart := strings.Index(md, "## Networking Config")
+	appStart := strings.Index(md, "## Application Config")
 	if netStart < 0 || appStart < 0 {
-		t.Fatalf("section headers not found:\n%s", txt)
+		t.Fatalf("section headers not found:\n%s", md)
 	}
-	netSection := txt[netStart:appStart]
-	appSection := txt[appStart:]
+	netSection := md[netStart:appStart]
+	appSection := md[appStart:]
 
 	if strings.Contains(netSection, "If not set") {
 		t.Errorf("networking section should NOT have 'If not set' column; got:\n%s", netSection)
@@ -252,85 +235,30 @@ func TestKvPathDisplay(t *testing.T) {
 		{Key: "storages.download-api", Namespace: "application", Default: "download"},
 		{Key: "timeout-in-seconds", Namespace: "application", Default: "30"},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if !strings.Contains(txt, "carbonio-preview/storages/download-api") {
-		t.Errorf("expected KV path 'carbonio-preview/storages/download-api'; got:\n%s", txt)
+	md := configdocs.RenderMd(docs)
+	if !strings.Contains(md, "carbonio-preview/storages/download-api") {
+		t.Errorf("expected KV path 'carbonio-preview/storages/download-api'; got:\n%s", md)
 	}
-	if !strings.Contains(txt, "carbonio-preview/timeout-in-seconds") {
-		t.Errorf("expected KV path 'carbonio-preview/timeout-in-seconds'; got:\n%s", txt)
+	if !strings.Contains(md, "carbonio-preview/timeout-in-seconds") {
+		t.Errorf("expected KV path 'carbonio-preview/timeout-in-seconds'; got:\n%s", md)
 	}
 	// Networking keys should appear as raw dot-notation.
 	docs2 := configdocs.BuildDocs("carbonio-preview", "preview", []configdocs.RawKey{
 		{Key: "carbonio.service.host", Namespace: "networking", Default: "127.0.0.1"},
 	})
-	txt2 := configdocs.RenderTxt(docs2)
-	if !strings.Contains(txt2, "carbonio.service.host") {
-		t.Errorf("networking key should appear as raw dot-notation; got:\n%s", txt2)
-	}
-}
-
-// TestBoxAlignment verifies that the Unicode box table has correct column widths
-// with varied content lengths and proper border characters.
-func TestBoxAlignment(t *testing.T) {
-	docs := configdocs.BuildDocs("svc", "svc", []configdocs.RawKey{
-		{Key: "short", Namespace: "application", Default: "a-very-long-default-value"},
-		{Key: "a-much-longer-key-name", Namespace: "application", Default: "x"},
-	})
-	txt := configdocs.RenderTxt(docs)
-
-	// Verify top border characters.
-	if !strings.Contains(txt, "┌") || !strings.Contains(txt, "┐") {
-		t.Errorf("expected top border corners; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "┬") {
-		t.Errorf("expected top border junction '┬'; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "└") || !strings.Contains(txt, "┘") {
-		t.Errorf("expected bottom border corners; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "┴") {
-		t.Errorf("expected bottom border junction '┴'; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "├") || !strings.Contains(txt, "┤") {
-		t.Errorf("expected header separator; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "┼") {
-		t.Errorf("expected header separator junction '┼'; got:\n%s", txt)
-	}
-
-	// Each data row (containing '│') must have the same length.
-	lines := strings.Split(txt, "\n")
-	var rowLens []int
-	for _, l := range lines {
-		if strings.HasPrefix(l, "│") {
-			rowLens = append(rowLens, len(l))
-		}
-	}
-	if len(rowLens) == 0 {
-		t.Fatal("no table rows found")
-	}
-	first := rowLens[0]
-	for i, rl := range rowLens {
-		if rl != first {
-			t.Errorf("row %d has different length %d (expected %d)", i, rl, first)
-		}
+	md2 := configdocs.RenderMd(docs2)
+	if !strings.Contains(md2, "carbonio.service.host") {
+		t.Errorf("networking key should appear as raw dot-notation; got:\n%s", md2)
 	}
 }
 
 // TestHiddenFromDocs_Filtered verifies that keys with HiddenFromDocs=true are
-// excluded from both txt and md rendered output.
+// excluded from the md rendered output.
 func TestHiddenFromDocs_Filtered(t *testing.T) {
 	docs := configdocs.BuildDocs("carbonio-svc", "svc", []configdocs.RawKey{
 		{Key: "visible-key", Namespace: "application", Default: "v"},
 		{Key: "hidden-key", Namespace: "application", Default: "h", HiddenFromDocs: true},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if strings.Contains(txt, "hidden-key") {
-		t.Errorf("txt: HiddenFromDocs key must not appear in output; got:\n%s", txt)
-	}
-	if !strings.Contains(txt, "visible-key") {
-		t.Errorf("txt: visible key must appear in output; got:\n%s", txt)
-	}
 
 	md := configdocs.RenderMd(docs)
 	if strings.Contains(md, "hidden-key") {
@@ -343,34 +271,29 @@ func TestHiddenFromDocs_Filtered(t *testing.T) {
 
 // TestTimeoutKeysPresentInGeneratedDocs verifies that the live registry's
 // timeout keys ("timeout-in-seconds", "docs-timeout-in-seconds") ARE present
-// in the rendered txt and md output. They are documented (not hidden) because
+// in the rendered md output. They are documented (not hidden) because
 // the V1 upgrade migration carries an operator's customized timeout into these
 // Consul KV keys, so operators must be able to discover them.
 func TestTimeoutKeysPresentInGeneratedDocs(t *testing.T) {
 	docs := buildDocsFromRegistry()
-	txt := configdocs.RenderTxt(docs)
 	md := configdocs.RenderMd(docs)
 
 	for _, key := range []string{"timeout-in-seconds", "docs-timeout-in-seconds"} {
-		if !strings.Contains(txt, key) {
-			t.Errorf("txt: documented key %q must appear in output but is missing:\n%s", key, txt)
-		}
 		if !strings.Contains(md, key) {
 			t.Errorf("md: documented key %q must appear in output but is missing:\n%s", key, md)
 		}
 	}
 }
 
-// TestRenderTxt_TrailingNewline verifies the output ends with the blank line
-// after the last table (matching the Java generator which appends "\n\n" after
-// each table bottom border).
-func TestRenderTxt_TrailingNewline(t *testing.T) {
+// TestRenderMd_TrailingNewline verifies the Markdown output ends with a blank
+// line after the last table.
+func TestRenderMd_TrailingNewline(t *testing.T) {
 	docs := configdocs.BuildDocs("carbonio-svc", "svc", []configdocs.RawKey{
 		{Key: "k", Namespace: "application", Default: "v"},
 	})
-	txt := configdocs.RenderTxt(docs)
-	if !strings.HasSuffix(txt, "\n\n") {
+	md := configdocs.RenderMd(docs)
+	if !strings.HasSuffix(md, "\n\n") {
 		t.Errorf("expected output to end with '\\n\\n'; got %q (last 10 chars: %q)",
-			txt, txt[max(0, len(txt)-10):])
+			md, md[max(0, len(md)-10):])
 	}
 }

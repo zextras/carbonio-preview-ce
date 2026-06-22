@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Command configdocs generates two configuration documentation files from the
+// Command configdocs generates configuration documentation files from the
 // key registry:
 //
-//   - docs/configs.md    — Markdown pipe-table format
-//   - config/configs.txt — Unicode box-table plain-text (embedded in binary)
+//   - docs/configs.md    — Markdown pipe-table format (repo-facing)
+//   - config/configs.md  — same Markdown content (embedded in binary for --setup)
+//
+// Both files are identical in content. The generator writes the Markdown once
+// and copies the same bytes to both paths.
 //
 // It is invoked via the go:generate directive in config/registry.go:
 //
@@ -43,23 +46,26 @@ func main() {
 
 	docs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
 
-	// Write config/configs.txt
-	txtPath := filepath.Join(root, "config", "configs.txt")
-	if err := os.MkdirAll(filepath.Dir(txtPath), 0o755); err != nil {
-		log.Fatalf("configdocs: mkdir %s: %v", filepath.Dir(txtPath), err)
-	}
-	if err := os.WriteFile(txtPath, []byte(configdocs.RenderTxt(docs)), 0o644); err != nil {
-		log.Fatalf("configdocs: write configs.txt: %v", err)
-	}
-	log.Printf("configdocs: wrote %s", txtPath)
+	// Generate Markdown once; write to both paths (identical content).
+	md := configdocs.RenderMd(docs)
 
-	// Write docs/configs.md
+	// Write config/configs.md (embedded in binary via go:embed for --setup).
+	embeddedPath := filepath.Join(root, "config", "configs.md")
+	if err := os.MkdirAll(filepath.Dir(embeddedPath), 0o755); err != nil {
+		log.Fatalf("configdocs: mkdir %s: %v", filepath.Dir(embeddedPath), err)
+	}
+	if err := os.WriteFile(embeddedPath, []byte(md), 0o644); err != nil {
+		log.Fatalf("configdocs: write config/configs.md: %v", err)
+	}
+	log.Printf("configdocs: wrote %s", embeddedPath)
+
+	// Write docs/configs.md (repo-facing documentation).
 	mdPath := filepath.Join(root, "docs", "configs.md")
 	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
 		log.Fatalf("configdocs: mkdir %s: %v", filepath.Dir(mdPath), err)
 	}
-	if err := os.WriteFile(mdPath, []byte(configdocs.RenderMd(docs)), 0o644); err != nil {
-		log.Fatalf("configdocs: write configs.md: %v", err)
+	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
+		log.Fatalf("configdocs: write docs/configs.md: %v", err)
 	}
 	log.Printf("configdocs: wrote %s", mdPath)
 }

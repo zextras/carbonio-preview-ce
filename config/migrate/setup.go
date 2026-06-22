@@ -17,39 +17,39 @@ import (
 //   - Gates the token check: SETUP_CONSUL_TOKEN is required only when application
 //     entries will actually run (ini present and contains at least one application
 //     key).
-//   - Runs migrations, then always prints configsTxt (a blank line followed by
-//     the embedded configs.txt content).
+//   - Runs migrations, then always prints configsMd (a blank line followed by
+//     the embedded configs.md Markdown content).
 //   - Returns a non-nil error on any failure; the caller is responsible for
 //     exiting with a non-zero code.
 //
 // paths holds the injectable file paths and Consul URL; the production caller
 // passes the production paths, tests pass t.TempDir() paths directly.
-// configsTxt is the embedded configs.txt content (config.ConfigsTxt()).
-func RunSetup(consulURL string, paths Paths, configsTxt string) error {
+// configsMd is the embedded configs.md content (config.ConfigsMd()).
+func RunSetup(consulURL string, paths Paths, configsMd string) error {
 	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))
 	paths.ConsulURL = consulURL
 	paths.ConsulToken = token
 
 	runner, err := NewRunner(paths)
 	if err != nil {
-		printDocs(configsTxt)
+		printDocs(configsMd)
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	// Gate on token only when application-layer work is actually needed.
 	if runner.HasApplicationWork() && token == "" {
-		printDocs(configsTxt)
+		printDocs(configsMd)
 		return fmt.Errorf("error: SETUP_CONSUL_TOKEN environment variable is not set")
 	}
 
 	runner.Run()
-	printDocs(configsTxt)
+	printDocs(configsMd)
 	return nil
 }
 
-// printDocs prints a blank line followed by the embedded configs.txt content.
+// printDocs prints a blank line followed by the embedded configs.md content.
 // Mirrors SetupAwareMain.printConfigDocumentation.
-func printDocs(configsTxt string) {
+func printDocs(configsMd string) {
 	fmt.Println()
-	fmt.Print(configsTxt)
+	fmt.Print(configsMd)
 }

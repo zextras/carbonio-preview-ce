@@ -100,10 +100,10 @@ func TestSetupCLI_MissingConsulURL(t *testing.T) {
 	}
 }
 
-// TestSetupSuccessPath_PrintsConfigsTxt verifies that migrate.RunSetup with an
+// TestSetupSuccessPath_PrintsConfigsMd verifies that migrate.RunSetup with an
 // absent ini exits cleanly and that config documentation is printed.
 // Uses t.TempDir() paths passed directly — no subprocess, no env-var hooks.
-func TestSetupSuccessPath_PrintsConfigsTxt(t *testing.T) {
+func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 	dir := t.TempDir()
 
 	// A minimal Consul stub that accepts any request.
@@ -126,7 +126,7 @@ func TestSetupSuccessPath_PrintsConfigsTxt(t *testing.T) {
 
 	// Call migrate.RunSetup directly with the test's Consul stub.
 	// When ini is absent there is no application work, so no token is needed.
-	if err := migrate.RunSetup(srv.URL, paths, config.ConfigsTxt()); err != nil {
+	if err := migrate.RunSetup(srv.URL, paths, config.ConfigsMd()); err != nil {
 		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", err)
 	}
 }
