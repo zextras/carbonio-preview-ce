@@ -64,6 +64,7 @@ RUN go mod download
 COPY cache/  ./cache/
 COPY cmd/    ./cmd/
 COPY config/ ./config/
+COPY db/     ./db/
 COPY render/ ./render/
 COPY server/ ./server/
 COPY storage/ ./storage/
