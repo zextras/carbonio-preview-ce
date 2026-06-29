@@ -216,13 +216,13 @@ func registerCEKeys() {
 			Key:         "carbonio.postgresql.host",
 			Namespace:   NamespaceNetworking,
 			Default:     "127.78.0.6",
-			Description: "Hostname or IP of the PostgreSQL service (via Consul mesh upstream, default port 20000).",
+			Description: "Hostname or IP of the carbonio-preview-db PostgreSQL service (via Consul mesh upstream, default port 20003).",
 		},
 		{
 			Key:         "carbonio.postgresql.port",
 			Namespace:   NamespaceNetworking,
-			Default:     "20000",
-			Description: "Port of the PostgreSQL service (Consul mesh upstream).",
+			Default:     "20003",
+			Description: "Port of the carbonio-preview-db PostgreSQL service (Consul mesh upstream; 20003 avoids collision with carbonio-storages on 20000).",
 		},
 	}
 

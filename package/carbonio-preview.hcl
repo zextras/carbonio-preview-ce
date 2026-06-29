@@ -19,6 +19,11 @@ services {
             destination_name   = "carbonio-docs-editor"
             local_bind_address = "127.78.0.6"
             local_bind_port    = 20001
+          },
+          {
+            destination_name   = "carbonio-preview-db"
+            local_bind_address = "127.78.0.6"
+            local_bind_port    = 20003
           }
         ]
       }

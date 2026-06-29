@@ -16,7 +16,7 @@ Overridable by `/etc/carbonio/preview/config.properties`
 | `carbonio.docs-editor.port` | `20001` |
 | `carbonio.docs-editor.protocol` | `http` |
 | `carbonio.postgresql.host` | `127.78.0.6` |
-| `carbonio.postgresql.port` | `20000` |
+| `carbonio.postgresql.port` | `20003` |
 | `carbonio.service-discover.host` | `127.0.0.1` |
 | `carbonio.service-discover.port` | `8500` |
 | `carbonio.service.host` | `127.78.0.6` |
