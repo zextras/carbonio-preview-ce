@@ -14,7 +14,6 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 
 /**
  * Thin REST client for the Carbonio Preview CE service.
@@ -36,6 +35,14 @@ import java.time.Duration;
  * the generated multipart helper would take.
  *
  * <p>All methods are thread-safe; the underlying {@link HttpClient} is shared.
+ *
+ * <h3>Video preview methods</h3>
+ * <ul>
+ *   <li>{@link #getPreviewOfVideo(Query)} — retrieve a video first-frame preview image</li>
+ *   <li>{@link #getThumbnailOfVideo(Query)} — retrieve a video thumbnail image</li>
+ *   <li>{@link #deleteVideoPreview(Query)} — delete a stored video preview from the server</li>
+ *   <li>{@link #copyVideoPreview(Query, String, String)} — copy a stored video preview to a new id</li>
+ * </ul>
  */
 public final class PreviewClient implements Closeable {
 
@@ -45,39 +52,16 @@ public final class PreviewClient implements Closeable {
   private final HttpClient http;
 
   /**
-   * Per-request timeout applied ONLY to {@link #generateVideoPreview(Query, String)}.
-   * {@code null} means no explicit timeout (the default for the view-time / image client built
-   * via {@link #atURL(String)}). The generate-capable client built via
-   * {@link #atURL(String, Duration)} carries a (hardcoded by the caller) ceiling such as
-   * {@code Duration.ofMinutes(15)} so a single generate call cannot hang forever.
-   */
-  private final Duration requestTimeout;
-
-  /**
-   * Creates a client connected to {@code baseUrl} with no per-request timeout.
+   * Creates a client connected to {@code baseUrl}.
    *
    * @param baseUrl base URL of the service, e.g. {@code "http://localhost:20003"}.
    *                Must NOT have a trailing slash.
    * @param http    the {@link HttpClient} to use
    */
   public PreviewClient(String baseUrl, HttpClient http) {
-    this(baseUrl, http, null);
-  }
-
-  /**
-   * Creates a client connected to {@code baseUrl} with an optional per-request timeout that is
-   * applied to {@link #generateVideoPreview(Query, String)}.
-   *
-   * @param baseUrl        base URL of the service, e.g. {@code "http://localhost:20003"}.
-   *                       Must NOT have a trailing slash.
-   * @param http           the {@link HttpClient} to use
-   * @param requestTimeout per-request timeout for the generate call, or {@code null} for none
-   */
-  public PreviewClient(String baseUrl, HttpClient http, Duration requestTimeout) {
     // Normalise: strip trailing slash
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     this.http = http;
-    this.requestTimeout = requestTimeout;
   }
 
   /**
@@ -92,23 +76,6 @@ public final class PreviewClient implements Closeable {
   public static PreviewClient atURL(String baseUrl) {
     return new PreviewClient(baseUrl,
         HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
-  }
-
-  /**
-   * Creates a generate-capable client backed by a default HTTP/1.1 {@link HttpClient}, applying
-   * {@code requestTimeout} as the per-request timeout for {@link #generateVideoPreview(Query, String)}.
-   *
-   * <p>WSC builds this variant with a hardcoded {@code Duration.ofMinutes(15)} so a generate call
-   * (which preview normally answers within its own ~30s internal limit) cannot hang indefinitely
-   * under load/latency. The timeout does NOT apply to the GET download / multipart POST methods.
-   *
-   * @param baseUrl        base URL, e.g. {@code "http://localhost:20003"}
-   * @param requestTimeout per-request timeout applied to the generate call (never {@code null} here)
-   */
-  public static PreviewClient atURL(String baseUrl, Duration requestTimeout) {
-    return new PreviewClient(baseUrl,
-        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(),
-        requestTimeout);
   }
 
   // -------------------------------------------------------------------------
@@ -174,58 +141,134 @@ public final class PreviewClient implements Closeable {
   }
 
   // -------------------------------------------------------------------------
-  // Video generation (server-side first-frame extract + store)
+  // Video preview (GET, DELETE, POST copy)
   // -------------------------------------------------------------------------
 
   /**
-   * Triggers server-side generation of a video's first-frame preview. The server streams the
-   * source video from storage, extracts the first frame, JPEG-encodes it (quality 90, full
-   * resolution), and stores it at the caller-supplied {@code targetNodeId}, echoing that id back.
+   * Retrieves a stored video first-frame preview image.
    *
-   * <p>Synchronous from the caller's view: it returns only once the frame has been stored. The
-   * server caps generation on a DEDICATED video semaphore and returns HTTP 429 (try-acquire,
-   * no waiting) when full; that surfaces as a {@link PreviewException} with
-   * {@code getHttpStatus() == 429}. Callers MUST treat 429 as transient backpressure — same as
-   * 503 (preview down), 504 (deadline) and other 5xx — leaving the work pending and retrying at
-   * the next trigger or sweep. A 422 means ffmpeg cannot decode the source (e.g. AV1 / corrupt)
-   * and is terminal.
+   * <p>HTTP contract:
+   * {@code GET /preview/video/{id}/{version}/{area}/?service_type=&quality=&output_format=&crop=}
+   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
    *
-   * <p>HTTP contract (must match the CE/Advanced generate endpoint exactly):
-   * {@code POST /preview/video/generate/{fileId}/{version}/?service_type=<chats|files>&target=<targetNodeId>}
-   * with header {@code FileOwnerId: <ownerId>}. Response 200 body
-   * {@code {"preview_id":"<targetNodeId>"}}.
+   * <p>Mirrors {@link #getPreviewOfImage(Query)} exactly — same return type, same exception
+   * behaviour — but targets the {@code /preview/video/} path.
    *
-   * @param query        must carry fileId (source node), version, serviceType and ownerId.
-   * @param targetNodeId the UUID (minted by the caller / WSC) under which the frame is stored.
-   * @return the storage node id of the stored first-frame image (equal to {@code targetNodeId}).
-   * @throws PreviewException with {@link PreviewException#getHttpStatus()} carrying the server
-   *                          status on any non-200 response (429 = busy/transient).
+   * @param query must carry fileId, version, area and serviceType; ownerId is optional.
+   * @return a streaming {@link PreviewResponse} carrying the JPEG/PNG image bytes.
+   * @throws PreviewException on any non-200 HTTP response.
+   * @throws IllegalArgumentException when fileId is null or empty.
    */
-  public String generateVideoPreview(Query query, String targetNodeId) {
+  public PreviewResponse getPreviewOfVideo(Query query) {
     requireFileId(query);
     String url = baseUrl
-        + "/preview/video/generate/" + enc(query.getFileId())
+        + "/preview/video/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/"
+        + buildImageQueryString(query, false);
+    return doGet(query, url);
+  }
+
+  /**
+   * Retrieves a stored video thumbnail image.
+   *
+   * <p>HTTP contract:
+   * {@code GET /preview/video/{id}/{version}/{area}/thumbnail/?service_type=&shape=&quality=&output_format=}
+   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
+   *
+   * <p>Mirrors {@link #getThumbnailOfImage(Query)} exactly — same return type, same exception
+   * behaviour — but targets the {@code /preview/video/} path.
+   *
+   * @param query must carry fileId, version and area; serviceType, shape, quality, outputFormat
+   *              and ownerId are optional.
+   * @return a streaming {@link PreviewResponse} carrying the thumbnail image bytes.
+   * @throws PreviewException on any non-200 HTTP response.
+   * @throws IllegalArgumentException when fileId is null or empty.
+   */
+  public PreviewResponse getThumbnailOfVideo(Query query) {
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/video/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + enc(query.getArea()) + "/thumbnail/"
+        + buildImageThumbnailQueryString(query);
+    return doGet(query, url);
+  }
+
+  /**
+   * Deletes a stored video preview from the server.
+   *
+   * <p>HTTP contract:
+   * {@code DELETE /preview/video/{id}/{version}/?service_type=}
+   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
+   *
+   * <p>Returns normally (void) on HTTP 200 or 204. Throws {@link PreviewException} on any other
+   * status. Note: the server may return 404 when no preview exists for that id/version/service
+   * tuple — callers should decide whether to treat that as a no-op.
+   *
+   * @param query must carry fileId, version and serviceType; ownerId is optional.
+   * @throws PreviewException on any non-2xx HTTP response (e.g. 404 = not found, 422 = bad args).
+   * @throws IllegalArgumentException when fileId is null or empty.
+   */
+  public void deleteVideoPreview(Query query) {
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/video/" + enc(query.getFileId())
         + "/" + query.getVersion() + "/"
-        + "?service_type=" + enc(query.getServiceType())
-        + "&target=" + enc(targetNodeId);
+        + buildVideoDeleteQueryString(query);
+    doDelete(query, url);
+  }
+
+  /**
+   * Copies a stored video preview to a new target blob id.
+   *
+   * <p>HTTP contract:
+   * {@code POST /preview/video/{id}/{version}/copy/?service_type=&target={targetBlobId}}
+   * with headers:
+   * <ul>
+   *   <li>{@code FileOwnerId: <ownerId from query>} — identifies the source owner for PowerStore
+   *       routing (same convention as all other methods).</li>
+   *   <li>{@code TargetOwnerId: <targetOwnerId>} — identifies the owner under which the copy
+   *       is stored on PowerStore. Sent only when {@code targetOwnerId} is non-null and
+   *       non-empty.</li>
+   * </ul>
+   * The target blob id is also conveyed as the {@code target} query parameter so the Go endpoint
+   * can construct the storage key without parsing headers. Response 200 body:
+   * {@code {"preview_id":"<uuid>"}}.
+   *
+   * @param query         must carry fileId, version and serviceType; ownerId is the source owner.
+   * @param targetBlobId  the UUID under which the copy should be stored (minted by the caller).
+   * @param targetOwnerId the owner id of the copy's destination; may be null/empty when the
+   *                      destination owner matches the source owner or the storage layer does not
+   *                      require per-owner routing.
+   * @return a {@link VideoPreviewCopyResponse} carrying the new preview's storage UUID.
+   * @throws PreviewException on any non-200 HTTP response.
+   * @throws IllegalArgumentException when fileId is null or empty.
+   */
+  public VideoPreviewCopyResponse copyVideoPreview(Query query, String targetBlobId, String targetOwnerId) {
+    requireFileId(query);
+    String url = baseUrl
+        + "/preview/video/" + enc(query.getFileId())
+        + "/" + query.getVersion() + "/copy/"
+        + buildVideoCopyQueryString(query, targetBlobId);
 
     HttpRequest.Builder b = HttpRequest.newBuilder()
         .uri(URI.create(url))
         .header("Content-Type", "application/json")
         .POST(BodyPublishers.noBody());
-    if (requestTimeout != null) {
-      b.timeout(requestTimeout);
-    }
     applyOwner(b, query);
+    if (targetOwnerId != null && !targetOwnerId.isEmpty()) {
+      b.header("TargetOwnerId", targetOwnerId);
+    }
 
     HttpResponse<String> response;
     try {
       response = http.send(b.build(), BodyHandlers.ofString());
     } catch (IOException e) {
-      throw new PreviewException(0, "I/O error sending generate request to " + url, e);
+      throw new PreviewException(0, "I/O error sending copy request to " + url, e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      throw new PreviewException(0, "Generate request interrupted", e);
+      throw new PreviewException(0, "Copy request interrupted", e);
     }
 
     int status = response.statusCode();
@@ -233,7 +276,7 @@ public final class PreviewClient implements Closeable {
       throw new PreviewException(status,
           "Server returned HTTP " + status + " for " + url);
     }
-    return parsePreviewId(response.body());
+    return new VideoPreviewCopyResponse(parsePreviewId(response.body()));
   }
 
   // -------------------------------------------------------------------------
@@ -372,6 +415,35 @@ public final class PreviewClient implements Closeable {
   }
 
   /**
+   * Issues a DELETE request and discards the response body.
+   *
+   * <p>Returns normally on HTTP 200 or 204; throws {@link PreviewException} on any other status.
+   * The optional {@code FileOwnerId} header is sent if the query carries a non-empty ownerId.
+   */
+  private void doDelete(Query query, String url) {
+    HttpRequest.Builder b = HttpRequest.newBuilder()
+        .uri(URI.create(url))
+        .DELETE();
+    applyOwner(b, query);
+
+    HttpResponse<Void> response;
+    try {
+      response = http.send(b.build(), BodyHandlers.discarding());
+    } catch (IOException e) {
+      throw new PreviewException(0, "I/O error sending DELETE request to " + url, e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new PreviewException(0, "DELETE request interrupted", e);
+    }
+
+    int status = response.statusCode();
+    if (status != 200 && status != 204) {
+      throw new PreviewException(status,
+          "Server returned HTTP " + status + " for DELETE " + url);
+    }
+  }
+
+  /**
    * Adds the {@code FileOwnerId} header to the request builder when the query carries a
    * non-null, non-empty owner ID. The preview server uses this header for PowerStore storage
    * routing; it is ignored by legacy storage nodes that do not require it.
@@ -475,6 +547,19 @@ public final class PreviewClient implements Closeable {
     return sb.toString();
   }
 
+  private String buildVideoDeleteQueryString(Query q) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    return sb.toString();
+  }
+
+  private String buildVideoCopyQueryString(Query q, String targetBlobId) {
+    StringBuilder sb = new StringBuilder("?");
+    appendRequired(sb, "service_type", q.getServiceType());
+    appendRequired(sb, "target", targetBlobId);
+    return sb.toString();
+  }
+
   private static void appendRequired(StringBuilder sb, String key, String value) {
     if (value == null || value.isEmpty()) return;
     // sb starts with "?" so always use "&" if there is already a param
@@ -500,9 +585,9 @@ public final class PreviewClient implements Closeable {
   }
 
   /**
-   * Extracts the {@code preview_id} field from the generate endpoint's JSON response body
-   * ({@code {"preview_id":"<id>"}}). Uses a minimal dependency-free scan to avoid coupling the
-   * generate path to the Jackson runtime and to keep this wrapper byte-identical to the CE SDK.
+   * Extracts the {@code preview_id} field from a JSON response body
+   * ({@code {"preview_id":"<id>"}}). Used by {@link #copyVideoPreview(Query, String, String)}.
+   * Uses a minimal dependency-free scan to avoid coupling the client to the Jackson runtime.
    *
    * @throws PreviewException (status 0) when the field is absent or the body is malformed.
    */

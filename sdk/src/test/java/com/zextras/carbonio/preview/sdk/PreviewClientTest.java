@@ -341,17 +341,108 @@ class PreviewClientTest {
     assertFalse(client.healthReady());
   }
 
-  // ── Video generation (POST endpoint) ─────────────────────────────────────
+  // ── Video preview (GET, DELETE, POST copy) ───────────────────────────────
 
   @Test
-  void generateVideoPreview_routesToCorrectPathAndReturnsPreviewId() {
-    stubFor(post(urlPathEqualTo("/preview/video/generate/vid-uuid/1/"))
-        .withQueryParam("service_type", equalTo("files"))
-        .withQueryParam("target", equalTo("tgt-uuid"))
+  void getPreviewOfVideo_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/640x480/"))
+        .withQueryParam("service_type", equalTo("chats"))
         .willReturn(aResponse()
             .withStatus(200)
-            .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"tgt-uuid\"}")));
+            .withHeader("Content-Type", MIME_JPEG)
+            .withHeader("Content-Length", String.valueOf(IMAGE_BYTES.length))
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .area("640x480")
+        .serviceType("chats")
+        .build();
+
+    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
+      assertEquals(MIME_JPEG, r.getMimeType());
+      assertEquals(IMAGE_BYTES.length, r.getLength());
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+  }
+
+  @Test
+  void getPreviewOfVideo_withOwnerId_sendsFileOwnerIdHeader() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/2/320x240/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(2)
+        .area("320x240")
+        .serviceType("files")
+        .ownerId("owner-abc")
+        .build();
+
+    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+
+    verify(getRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/2/320x240/"))
+        .withHeader("FileOwnerId", equalTo("owner-abc")));
+  }
+
+  @Test
+  void getPreviewOfVideo_404_throwsPreviewException() {
+    stubFor(get(urlPathEqualTo("/preview/video/missing-vid/1/100x100/"))
+        .willReturn(aResponse().withStatus(404)));
+
+    Query q = new QueryBuilder()
+        .fileId("missing-vid")
+        .version(1)
+        .area("100x100")
+        .serviceType("files")
+        .build();
+
+    PreviewException ex = assertThrows(PreviewException.class,
+        () -> client.getPreviewOfVideo(q));
+    assertEquals(404, ex.getHttpStatus());
+    assertTrue(ex.isNotFound());
+  }
+
+  @Test
+  void getThumbnailOfVideo_routesToCorrectPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/video/thumb-vid/3/128x128/thumbnail/"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("quality", equalTo("high"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("thumb-vid")
+        .version(3)
+        .area("128x128")
+        .serviceType("files")
+        .quality("high")
+        .build();
+
+    try (PreviewResponse r = client.getThumbnailOfVideo(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+  }
+
+  @Test
+  void getThumbnailOfVideo_withoutFileId_throwsIllegalArgument() {
+    Query q = new QueryBuilder().area("64x64").serviceType("files").build();
+    assertThrows(IllegalArgumentException.class, () -> client.getThumbnailOfVideo(q));
+  }
+
+  @Test
+  void deleteVideoPreview_200_completes() {
+    stubFor(delete(urlPathEqualTo("/preview/video/vid-uuid/1/"))
+        .withQueryParam("service_type", equalTo("files"))
+        .willReturn(aResponse().withStatus(200)));
 
     Query q = new QueryBuilder()
         .fileId("vid-uuid")
@@ -359,27 +450,138 @@ class PreviewClientTest {
         .serviceType("files")
         .build();
 
-    String id = client.generateVideoPreview(q, "tgt-uuid");
-    assertEquals("tgt-uuid", id);
+    // Must not throw
+    assertDoesNotThrow(() -> client.deleteVideoPreview(q));
   }
 
   @Test
-  void generateVideoPreview_429_throwsPreviewException() {
-    stubFor(post(urlPathEqualTo("/preview/video/generate/vid-uuid/1/"))
-        .withQueryParam("service_type", equalTo("files"))
-        .withQueryParam("target", equalTo("tgt-uuid"))
-        .willReturn(aResponse()
-            .withStatus(429)));
+  void deleteVideoPreview_204_completes() {
+    stubFor(delete(urlPathEqualTo("/preview/video/vid-uuid/2/"))
+        .withQueryParam("service_type", equalTo("chats"))
+        .willReturn(aResponse().withStatus(204)));
 
     Query q = new QueryBuilder()
         .fileId("vid-uuid")
+        .version(2)
+        .serviceType("chats")
+        .build();
+
+    assertDoesNotThrow(() -> client.deleteVideoPreview(q));
+  }
+
+  @Test
+  void deleteVideoPreview_withOwnerId_sendsFileOwnerIdHeader() {
+    stubFor(delete(urlPathEqualTo("/preview/video/owned-vid/1/"))
+        .willReturn(aResponse().withStatus(200)));
+
+    Query q = new QueryBuilder()
+        .fileId("owned-vid")
+        .version(1)
+        .serviceType("files")
+        .ownerId("owner-xyz")
+        .build();
+
+    client.deleteVideoPreview(q);
+
+    verify(deleteRequestedFor(urlPathEqualTo("/preview/video/owned-vid/1/"))
+        .withHeader("FileOwnerId", equalTo("owner-xyz")));
+  }
+
+  @Test
+  void deleteVideoPreview_404_throwsPreviewException() {
+    stubFor(delete(urlPathEqualTo("/preview/video/gone/1/"))
+        .willReturn(aResponse().withStatus(404)));
+
+    Query q = new QueryBuilder()
+        .fileId("gone")
         .version(1)
         .serviceType("files")
         .build();
 
     PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.generateVideoPreview(q, "tgt-uuid"));
-    assertEquals(429, ex.getHttpStatus());
+        () -> client.deleteVideoPreview(q));
+    assertEquals(404, ex.getHttpStatus());
+  }
+
+  @Test
+  void copyVideoPreview_routesToCorrectPathAndReturnsPreviewId() {
+    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("target", equalTo("new-blob-uuid"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/json")
+            .withBody("{\"preview_id\":\"new-blob-uuid\"}")));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .serviceType("files")
+        .build();
+
+    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "new-blob-uuid", null);
+    assertEquals("new-blob-uuid", resp.getPreviewId());
+  }
+
+  @Test
+  void copyVideoPreview_withOwnerIds_sendsCorrectHeaders() {
+    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/json")
+            .withBody("{\"preview_id\":\"new-blob-uuid\"}")));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .serviceType("chats")
+        .ownerId("src-owner")
+        .build();
+
+    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "new-blob-uuid", "tgt-owner");
+    assertEquals("new-blob-uuid", resp.getPreviewId());
+
+    verify(postRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+        .withHeader("FileOwnerId", equalTo("src-owner"))
+        .withHeader("TargetOwnerId", equalTo("tgt-owner")));
+  }
+
+  @Test
+  void copyVideoPreview_withoutTargetOwnerId_doesNotSendTargetOwnerIdHeader() {
+    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "application/json")
+            .withBody("{\"preview_id\":\"x\"}")));
+
+    Query q = new QueryBuilder()
+        .fileId("vid-uuid")
+        .version(1)
+        .serviceType("files")
+        .ownerId("src-owner")
+        .build();
+
+    client.copyVideoPreview(q, "x", null);
+
+    verify(postRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+        .withHeader("FileOwnerId", equalTo("src-owner"))
+        .withoutHeader("TargetOwnerId"));
+  }
+
+  @Test
+  void copyVideoPreview_404_throwsPreviewException() {
+    stubFor(post(urlPathEqualTo("/preview/video/gone/1/copy/"))
+        .willReturn(aResponse().withStatus(404)));
+
+    Query q = new QueryBuilder()
+        .fileId("gone")
+        .version(1)
+        .serviceType("files")
+        .build();
+
+    PreviewException ex = assertThrows(PreviewException.class,
+        () -> client.copyVideoPreview(q, "x", null));
+    assertEquals(404, ex.getHttpStatus());
   }
 
   // ── Query without fileId: IllegalArgumentException ───────────────────────

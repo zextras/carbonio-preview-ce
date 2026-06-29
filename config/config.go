@@ -96,6 +96,27 @@ type Config struct {
 	// This is a per-instance, framework-level knob (equivalent to QUARKUS_LOG_LEVEL)
 	// and is intentionally outside the extensions config chain (no registry key, no KV).
 	LogLevel slog.Level
+
+	// ── Database (PostgreSQL via Consul mesh) ──────────────────────────────
+	// PostgreSQL host/port come from the networking layer (config.properties).
+	// Credentials (db-name, db-username, db-password) come from Consul KV at
+	// carbonio-preview/database/credentials/* (written by carbonio-preview-db-bootstrap).
+	// DSN and PoolConfig are derived once in Load() for use by cmd/.../main.go.
+	// If credentials are absent the DSN is empty and the DB layer will fail-fast
+	// at pool-open time (not at config parse time, so unit tests without a DB pass).
+	DBDSN             string
+	DBPoolMaxConns    int32
+	DBPoolMinConns    int32
+	DBConnMaxLifetime int
+
+	// ── Video worker ─────────────────────────────────────────────────────────
+	// Application-layer keys video-sweep-interval-seconds / video-stale-ttl-seconds /
+	// video-max-attempts. Zero values are resolved to defaults in the worker itself
+	// (matching WSC Java constants). Total ffmpeg concurrency is governed by
+	// VideoConcurrency (video-concurrency key) via the shared VideoSem.
+	VideoSweepIntervalSeconds int
+	VideoStaleTTLSeconds      int
+	VideoMaxAttempts          int
 }
 
 // Hardcoded endpoint-path constants. These values were formerly stored in Consul
@@ -203,6 +224,16 @@ func Load() error {
 	c.PDFWorkers, parseErr = appPositiveInt(r, "pdf-workers", parseErr)
 	c.VideoConcurrency, parseErr = appPositiveInt(r, "video-concurrency", parseErr)
 
+	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetime int
+	dbPoolMaxConns, parseErr = appPositiveInt(r, "db-pool-max-conns", parseErr)
+	dbPoolMinConns, parseErr = appPositiveInt(r, "db-pool-min-conns", parseErr)
+	dbConnMaxLifetime, parseErr = appPositiveInt(r, "db-conn-max-lifetime-seconds", parseErr)
+
+	var videoSweepInterval, videoStaleTTL, videoMaxAttempts int
+	videoSweepInterval, parseErr = appPositiveInt(r, "video-sweep-interval-seconds", parseErr)
+	videoStaleTTL, parseErr = appPositiveInt(r, "video-stale-ttl-seconds", parseErr)
+	videoMaxAttempts, parseErr = appPositiveInt(r, "video-max-attempts", parseErr)
+
 	if parseErr != nil {
 		return parseErr
 	}
@@ -217,6 +248,61 @@ func Load() error {
 	}
 	if c.VideoConcurrency == 0 {
 		c.VideoConcurrency = runtime.NumCPU()
+	}
+
+	// ── Database pool tuning ──────────────────────────────────────────────────
+	// Defaults are baked into registry.go but appPositiveInt returns 0 for empty;
+	// guard against that here (should not happen since registry provides defaults).
+	if dbPoolMaxConns > 0 {
+		c.DBPoolMaxConns = int32(dbPoolMaxConns)
+	} else {
+		c.DBPoolMaxConns = 10
+	}
+	if dbPoolMinConns > 0 {
+		c.DBPoolMinConns = int32(dbPoolMinConns)
+	} else {
+		c.DBPoolMinConns = 2
+	}
+	if dbConnMaxLifetime > 0 {
+		c.DBConnMaxLifetime = dbConnMaxLifetime
+	} else {
+		c.DBConnMaxLifetime = 600
+	}
+
+	// ── Video worker tuning ───────────────────────────────────────────────────
+	// Zero → the worker applies its own defaults (matching WSC Java constants).
+	c.VideoSweepIntervalSeconds = videoSweepInterval
+	c.VideoStaleTTLSeconds = videoStaleTTL
+	c.VideoMaxAttempts = videoMaxAttempts
+
+	// ── Database DSN ───────────────────────────────────────────────────────────
+	// Credentials are written by carbonio-preview-db-bootstrap into Consul KV
+	// under carbonio-preview/database/credentials/{db-name,db-username,db-password}.
+	// The fetchConsulKV routine strips the "carbonio-preview/" prefix and converts
+	// '/' to '.' so these resolve as application keys:
+	//   database.credentials.db-name
+	//   database.credentials.db-username
+	//   database.credentials.db-password
+	//
+	// When credentials are absent (e.g. during tests or before db-bootstrap is run)
+	// DSN is left empty. The service will fail-fast at pool-open time in main(),
+	// not here, so unit tests that don't touch the DB can still Load() safely.
+	pgHost := netStr(r, "carbonio.postgresql.host")
+	pgPort := netStr(r, "carbonio.postgresql.port")
+	dbName, _ := r.Application.Get("database.credentials.db-name")
+	dbUser, _ := r.Application.Get("database.credentials.db-username")
+	dbPass, _ := r.Application.Get("database.credentials.db-password")
+
+	if dbName != "" && dbUser != "" {
+		c.DBDSN = fmt.Sprintf(
+			"postgres://%s:%s@%s:%s/%s",
+			dbUser, dbPass, pgHost, pgPort, dbName,
+		)
+	} else {
+		// Credentials absent: service will fail-fast at db.New() in main().
+		// Leave DBDSN empty so callers can detect the absent-creds case and
+		// emit a clear error message rather than a parse error.
+		c.DBDSN = ""
 	}
 
 	// ── Hardcoded endpoint constants (not operator-configurable) ──────────────

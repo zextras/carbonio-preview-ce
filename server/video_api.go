@@ -1,0 +1,424 @@
+// SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package server
+
+// video_api.go implements the four video HTTP endpoints:
+//   GET  /preview/video/{id}/{version}/{area}/
+//   GET  /preview/video/{id}/{version}/{area}/thumbnail/
+//   DELETE /preview/video/{id}/{version}/
+//   POST   /preview/video/{id}/{version}/copy/
+//
+// All handlers use the resolve() state machine for GET paths, which is a port
+// of WSC's VideoPreviewServiceImpl.resolve().
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
+
+	"github.com/zextras/carbonio-preview-ce/cache"
+	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/db"
+	"github.com/zextras/carbonio-preview-ce/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/storage"
+)
+
+// ---------------------------------------------------------------------------
+// resolve() state machine
+// ---------------------------------------------------------------------------
+
+// resolveResult is the outcome of resolve().
+type resolveResult struct {
+	// previewID is set only when Status == StatusReady.
+	previewID string
+	// httpStatus is one of: 200 (READY), 202 (not yet ready), 415 (UNSUPPORTED), 422 (FAILED).
+	httpStatus int
+}
+
+// resolve runs the video-preview state machine for a GET request.
+// It is a port of VideoPreviewServiceImpl.resolve() from WSC, adapted for
+// preview's own DB + storage.
+//
+// State transitions:
+//  1. Not found       → EnqueueIfAbsent + fire async attempt → 202
+//  2. PENDING         → fire async attempt (non-blocking) → 202
+//  3. GENERATING      → fire async attempt (non-blocking) → 202
+//  4. READY           → verify blob in storage → 200 (previewID set)
+//     If RetrieveData returns 404 → Release to PENDING + fire async → 202
+//  5. UNSUPPORTED     → 415
+//  6. FAILED          → 422
+func resolve(
+	ctx context.Context,
+	deps Deps,
+	worker *VideoWorker,
+	fileID string,
+	version int,
+	serviceType string,
+	ownerID string,
+) resolveResult {
+	if deps.DB == nil {
+		// DB layer disabled — service cannot handle video.
+		return resolveResult{httpStatus: http.StatusServiceUnavailable}
+	}
+
+	row, err := deps.DB.Find(ctx, fileID, version)
+	if err != nil {
+		slog.Warn("resolve: DB.Find error", "file_id", fileID, "version", version, "err", err)
+		return resolveResult{httpStatus: http.StatusServiceUnavailable}
+	}
+
+	if row == nil {
+		// Not found: enqueue and fire an immediate attempt.
+		if eerr := deps.DB.EnqueueIfAbsent(ctx, fileID, version, ownerID, serviceType); eerr != nil {
+			slog.Warn("resolve: EnqueueIfAbsent error", "err", eerr)
+		}
+		fireAsyncAttempt(ctx, deps, worker, fileID, version)
+		return resolveResult{httpStatus: http.StatusAccepted}
+	}
+
+	switch row.Status {
+	case db.StatusReady:
+		if row.PreviewID == nil || *row.PreviewID == "" {
+			// Unexpected: READY without a previewID — move back to PENDING for regeneration.
+			if rerr := deps.DB.ReenqueueReady(ctx, fileID, version, "READY with nil previewID"); rerr != nil {
+				slog.Warn("resolve: ReenqueueReady (nil previewID) error", "err", rerr)
+			}
+			fireAsyncAttempt(ctx, deps, worker, fileID, version)
+			return resolveResult{httpStatus: http.StatusAccepted}
+		}
+		pid := *row.PreviewID
+		// Verify blob is actually retrievable (robustness: handles orphaned READY rows).
+		_, verr := deps.Store.RetrieveData(ctx, pid, version, serviceType, ownerID)
+		if verr != nil {
+			if errors.Is(verr, storage.ErrNotFound) {
+				// Blob gone — move READY row back to PENDING for regeneration.
+				slog.Warn("resolve: READY blob missing, re-enqueueing",
+					"file_id", fileID, "version", version, "preview_id", pid)
+				if rerr := deps.DB.ReenqueueReady(ctx, fileID, version, "blob missing in storage"); rerr != nil {
+					slog.Warn("resolve: ReenqueueReady (blob missing) error", "err", rerr)
+				}
+				fireAsyncAttempt(ctx, deps, worker, fileID, version)
+				return resolveResult{httpStatus: http.StatusAccepted}
+			}
+			slog.Warn("resolve: RetrieveData error verifying blob", "err", verr)
+			return resolveResult{httpStatus: http.StatusServiceUnavailable}
+		}
+		return resolveResult{httpStatus: http.StatusOK, previewID: pid}
+
+	case db.StatusUnsupported:
+		// If the codec is now in the supported list (binary expanded), re-enqueue.
+		if row.Codec != nil && *row.Codec != "" && isSupportedVideoCodec(*row.Codec) {
+			if rerr := deps.DB.ReenqueueUnsupported(ctx, fileID, version, "codec now in supported list"); rerr != nil {
+				slog.Warn("resolve: ReenqueueUnsupported error", "err", rerr)
+			}
+			fireAsyncAttempt(ctx, deps, worker, fileID, version)
+			return resolveResult{httpStatus: http.StatusAccepted}
+		}
+		return resolveResult{httpStatus: http.StatusUnsupportedMediaType}
+
+	case db.StatusFailed:
+		return resolveResult{httpStatus: http.StatusUnprocessableEntity}
+
+	default: // PENDING or GENERATING
+		fireAsyncAttempt(ctx, deps, worker, fileID, version)
+		return resolveResult{httpStatus: http.StatusAccepted}
+	}
+}
+
+// fireAsyncAttempt attempts to claim the row and submit a generate job to the
+// worker. This is a non-blocking best-effort fast-path: if the semaphore is
+// busy or the claim is lost (race with another instance), the row simply waits
+// for the next sweep tick. No error is returned — failures are logged only.
+//
+// The goroutine uses context.WithoutCancel(ctx) so that the HTTP handler
+// returning 202 (and net/http cancelling the request context) does not abort
+// an in-flight generateFirstFrameJPEG call. Values (trace ids etc.) are
+// preserved; only the cancellation signal is dropped.
+func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileID string, version int) {
+	if worker == nil || deps.DB == nil {
+		return
+	}
+	// Detach from request lifetime: keep values but drop cancellation so that
+	// the 202 response completing does not cancel the in-flight generation.
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		claimed, err := deps.DB.Claim(bgCtx, fileID, version, worker.instanceID)
+		if err != nil || !claimed {
+			return // lost the race or DB error — sweep will retry
+		}
+		// Acquire semaphore non-blocking.
+		if !worker.tryAcquireSem() {
+			// Busy — return the row without counting an attempt (back-pressure, not a failure).
+			_ = deps.DB.Release(bgCtx, fileID, version, worker.instanceID, "semaphore busy on immediate attempt")
+			return
+		}
+		go func() {
+			defer worker.releaseSem()
+			// Re-read the row to get ownerID and serviceType (they may not be known here).
+			row, rerr := deps.DB.Find(bgCtx, fileID, version)
+			if rerr != nil || row == nil {
+				_ = deps.DB.Release(bgCtx, fileID, version, worker.instanceID, "row vanished before attempt")
+				return
+			}
+			worker.attempt(bgCtx, *row)
+		}()
+	}()
+}
+
+// ---------------------------------------------------------------------------
+// Handler: GET /preview/video/{id}/{version}/{area}/
+// ---------------------------------------------------------------------------
+
+func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
+		if deps.DB == nil {
+			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		}
+		id, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		serviceType := string(input.ServiceType)
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		crop := input.Crop
+		ownerHeader := input.FileOwnerID
+
+		res := resolve(ctx, deps, worker, id, input.Version, serviceType, ownerHeader)
+		switch res.httpStatus {
+		case http.StatusAccepted:
+			return nil, huma.NewError(http.StatusAccepted, "generating")
+		case http.StatusUnsupportedMediaType:
+			return nil, huma.NewError(http.StatusUnsupportedMediaType, "video format not supported")
+		case http.StatusUnprocessableEntity:
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "video preview generation failed")
+		case http.StatusServiceUnavailable:
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+		// Status 200: serve the READY frame through the image pipeline.
+		pid := res.previewID
+
+		key := cacheKey("vid-preview", pid, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
+		if e, ok := deps.Cache.Get(key); ok {
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+		}
+
+		data, rerr := deps.Store.RetrieveData(ctx, pid, input.Version, serviceType, ownerHeader)
+		if rerr != nil {
+			if errors.Is(rerr, storage.ErrNotFound) {
+				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
+				if deps.DB != nil {
+					_ = deps.DB.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve")
+				}
+				return nil, huma.NewError(http.StatusAccepted, "generating")
+			}
+			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+		}
+
+		cropMode := "none"
+		if crop {
+			cropMode = "center"
+		}
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
+		if rerr != nil {
+			slog.Warn("getVideoPreview render", "err", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
+
+		ct := contentTypeForFormat(outputFormat)
+		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Handler: GET /preview/video/{id}/{version}/{area}/thumbnail/
+// ---------------------------------------------------------------------------
+
+func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
+	return func(ctx context.Context, input *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
+		if deps.DB == nil {
+			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		}
+		id, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		width, height, err := parseArea(input.Area)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: err.Error(), Location: "path.area", Value: input.Area})
+		}
+		serviceType := string(input.ServiceType)
+		quality := string(input.Quality)
+		outputFormat := string(input.OutputFormat)
+		shape := string(input.Shape)
+		ownerHeader := input.FileOwnerID
+
+		res := resolve(ctx, deps, worker, id, input.Version, serviceType, ownerHeader)
+		switch res.httpStatus {
+		case http.StatusAccepted:
+			return nil, huma.NewError(http.StatusAccepted, "generating")
+		case http.StatusUnsupportedMediaType:
+			return nil, huma.NewError(http.StatusUnsupportedMediaType, "video format not supported")
+		case http.StatusUnprocessableEntity:
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "video preview generation failed")
+		case http.StatusServiceUnavailable:
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+		pid := res.previewID
+
+		key := cacheKey("vid-thumb", pid, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
+		if e, ok := deps.Cache.Get(key); ok {
+			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
+		}
+
+		data, rerr := deps.Store.RetrieveData(ctx, pid, input.Version, serviceType, ownerHeader)
+		if rerr != nil {
+			if errors.Is(rerr, storage.ErrNotFound) {
+				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
+				if deps.DB != nil {
+					_ = deps.DB.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve (thumb)")
+				}
+				return nil, huma.NewError(http.StatusAccepted, "generating")
+			}
+			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+		}
+
+		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
+		if rerr != nil {
+			slog.Warn("getVideoThumbnail render", "err", rerr)
+			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		}
+
+		ct := contentTypeForFormat(outputFormat)
+		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
+		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Handler: DELETE /preview/video/{id}/{version}/
+// ---------------------------------------------------------------------------
+
+func buildDeleteVideoPreview(deps Deps) func(context.Context, *apispec.VideoDeleteInput) (*struct{}, error) {
+	return func(ctx context.Context, input *apispec.VideoDeleteInput) (*struct{}, error) {
+		if deps.DB == nil {
+			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		}
+		id, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		serviceType := string(input.ServiceType)
+		ownerHeader := input.FileOwnerID
+
+		row, derr := deps.DB.Find(ctx, id, input.Version)
+		if derr != nil {
+			slog.Warn("deleteVideoPreview: DB.Find error", "err", derr)
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+
+		// Best-effort blob delete (if a preview frame exists).
+		if row != nil && row.PreviewID != nil && *row.PreviewID != "" {
+			if berr := deps.Store.Delete(ctx, *row.PreviewID, input.Version, serviceType, ownerHeader); berr != nil {
+				slog.Warn("deleteVideoPreview: Store.Delete error (swallowed)",
+					"preview_id", *row.PreviewID, "err", berr)
+			}
+		}
+
+		// Delete the DB row unconditionally (idempotent).
+		if dberr := deps.DB.DeleteByFileId(ctx, id, input.Version); dberr != nil {
+			slog.Warn("deleteVideoPreview: DB.DeleteByFileId error", "err", dberr)
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+
+		// 204 No Content — huma emits no body when the output struct is nil.
+		return nil, nil
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Handler: POST /preview/video/{id}/{version}/copy/
+// ---------------------------------------------------------------------------
+
+// VideoCopyOutput is the JSON body for a successful copy response.
+// Defined here (not in apispec) because it is only used by the handler.
+// It is also defined in apispec/types.go as the registered huma output type.
+
+func buildCopyVideoPreview(deps Deps) func(context.Context, *apispec.VideoCopyInput) (*apispec.VideoCopyOutput, error) {
+	return func(ctx context.Context, input *apispec.VideoCopyInput) (*apispec.VideoCopyOutput, error) {
+		if deps.DB == nil {
+			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		}
+		srcID, err := validateUUID(input.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
+		}
+		targetFileID, err := validateUUID(input.Target)
+		if err != nil {
+			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
+				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "query.target", Value: input.Target})
+		}
+		serviceType := string(input.ServiceType)
+		srcOwner := input.FileOwnerID
+		dstOwner := input.TargetOwnerID
+
+		row, ferr := deps.DB.Find(ctx, srcID, input.Version)
+		if ferr != nil {
+			slog.Warn("copyVideoPreview: DB.Find error", "err", ferr)
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+		if row == nil || row.Status != db.StatusReady || row.PreviewID == nil || *row.PreviewID == "" {
+			return nil, huma.NewError(http.StatusNotFound, "source video preview not ready")
+		}
+
+		// Read the source frame blob.
+		srcPreviewID := *row.PreviewID
+		bytes, rerr := deps.Store.RetrieveData(ctx, srcPreviewID, input.Version, serviceType, srcOwner)
+		if rerr != nil {
+			if errors.Is(rerr, storage.ErrNotFound) {
+				return nil, huma.NewError(http.StatusNotFound, "source preview blob not found")
+			}
+			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+		}
+
+		// Mint a new preview blob UUID for the copy.
+		newPreviewID := uuid.New().String()
+
+		// Store the copy under the destination owner.
+		if _, serr := deps.Store.StoreData(ctx, newPreviewID, input.Version, serviceType, dstOwner, bytes); serr != nil {
+			slog.Warn("copyVideoPreview: StoreData error", "err", serr)
+			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+		}
+
+		// Insert a READY row for the target file ID (ON CONFLICT DO NOTHING — idempotent).
+		if ierr := deps.DB.InsertReady(ctx, targetFileID, input.Version, dstOwner, serviceType, newPreviewID); ierr != nil {
+			// Best-effort cleanup of the newly stored blob.
+			go func() {
+				_ = deps.Store.Delete(context.Background(), newPreviewID, input.Version, serviceType, dstOwner)
+			}()
+			slog.Warn("copyVideoPreview: InsertReady error", "err", ierr)
+			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		}
+
+		out := &apispec.VideoCopyOutput{}
+		out.Body.PreviewID = newPreviewID
+		return out, nil
+	}
+}

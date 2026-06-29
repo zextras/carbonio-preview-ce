@@ -39,6 +39,18 @@ var videoFirstFrameFunc = func(ctx context.Context, r io.Reader) ([]byte, error)
 	return video.ExtractFirstFramePNG(ctx, r)
 }
 
+// videoDetectCodecFromFileFunc is the seam for video.DetectCodecFromFile.
+// Tests override it to avoid spawning ffprobe/ffmpeg.
+var videoDetectCodecFromFileFunc = func(ctx context.Context, inputPath string) (string, error) {
+	return video.DetectCodecFromFile(ctx, inputPath)
+}
+
+// videoFirstFrameFromFileFunc is the seam for video.ExtractFirstFramePNGFromFile.
+// Tests override it so probe and extract can be stubbed independently.
+var videoFirstFrameFromFileFunc = func(ctx context.Context, inputPath string) ([]byte, error) {
+	return video.ExtractFirstFramePNGFromFile(ctx, inputPath)
+}
+
 // pdfSliceFunc is the seam for render.PDFSlice.
 var pdfSliceFunc = func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error) {
 	return render.PDFSlice(sem, data, firstPage, lastPage)

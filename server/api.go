@@ -20,6 +20,7 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/db"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/storage"
@@ -42,6 +43,11 @@ type Deps struct {
 	// video-concurrency, default NumCPU). Separate from Sem so a flood of
 	// generate calls cannot starve image previews. nil = unlimited (tests).
 	VideoSem chan struct{}
+	// DB is the video_preview database store.  nil means the video DB layer is
+	// disabled (spec-only gendocs mode or unit tests that do not exercise video
+	// endpoints). The video worker and video HTTP handlers must check for nil and
+	// either skip or return an appropriate error.
+	DB *db.Store
 }
 
 // ---------------------------------------------------------------------------
@@ -49,9 +55,18 @@ type Deps struct {
 // It is called by both the live server and cmd/gendocs.
 // ---------------------------------------------------------------------------
 
+// worker is the process-wide VideoWorker singleton, started lazily from
+// RegisterOperations when Deps.DB is non-nil. It is package-level so that
+// video_api.go handlers can reference it; a nil worker means video DB is disabled.
+var worker *VideoWorker
+
+// RegisterOperations registers all huma-managed operations onto api.
+// It is called by both the live server and cmd/gendocs.
+// When deps.DB is non-nil the video worker is constructed and started here.
 func RegisterOperations(api huma.API, deps Deps) {
 	semMW := semaphoreMiddleware(api, deps.Sem)
 	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem)
+	_ = vsemMW // vsemMW is no longer used for the removed generate endpoint
 
 	apispec.RegisterImageOps(api,
 		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
@@ -67,7 +82,21 @@ func RegisterOperations(api huma.API, deps Deps) {
 		buildGetDocumentPreview(deps), buildGetDocumentThumbnail(deps),
 		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps),
 		semMW)
-	apispec.RegisterGenerateOps(api, buildGenerateVideoPreview(deps), vsemMW)
+
+	// Video GET / DELETE / copy endpoints (Q5: generate endpoint removed).
+	// Worker is started only when DB is available.
+	var w *VideoWorker
+	if deps.DB != nil {
+		w = NewVideoWorker(deps)
+		worker = w
+		w.Start(context.Background())
+	}
+	apispec.RegisterVideoOps(api,
+		buildGetVideoPreview(deps, w),
+		buildGetVideoThumbnail(deps, w),
+		buildDeleteVideoPreview(deps),
+		buildCopyVideoPreview(deps),
+	)
 }
 
 // newHumaAPI constructs a huma API over the given mux with all Carbonio settings.
@@ -880,6 +909,20 @@ func generateFirstFrameJPEG(
 		return "", err
 	}
 
+	return encodePNGToJPEGAndStore(ctx, store, pngBytes, version, serviceType, ownerID, targetNodeID)
+}
+
+// encodePNGToJPEGAndStore re-encodes pngBytes to JPEG and stores them.
+// Extracted so that attempt() can reuse it after a probe-first download.
+func encodePNGToJPEGAndStore(
+	ctx context.Context,
+	store storage.Client,
+	pngBytes []byte,
+	version int,
+	serviceType string,
+	ownerID string,
+	targetNodeID string,
+) (string, error) {
 	img, err := png.Decode(bytes.NewReader(pngBytes))
 	if err != nil {
 		return "", err

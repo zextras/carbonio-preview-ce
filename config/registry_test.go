@@ -258,6 +258,8 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"carbonio.docs-editor.host",
 		"carbonio.docs-editor.port",
 		"carbonio.docs-editor.protocol",
+		"carbonio.postgresql.host",
+		"carbonio.postgresql.port",
 		"carbonio.service-discover.host",
 		"carbonio.service-discover.port",
 		"carbonio.service.host",
@@ -278,8 +280,12 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 
 	// Spot-check: known application keys that must appear in alphabetical order.
+	// The list includes all registered application keys (db-pool-*, video-*, etc.).
 	appExpected := []string{
 		"cache-max-mb",
+		"db-conn-max-lifetime-seconds",
+		"db-pool-max-conns",
+		"db-pool-min-conns",
 		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
@@ -287,6 +293,9 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"render-concurrency",
 		"timeout-in-seconds",
 		"video-concurrency",
+		"video-max-attempts",
+		"video-stale-ttl-seconds",
+		"video-sweep-interval-seconds",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {

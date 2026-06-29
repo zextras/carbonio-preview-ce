@@ -335,6 +335,62 @@ type DocPostThumbnailInput struct {
 }
 
 // ---------------------------------------------------------------------------
+// Input/output structs — Video GET preview / thumbnail / delete / copy
+// ---------------------------------------------------------------------------
+
+// VideoGetPreviewInput holds all path + query params for GET video preview.
+// Mirrors ImageGetPreviewInput, adding service_type (already present on image inputs).
+type VideoGetPreviewInput struct {
+	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video attachment"`
+	Version      int         `path:"version"        minimum:"0"                doc:"Version of the video (non-negative integer)"`
+	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
+	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
+	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
+	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
+	Crop         bool        `query:"crop"          default:"false"             doc:"Crop to fill (true) or scale to fit (false)"`
+	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
+}
+
+// VideoGetThumbnailInput holds all path + query params for GET video thumbnail.
+// Mirrors ImageGetThumbnailInput.
+type VideoGetThumbnailInput struct {
+	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video attachment"`
+	Version      int         `path:"version"        minimum:"0"                doc:"Version of the video (non-negative integer)"`
+	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
+	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
+	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
+	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
+	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
+	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
+}
+
+// VideoDeleteInput holds path + query params for DELETE video preview.
+type VideoDeleteInput struct {
+	ID          string      `path:"id"            format:"uuid"   doc:"UUID of the video attachment"`
+	Version     int         `path:"version"       minimum:"0"     doc:"Version (non-negative)"`
+	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
+	FileOwnerID string      `header:"fileownerid"                doc:"File owner ID for Advanced storage routing" required:"false"`
+}
+
+// VideoCopyInput holds path + query params + headers for POST video copy.
+// {id} is the SOURCE attachment file_id; target is the DESTINATION file_id.
+type VideoCopyInput struct {
+	ID            string      `path:"id"             format:"uuid"   doc:"UUID of the SOURCE video attachment"`
+	Version       int         `path:"version"        minimum:"0"     doc:"Source version (non-negative)"`
+	ServiceType   ServiceType `query:"service_type"  required:"true" doc:"Service that owns the resource"`
+	Target        string      `query:"target"        format:"uuid" required:"true" doc:"UUID of the DESTINATION attachment (new file_id)"`
+	FileOwnerID   string      `header:"fileownerid"                 doc:"Source file owner ID" required:"false"`
+	TargetOwnerID string      `header:"targetownerid"               doc:"Destination file owner ID" required:"false"`
+}
+
+// VideoCopyOutput is the JSON body for a successful POST copy response.
+type VideoCopyOutput struct {
+	Body struct {
+		PreviewID string `json:"preview_id" doc:"Storage node id of the copied preview frame"`
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Input/output structs — Video generate (POST)
 // ---------------------------------------------------------------------------
 

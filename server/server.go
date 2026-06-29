@@ -17,6 +17,7 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
+	"github.com/zextras/carbonio-preview-ce/db"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/storage"
 )
@@ -26,11 +27,32 @@ type Server struct {
 	cfg   *config.Config
 	store storage.Client
 	cache *cache.Cache
+	db    *db.Store
 }
 
-// New constructs a Server. cfg and store must not be nil. c may be nil (cache disabled).
-func New(cfg *config.Config, store storage.Client, c *cache.Cache) *Server {
-	return &Server{cfg: cfg, store: store, cache: c}
+// Option is a functional option for Server configuration.
+type Option func(*Server)
+
+// WithDB attaches a video-preview database store to the server.
+// When not provided, the video-preview DB layer is disabled and video HTTP
+// handlers will return 503.  The worker agent also checks for nil before
+// starting.
+func WithDB(dbStore *db.Store) Option {
+	return func(s *Server) {
+		s.db = dbStore
+	}
+}
+
+// New constructs a Server. cfg and store must not be nil. c may be nil (cache
+// disabled). Pass functional options (e.g. WithDB) to enable optional layers.
+// The Advanced edition calls New from its own main and should pass WithDB to
+// enable video-preview scheduling; CE's main.go does so by default.
+func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
+	s := &Server{cfg: cfg, store: store, cache: c}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Run starts the server. It blocks until the process receives SIGTERM or SIGINT.
@@ -148,6 +170,7 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 		Cache:    s.cache,
 		Sem:      sem,
 		VideoSem: videoSem,
+		DB:       s.db,
 	})
 
 	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).

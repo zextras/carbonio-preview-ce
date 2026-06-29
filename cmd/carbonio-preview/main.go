@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/db"
 	"github.com/zextras/carbonio-preview-ce/docs"
 	"github.com/zextras/carbonio-preview-ce/render"
 	"github.com/zextras/carbonio-preview-ce/server"
@@ -81,8 +83,32 @@ func main() {
 	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).
 	outCache := cache.New(cfg.CacheMaxBytes)
 
-	// Create and run the server.
-	srv := server.New(cfg, storageClient, outCache)
+	// Build the video-preview database store.
+	// Fail-fast if credentials are absent or the DB is unreachable:
+	// a preview service without a DB cannot serve or schedule video previews.
+	ctx := context.Background()
+	var dbStore *db.Store
+	if cfg.DBDSN == "" {
+		slog.Error("FATAL: database credentials not found in Consul KV — ensure carbonio-preview-db-bootstrap has run")
+		os.Exit(1)
+	}
+	dbStore, err := db.New(ctx, cfg.DBDSN, db.PoolConfig{
+		MaxConns:        cfg.DBPoolMaxConns,
+		MinConns:        cfg.DBPoolMinConns,
+		MaxConnLifetime: time.Duration(cfg.DBConnMaxLifetime) * time.Second,
+	})
+	if err != nil {
+		slog.Error("FATAL: database pool open failed", "err", err)
+		os.Exit(1)
+	}
+	if err := dbStore.Migrate(ctx); err != nil {
+		slog.Error("FATAL: database migration failed", "err", err)
+		os.Exit(1)
+	}
+	defer dbStore.Close()
+
+	// Create and run the server (with DB store for video-preview scheduling).
+	srv := server.New(cfg, storageClient, outCache, server.WithDB(dbStore))
 	srv.Run()
 }
 

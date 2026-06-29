@@ -30,19 +30,6 @@
         ],
         "type": "object"
       },
-      "GenerateVideoOutputBody": {
-        "additionalProperties": false,
-        "properties": {
-          "preview_id": {
-            "description": "Storage node id of the stored first-frame image (echoes target)",
-            "type": "string"
-          }
-        },
-        "required": [
-          "preview_id"
-        ],
-        "type": "object"
-      },
       "HealthDependency": {
         "additionalProperties": false,
         "properties": {
@@ -84,6 +71,19 @@
         "required": [
           "ready",
           "dependencies"
+        ],
+        "type": "object"
+      },
+      "VideoCopyOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "preview_id": {
+            "description": "Storage node id of the copied preview frame",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preview_id"
         ],
         "type": "object"
       }
@@ -2331,17 +2331,112 @@
         ]
       }
     },
-    "/preview/video/generate/{id}/{version}/": {
-      "post": {
-        "operationId": "generateVideoPreview",
+    "/preview/video/{id}/{version}/": {
+      "delete": {
+        "description": "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204.",
+        "operationId": "deleteVideoPreview",
         "parameters": [
           {
-            "description": "UUID of the SOURCE video node",
+            "description": "UUID of the video attachment",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "description": "UUID of the SOURCE video node",
+              "description": "UUID of the video attachment",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Version (non-negative)",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "Version (non-negative)",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Service that owns the resource",
+            "explode": false,
+            "in": "query",
+            "name": "service_type",
+            "required": true,
+            "schema": {
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID for Advanced storage routing",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID for Advanced storage routing",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Delete Video Preview",
+        "tags": [
+          "video"
+        ]
+      }
+    },
+    "/preview/video/{id}/{version}/copy/": {
+      "post": {
+        "description": "Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY.",
+        "operationId": "copyVideoPreview",
+        "parameters": [
+          {
+            "description": "UUID of the SOURCE video attachment",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "UUID of the SOURCE video attachment",
               "format": "uuid",
               "type": "string"
             }
@@ -2374,23 +2469,32 @@
             }
           },
           {
-            "description": "Caller-minted UUID for the stored frame",
+            "description": "UUID of the DESTINATION attachment (new file_id)",
             "explode": false,
             "in": "query",
             "name": "target",
             "required": true,
             "schema": {
-              "description": "Caller-minted UUID for the stored frame",
+              "description": "UUID of the DESTINATION attachment (new file_id)",
               "format": "uuid",
               "type": "string"
             }
           },
           {
-            "description": "File owner ID (PowerStore routing)",
+            "description": "Source file owner ID",
             "in": "header",
             "name": "fileownerid",
             "schema": {
-              "description": "File owner ID (PowerStore routing)",
+              "description": "Source file owner ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Destination file owner ID",
+            "in": "header",
+            "name": "targetownerid",
+            "schema": {
+              "description": "Destination file owner ID",
               "type": "string"
             }
           }
@@ -2400,21 +2504,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GenerateVideoOutputBody"
+                  "$ref": "#/components/schemas/VideoCopyOutputBody"
                 }
               }
             },
             "description": "OK"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FastAPIError"
-                }
-              }
-            },
-            "description": "Bad Request"
           },
           "404": {
             "content": {
@@ -2436,7 +2530,7 @@
             },
             "description": "Unprocessable Entity"
           },
-          "429": {
+          "500": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2444,7 +2538,227 @@
                 }
               }
             },
-            "description": "Too Many Requests"
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Copy Video Preview",
+        "tags": [
+          "video"
+        ]
+      }
+    },
+    "/preview/video/{id}/{version}/{area}/": {
+      "get": {
+        "description": "Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed.",
+        "operationId": "getVideoPreview",
+        "parameters": [
+          {
+            "description": "UUID of the video attachment",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "UUID of the video attachment",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Version of the video (non-negative integer)",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "Version of the video (non-negative integer)",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Width x height in pixels, e.g. 100x200",
+            "in": "path",
+            "name": "area",
+            "required": true,
+            "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
+              "pattern": "^[0-9]+x[0-9]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Service that owns the resource",
+            "explode": false,
+            "in": "query",
+            "name": "service_type",
+            "required": true,
+            "schema": {
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output quality",
+            "explode": false,
+            "in": "query",
+            "name": "quality",
+            "schema": {
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output image format",
+            "explode": false,
+            "in": "query",
+            "name": "output_format",
+            "schema": {
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Crop to fill (true) or scale to fit (false)",
+            "explode": false,
+            "in": "query",
+            "name": "crop",
+            "schema": {
+              "default": false,
+              "description": "Crop to fill (true) or scale to fit (false)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "File owner ID for Advanced storage routing",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID for Advanced storage routing",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              }
+            },
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           },
           "500": {
             "content": {
@@ -2466,7 +2780,7 @@
             },
             "description": "Bad Gateway"
           },
-          "504": {
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2474,10 +2788,244 @@
                 }
               }
             },
-            "description": "Gateway Timeout"
+            "description": "Service Unavailable"
           }
         },
-        "summary": "Generate (extract + JPEG-encode + store) a video first-frame preview",
+        "summary": "Get Video Preview",
+        "tags": [
+          "video"
+        ]
+      }
+    },
+    "/preview/video/{id}/{version}/{area}/thumbnail/": {
+      "get": {
+        "description": "Serves a thumbnail of the stored first-frame preview of a video attachment.",
+        "operationId": "getVideoThumbnail",
+        "parameters": [
+          {
+            "description": "UUID of the video attachment",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "UUID of the video attachment",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Version of the video (non-negative integer)",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "description": "Version of the video (non-negative integer)",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Width x height in pixels, e.g. 100x200",
+            "in": "path",
+            "name": "area",
+            "required": true,
+            "schema": {
+              "description": "Width x height in pixels, e.g. 100x200",
+              "pattern": "^[0-9]+x[0-9]+$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Service that owns the resource",
+            "explode": false,
+            "in": "query",
+            "name": "service_type",
+            "required": true,
+            "schema": {
+              "description": "Service that owns the resource",
+              "enum": [
+                "files",
+                "chats"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output quality",
+            "explode": false,
+            "in": "query",
+            "name": "quality",
+            "schema": {
+              "default": "medium",
+              "description": "Output quality",
+              "enum": [
+                "lowest",
+                "low",
+                "medium",
+                "high",
+                "highest"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Output image format",
+            "explode": false,
+            "in": "query",
+            "name": "output_format",
+            "schema": {
+              "default": "jpeg",
+              "description": "Output image format",
+              "enum": [
+                "jpeg",
+                "png",
+                "gif"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Thumbnail border shape",
+            "explode": false,
+            "in": "query",
+            "name": "shape",
+            "schema": {
+              "default": "rectangular",
+              "description": "Thumbnail border shape",
+              "enum": [
+                "rounded",
+                "rectangular"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "File owner ID for Advanced storage routing",
+            "in": "header",
+            "name": "fileownerid",
+            "schema": {
+              "description": "File owner ID for Advanced storage routing",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string",
+                  "x-contentMediaType": "application/octet-stream"
+                }
+              }
+            },
+            "description": "Successful Response — binary image data",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FastAPIError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Video Thumbnail",
         "tags": [
           "video"
         ]

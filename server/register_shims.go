@@ -44,7 +44,24 @@ func registerDocumentOps(api huma.API, deps Deps) {
 		semMW)
 }
 
-func registerGenerateOps(api huma.API, deps Deps) {
-	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem)
-	apispec.RegisterGenerateOps(api, buildGenerateVideoPreview(deps), vsemMW)
+func registerVideoOps(api huma.API, deps Deps) {
+	// Build a worker for the handlers; nil if no DB (tests).
+	var w *VideoWorker
+	if deps.DB != nil {
+		w = NewVideoWorker(deps)
+	}
+	apispec.RegisterVideoOps(api,
+		buildGetVideoPreview(deps, w),
+		buildGetVideoThumbnail(deps, w),
+		buildDeleteVideoPreview(deps),
+		buildCopyVideoPreview(deps),
+	)
+}
+
+// registerGenerateOps is retained as a no-op shim for tests that reference it.
+// The public POST /preview/video/generate/ endpoint has been removed (spec Q5).
+// Tests that exercised the HTTP route are updated to test generateFirstFrameJPEG
+// directly; the shim prevents test compilation errors.
+func registerGenerateOps(_ huma.API, _ Deps) {
+	// Intentionally empty: the generate HTTP route is removed.
 }

@@ -40,6 +40,11 @@ type Handlers struct {
 	PostDocumentThumbnail func(context.Context, *DocPostThumbnailInput) (*BinOut, error)
 
 	GenerateVideoPreview func(context.Context, *GenerateVideoInput) (*GenerateVideoOutput, error)
+
+	GetVideoPreview    func(context.Context, *VideoGetPreviewInput) (*BinOut, error)
+	GetVideoThumbnail  func(context.Context, *VideoGetThumbnailInput) (*BinOut, error)
+	DeleteVideoPreview func(context.Context, *VideoDeleteInput) (*struct{}, error)
+	CopyVideoPreview   func(context.Context, *VideoCopyInput) (*VideoCopyOutput, error)
 }
 
 // Register registers all huma-managed operations onto api using the provided
@@ -50,7 +55,12 @@ func Register(api huma.API, h Handlers, semMW, videoSemMW func(huma.Context, fun
 	RegisterHealthOps(api, h.GetHealthLive, h.GetHealthReady, h.GetHealth)
 	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail, semMW)
 	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail, semMW)
-	RegisterGenerateOps(api, h.GenerateVideoPreview, videoSemMW)
+	RegisterVideoOps(api, h.GetVideoPreview, h.GetVideoThumbnail, h.DeleteVideoPreview, h.CopyVideoPreview)
+	// NOTE: RegisterGenerateOps is intentionally NOT called here.
+	// The public POST /preview/video/generate/... endpoint has been removed (Q5).
+	// Generation runs only via the internal worker. The videoSemMW arg is kept in
+	// the signature for backward-compatibility with callers; it is unused.
+	_ = videoSemMW
 }
 
 // RegisterStubs registers all operations with no-op stub handlers.
@@ -80,6 +90,11 @@ func RegisterStubs(api huma.API) {
 		PostDocumentThumbnail: func(_ context.Context, _ *DocPostThumbnailInput) (*BinOut, error) { return nil, nil },
 
 		GenerateVideoPreview: func(_ context.Context, _ *GenerateVideoInput) (*GenerateVideoOutput, error) { return nil, nil },
+
+		GetVideoPreview:    func(_ context.Context, _ *VideoGetPreviewInput) (*BinOut, error) { return nil, nil },
+		GetVideoThumbnail:  func(_ context.Context, _ *VideoGetThumbnailInput) (*BinOut, error) { return nil, nil },
+		DeleteVideoPreview: func(_ context.Context, _ *VideoDeleteInput) (*struct{}, error) { return nil, nil },
+		CopyVideoPreview:   func(_ context.Context, _ *VideoCopyInput) (*VideoCopyOutput, error) { return nil, nil },
 	}
 	// RegisterStubs does not need semaphore middleware — stubs never block.
 	noopMW := func(hctx huma.Context, next func(huma.Context)) { next(hctx) }
@@ -324,23 +339,90 @@ func RegisterDocumentOps(
 }
 
 // ---------------------------------------------------------------------------
-// Video generate operation
+// Video generate operation (REMOVED — kept for internal generate path only)
 // ---------------------------------------------------------------------------
 
-// RegisterGenerateOps registers the video generate huma operation.
+// RegisterGenerateOps is retained for package-API stability but is NO LONGER
+// called from Register or RegisterStubs. The public POST /preview/video/generate/
+// endpoint has been removed (spec Q5): generation runs only via the internal
+// worker / resolve() fast-path. The videoSemMW arg is kept in the signature
+// so any Advanced-edition callers that still reference this symbol compile.
 func RegisterGenerateOps(
 	api huma.API,
 	generatePreview func(context.Context, *GenerateVideoInput) (*GenerateVideoOutput, error),
 	videoSemMW func(huma.Context, func(huma.Context)),
 ) {
-	// POST /preview/video/generate/{id}/{version}/
+	// Intentionally empty: the public generate endpoint is removed.
+	// The internal generateFirstFrameJPEG function is still used by the worker.
+	_, _ = api, generatePreview
+	_ = videoSemMW
+}
+
+// ---------------------------------------------------------------------------
+// Video GET / DELETE / copy operations
+// ---------------------------------------------------------------------------
+
+// RegisterVideoOps registers the four video HTTP endpoints onto api:
+//
+//	GET  /preview/video/{id}/{version}/{area}/
+//	GET  /preview/video/{id}/{version}/{area}/thumbnail/
+//	DELETE /preview/video/{id}/{version}/
+//	POST   /preview/video/{id}/{version}/copy/
+func RegisterVideoOps(
+	api huma.API,
+	getPreview func(context.Context, *VideoGetPreviewInput) (*BinOut, error),
+	getThumbnail func(context.Context, *VideoGetThumbnailInput) (*BinOut, error),
+	deletePreview func(context.Context, *VideoDeleteInput) (*struct{}, error),
+	copyPreview func(context.Context, *VideoCopyInput) (*VideoCopyOutput, error),
+) {
+	// GET /preview/video/{id}/{version}/{area}/
 	huma.Register(api, huma.Operation{
-		OperationID: "generateVideoPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/video/generate/{id}/{version}/",
-		Summary:     "Generate (extract + JPEG-encode + store) a video first-frame preview",
+		OperationID: "getVideoPreview",
+		Method:      http.MethodGet,
+		Path:        "/preview/video/{id}/{version}/{area}/",
+		Summary:     "Get Video Preview",
+		Description: "Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed.",
 		Tags:        []string{"video"},
-		Errors:      []int{400, 404, 422, 429, 502, 504},
-		Middlewares: huma.Middlewares{videoSemMW},
-	}, generatePreview)
+		Errors:      []int{202, 400, 404, 415, 422, 502, 503},
+		Responses: map[string]*huma.Response{
+			"200": ImageBinaryResponse,
+		},
+	}, getPreview)
+
+	// GET /preview/video/{id}/{version}/{area}/thumbnail/
+	huma.Register(api, huma.Operation{
+		OperationID: "getVideoThumbnail",
+		Method:      http.MethodGet,
+		Path:        "/preview/video/{id}/{version}/{area}/thumbnail/",
+		Summary:     "Get Video Thumbnail",
+		Description: "Serves a thumbnail of the stored first-frame preview of a video attachment.",
+		Tags:        []string{"video"},
+		Errors:      []int{202, 400, 404, 415, 422, 502, 503},
+		Responses: map[string]*huma.Response{
+			"200": ImageBinaryResponse,
+		},
+	}, getThumbnail)
+
+	// DELETE /preview/video/{id}/{version}/
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteVideoPreview",
+		Method:        http.MethodDelete,
+		Path:          "/preview/video/{id}/{version}/",
+		Summary:       "Delete Video Preview",
+		Description:   "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204.",
+		Tags:          []string{"video"},
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{422, 503},
+	}, deletePreview)
+
+	// POST /preview/video/{id}/{version}/copy/
+	huma.Register(api, huma.Operation{
+		OperationID: "copyVideoPreview",
+		Method:      http.MethodPost,
+		Path:        "/preview/video/{id}/{version}/copy/",
+		Summary:     "Copy Video Preview",
+		Description: "Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY.",
+		Tags:        []string{"video"},
+		Errors:      []int{404, 422, 502, 503},
+	}, copyPreview)
 }
