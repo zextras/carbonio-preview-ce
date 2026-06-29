@@ -5,18 +5,19 @@
 [Unit]
 Description=Carbonio Preview daemon
 Documentation=https://docs.zextras.com/zextras-suite-documentation/latest/
+Wants=network.target
 Requires=network-online.target
 After=network-online.target
 PartOf=carbonio.target
 
 [Service]
 Type=simple
-ExecStart= /usr/bin/carbonio-preview-bin
+ExecStart=/usr/bin/carbonio-preview-bin
 User=carbonio-preview
 Group=carbonio-preview
 Restart=on-failure
 RestartSec=15
-TimeoutSec=120
+TimeoutSec=60
 TimeoutStopSec=120
 
 [Install]
