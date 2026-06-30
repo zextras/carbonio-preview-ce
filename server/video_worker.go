@@ -432,6 +432,14 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 
 	// Wrap rc in the idle watchdog for the duration of the copy only.
 	guard := newIdleReadCloser(rc, readIdleTimeout, dlCancel)
+	// Stream the source into a SPARSE temp file: only the head (frame-0 sample
+	// + faststart moov) and the tail (trailing moov/index) are retained; the
+	// middle is discarded so a multi-GB source costs ~head+tail of temp disk,
+	// not its full size. The full body is still transferred (storage origin
+	// does not honor HTTP Range), and the idle-read watchdog + heartbeat still
+	// see byte progress through `guard`. If head+tail is insufficient, the
+	// probe/extract below fail and this row is treated exactly like a corrupt
+	// file (no full-download fallback — deliberate).
 	_, copyErr := video.StreamToSparseTemp(tmp, guard)
 	// Stop the heartbeat goroutine and the watchdog, release dlCtx immediately.
 	// Heartbeat is ONLY for the download phase; probe/extract/store are bounded
