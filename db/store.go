@@ -431,6 +431,27 @@ func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version
 	return nil
 }
 
+// Heartbeat refreshes claimed_at (and updated_at) for a GENERATING row owned
+// by instanceID.  It is called periodically during the download phase to prove
+// liveness to ReclaimStale: a row whose claimed_at is being refreshed is making
+// real progress and must never be reclaimed.
+//
+// Guarded on status='GENERATING' AND claimed_by=$inst so that a row stolen by
+// another instance (rare edge, after a previous stale-reclaim) is never
+// accidentally touched.  A no-op on wrong instance is safe.
+func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, instanceID string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE video_preview
+         SET claimed_at=now(), updated_at=now()
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.Heartbeat: %w", err)
+	}
+	return nil
+}
+
 // ReleaseWithAttempt releases a GENERATING row back to PENDING AND increments
 // attempts. Guarded on status='GENERATING' AND claimed_by=$inst. Used for
 // soft/transient failures so that repeated fast failures eventually hit

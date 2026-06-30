@@ -46,6 +46,32 @@ import (
 // value (e.g. 50ms) for speed without touching any config/KV knob.
 var readIdleTimeout = 60 * time.Second
 
+// heartbeatInterval is how often the worker calls db.Store.Heartbeat during the
+// download phase to refresh claimed_at.  Must be well below staleTTL (900s) so
+// that a legitimately slow download — one that IS delivering bytes — is never
+// seen as stale by ReclaimStale.
+//
+// Frequency is intentionally network-speed-independent: it is purely a DB
+// touch to prove liveness.  A download that is reading bytes at ANY speed keeps
+// claimed_at fresh; only a truly stalled download (caught by readIdleTimeout)
+// stops heartbeating.
+//
+// This is a package variable so tests can override it without config/KV knobs.
+var heartbeatInterval = 60 * time.Second
+
+// extractCeiling is the maximum time allowed for the POST-DOWNLOAD stages
+// (codec probe + first-frame extract + store).  These stages operate on a LOCAL
+// temp file: decoding a single frame is file-size- and network-independent and
+// should complete in seconds.  If it takes longer than extractCeiling, ffmpeg
+// is broken/hung — NOT slow because of a large file.
+//
+// >120s extracting one frame from a local file = unequivocal process breakage.
+// The ceiling is deliberately NOT applied to the download phase (that is the
+// idle-watchdog's job; downloads are legitimately long for large files).
+//
+// This is a package variable so tests can override it without config/KV knobs.
+var extractCeiling = 120 * time.Second
+
 // idleReadCloser wraps a ReadCloser and resets a timer on every successful
 // read.  The timer fires dlCancel when no bytes arrive for readIdleTimeout.
 // Call Close to stop the timer and release resources.
@@ -251,20 +277,18 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		if inFlight >= maxInFlight {
 			break
 		}
-		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
-		if stale.Attempts >= w.maxAttempts {
-			if ferr := w.deps.DB.MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID,
-				fmt.Sprintf("max attempts (%d) reached after stale reclaim", w.maxAttempts)); ferr != nil {
-				slog.Warn("VideoWorker: MarkFailed (stale cap) failed", "err", ferr)
-			}
-			continue
-		}
-		// Skip re-spawning if a goroutine for this job is still alive on this
-		// instance.  ReclaimStale already incremented attempts, so we undo that
-		// increment by returning the row to PENDING without a further increment —
-		// use the plain Release (not ReleaseWithAttempt) so the still-running
-		// goroutine's own outcome (MarkReady / releaseOrFail) is the one that
-		// actually counts.
+		// LIVE-SET CHECK FIRST — before any cap/MarkFailed logic.
+		//
+		// If a goroutine for this row is still alive on this instance, leave the
+		// row in GENERATING untouched.  Do NOT call Release (→ PENDING) here:
+		//   • Release would let the PENDING sweep immediately re-claim the row, wasting
+		//     a second semaphore slot and creating a duplicate attempt.
+		//   • The live goroutine's own terminal transition (MarkReady / MarkFailed /
+		//     ReleaseWithAttempt) is the authoritative outcome; interfering with it
+		//     would either no-op (wrong claimed_by) or cause a race.
+		//   • With the download heartbeat + idle-watchdog (60s) + extractCeiling (120s),
+		//     no LIVE job should ever legitimately reach staleTTL (900s).  This guard
+		//     is defence-in-depth for delayed-kill edges only.
 		staleKey := liveKey(stale.FileID, stale.Version)
 		w.mu.Lock()
 		_, isLive := w.live[staleKey]
@@ -272,9 +296,16 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		if isLive {
 			slog.Debug("VideoWorker: stale-reclaim skipped (goroutine still alive)",
 				"file_id", stale.FileID, "version", stale.Version)
-			if rerr := w.deps.DB.Release(ctx, stale.FileID, stale.Version, w.instanceID,
-				"stale-reclaim skipped: goroutine still alive on this instance"); rerr != nil {
-				slog.Warn("VideoWorker: Release (stale live-skip) failed", "err", rerr)
+			// Leave the row as GENERATING — do NOT call Release.
+			// The live goroutine will call its own terminal transition.
+			continue
+		}
+		// Row is genuinely dead (crashed instance or this instance lost the goroutine).
+		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
+		if stale.Attempts >= w.maxAttempts {
+			if ferr := w.deps.DB.MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID,
+				fmt.Sprintf("max attempts (%d) reached after stale reclaim", w.maxAttempts)); ferr != nil {
+				slog.Warn("VideoWorker: MarkFailed (stale cap) failed", "err", ferr)
 			}
 			continue
 		}
@@ -341,7 +372,14 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	// transport read so the semaphore slot is freed and the job retried.
 	// After io.Copy returns (success or stall), the watchdog timer is stopped and
 	// dlCtx is released; the subsequent probe/extract/store stages run under the
-	// original ctx (no watchdog — those phases are bounded by their own design).
+	// original ctx (no watchdog — those phases are bounded by extractCeiling below).
+	//
+	// Heartbeat: a separate goroutine fires db.Heartbeat every heartbeatInterval
+	// WHILE the download is in progress.  This keeps claimed_at fresh so that
+	// ReclaimStale never treats a legitimately-slow-but-progressing download as
+	// stale.  Frequency is network-speed-independent: it fires on wall-clock time,
+	// not on bytes transferred.  The goroutine is stopped (via hbStop close) as
+	// soon as io.Copy returns — heartbeat is ONLY for the download phase.
 	dlCtx, dlCancel := context.WithCancel(ctx)
 	rc, err := w.deps.Store.RetrieveDataStreaming(dlCtx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
@@ -368,11 +406,37 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
+	// Start download heartbeat goroutine.  Fires db.Heartbeat every
+	// heartbeatInterval; stopped when hbStop is closed (after io.Copy returns).
+	hbStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if herr := w.deps.DB.Heartbeat(ctx, row.FileID, row.Version, w.instanceID); herr != nil {
+					slog.Warn("VideoWorker: download heartbeat failed (non-fatal)", "err", herr,
+						"file_id", row.FileID, "version", row.Version)
+				} else {
+					slog.Debug("VideoWorker: download heartbeat sent",
+						"file_id", row.FileID, "version", row.Version)
+				}
+			case <-hbStop:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Wrap rc in the idle watchdog for the duration of the copy only.
 	guard := newIdleReadCloser(rc, readIdleTimeout, dlCancel)
 	_, copyErr := io.Copy(tmp, guard)
-	// Stop the watchdog and release dlCtx immediately — the probe/extract/store
-	// stages below are NOT governed by the download watchdog.
+	// Stop the heartbeat goroutine and the watchdog, release dlCtx immediately.
+	// Heartbeat is ONLY for the download phase; probe/extract/store are bounded
+	// by extractCeiling (size/network-independent, applied below).
+	close(hbStop)
 	guard.Close()
 	dlCancel()
 
@@ -387,6 +451,20 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		return
 	}
 
+	// --- Steps 2-5: Probe + extract + store (post-download, local file) ---
+	//
+	// These stages operate entirely on the local temp file.  Decoding ONE frame
+	// from a local file is size- and network-independent: it should complete in
+	// seconds.  If it takes longer than extractCeiling (120s), ffmpeg is broken
+	// or hung — NOT legitimately slow because of a large file.  Cancel via ctx
+	// cancellation → exec.CommandContext SIGKILLs ffmpeg → returns an error →
+	// treated as transient via releaseOrFail (NOT UNSUPPORTED).
+	//
+	// extractCeiling is intentionally NOT applied to the download phase above:
+	// the download can legitimately be long for large files on slow links.
+	extractCtx, extractCancel := context.WithTimeout(ctx, extractCeiling)
+	defer extractCancel()
+
 	// --- Step 2: Probe codec (skip if already known from a prior UNSUPPORTED row) ---
 	codec := ""
 	if row.Codec != nil && *row.Codec != "" {
@@ -395,7 +473,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		slog.Debug("VideoWorker: using stored codec (skip re-probe)",
 			"file_id", row.FileID, "version", row.Version, "codec", codec)
 	} else {
-		codec, err = videoDetectCodecFromFileFunc(ctx, tmpName)
+		codec, err = videoDetectCodecFromFileFunc(extractCtx, tmpName)
 		if err != nil {
 			// Cannot determine codec — treat as transient (not as UNSUPPORTED).
 			slog.Warn("VideoWorker: codec probe failed, releasing with attempt increment",
@@ -421,7 +499,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	}
 
 	// --- Step 4: Extract first frame from the already-downloaded temp file ---
-	pngBytes, err := videoFirstFrameFromFileFunc(ctx, tmpName)
+	pngBytes, err := videoFirstFrameFromFileFunc(extractCtx, tmpName)
 	if err != nil {
 		errMsg := truncate(err.Error(), 512)
 		if errors.Is(err, video.ErrExtractFailed) || errors.Is(err, video.ErrExtractTimeout) {
@@ -437,7 +515,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	}
 
 	// --- Step 5: Re-encode PNG→JPEG and store ---
-	_, err = encodePNGToJPEGAndStore(ctx, w.deps.Store, pngBytes, row.Version, row.ServiceType, row.OwnerID, previewID)
+	_, err = encodePNGToJPEGAndStore(extractCtx, w.deps.Store, pngBytes, row.Version, row.ServiceType, row.OwnerID, previewID)
 	if err != nil {
 		w.releaseOrFail(ctx, row, err)
 		return

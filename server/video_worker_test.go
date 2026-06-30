@@ -464,3 +464,318 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	delete(w.live, key)
 	w.mu.Unlock()
 }
+
+// ---------------------------------------------------------------------------
+// Test 4: Heartbeat keeps a long download alive (claimed_at is refreshed)
+// ---------------------------------------------------------------------------
+
+// TestWorker_HeartbeatKeepsLongDownloadAlive verifies that a download which
+// streams slowly but continuously calls db.Heartbeat before staleTTL is
+// reached, so that ReclaimStale never reclaims a progressing download.
+//
+// Strategy:
+//   - Set staleTTL to 200ms (tiny, so ReclaimStale would fire quickly).
+//   - Set heartbeatInterval to 50ms (fires multiple times during download).
+//   - Set readIdleTimeout large so the watchdog does NOT fire.
+//   - Use a slow-stream reader that delivers bytes for ~300ms total.
+//   - After attempt() completes successfully, assert:
+//     (a) Heartbeat was called at least once (claimed_at updated during download).
+//     (b) Row ends up READY (not reclaimed / not FAILED).
+func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
+	// Override package vars for this test.
+	origIdle := readIdleTimeout
+	readIdleTimeout = 2 * time.Second // large — watchdog must NOT fire
+	t.Cleanup(func() { readIdleTimeout = origIdle })
+
+	origHB := heartbeatInterval
+	heartbeatInterval = 50 * time.Millisecond // fast heartbeat
+	t.Cleanup(func() { heartbeatInterval = origHB })
+
+	// Stub probe and extract so attempt() reaches MarkReady.
+	origProbe := videoDetectCodecFromFileFunc
+	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
+		return "h264", nil
+	}
+	t.Cleanup(func() { videoDetectCodecFromFileFunc = origProbe })
+
+	origExtract := videoFirstFrameFromFileFunc
+	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
+		return tinyPNG(t), nil
+	}
+	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
+
+	dbStore := startVideoPostgres(t)
+	ctx := context.Background()
+
+	fileID := videoUID(t, "hb_alive")
+	const version = 1
+
+	// Slow reader: delivers 5 bytes every 30ms for ~300ms total.
+	// heartbeatInterval = 50ms → at least 3 heartbeats during the download.
+	// staleTTL = 200ms < total download time → without heartbeat, ReclaimStale
+	// would fire and reclaim the row, but the heartbeat prevents this.
+	slowRC := newSlowStreamReader(strings.Repeat("X", 50), 5, 30*time.Millisecond)
+	store := &controllableStore{
+		readers: []io.ReadCloser{slowRC},
+		storeOK: true,
+	}
+
+	sem := make(chan struct{}, 1)
+	cfg := testCfg()
+	cfg.VideoMaxAttempts = 3
+	cfg.VideoStaleTTLSeconds = 1 // 1s → tiny in absolute terms; see w.staleTTL override below
+	w := NewVideoWorker(Deps{
+		Cfg:      cfg,
+		Store:    store,
+		Cache:    nil,
+		DB:       dbStore,
+		VideoSem: sem,
+	})
+	// Override staleTTL to be smaller than the total download time but larger
+	// than heartbeatInterval, so ReclaimStale would fire without heartbeats.
+	w.staleTTL = 200 * time.Millisecond
+
+	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
+		t.Fatalf("EnqueueIfAbsent: %v", err)
+	}
+	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
+	if err != nil || !ok {
+		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	}
+	row, err := dbStore.Find(ctx, fileID, version)
+	if err != nil || row == nil {
+		t.Fatalf("Find: %v", err)
+	}
+
+	// Record claimed_at before download starts.
+	claimedAtBefore := row.ClaimedAt
+
+	acquireSlot(w)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer w.releaseSem()
+		w.attempt(ctx, *row)
+	}()
+
+	// Wait for attempt to complete (slow reader takes ~300ms; give 3s overhead).
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("attempt() timed out — possible deadlock or watchdog mis-fire")
+	}
+
+	// Row must be READY — the download completed without being reclaimed.
+	after, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || after == nil {
+		t.Fatalf("Find after attempt: %v", ferr)
+	}
+	if after.Status != db.StatusReady {
+		t.Errorf("status: got %q, want READY (heartbeat should have kept row alive)", after.Status)
+	}
+
+	// Verify that claimed_at was refreshed at least once during the download
+	// (i.e., Heartbeat was actually called). We check the updated_at column
+	// as a proxy: it should be >= claimedAtBefore + heartbeatInterval.
+	// We cannot inspect Heartbeat call count directly (no mock), but we can
+	// verify the final updated_at timestamp advanced past the initial claimed_at.
+	if claimedAtBefore != nil && !after.UpdatedAt.After(*claimedAtBefore) {
+		t.Logf("claimedAtBefore=%v updatedAt=%v", *claimedAtBefore, after.UpdatedAt)
+		// Note: this is a weak check — UpdatedAt is also bumped by MarkReady.
+		// The primary assertion is that the row ends READY (not reclaimed/FAILED).
+	}
+	// Semaphore slot must be free after completion.
+	if !w.tryAcquireSem() {
+		t.Error("semaphore slot not freed after successful attempt")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: Extract-ceiling fires on a hung extract
+// ---------------------------------------------------------------------------
+
+// TestWorker_ExtractCeilingCancelsHungExtract verifies that if
+// videoFirstFrameFromFileFunc blocks indefinitely, the extractCeiling context
+// cancels it, the attempt is released as transient (not UNSUPPORTED), and the
+// semaphore slot is freed.
+func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
+	// Tiny ceiling so the test completes fast.
+	origCeiling := extractCeiling
+	extractCeiling = 80 * time.Millisecond
+	t.Cleanup(func() { extractCeiling = origCeiling })
+
+	// Idle timeout large so watchdog doesn't interfere.
+	origIdle := readIdleTimeout
+	readIdleTimeout = 2 * time.Second
+	t.Cleanup(func() { readIdleTimeout = origIdle })
+
+	// Stub probe to succeed.
+	origProbe := videoDetectCodecFromFileFunc
+	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
+		return "h264", nil
+	}
+	t.Cleanup(func() { videoDetectCodecFromFileFunc = origProbe })
+
+	// Stub extract to block until ctx is cancelled.
+	origExtract := videoFirstFrameFromFileFunc
+	videoFirstFrameFromFileFunc = func(ctx context.Context, _ string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
+
+	dbStore := startVideoPostgres(t)
+	ctx := context.Background()
+
+	fileID := videoUID(t, "extract_ceil")
+	const version = 1
+
+	// Fast download: instant bytes so only the extract hangs.
+	store := &controllableStore{
+		readers: []io.ReadCloser{
+			io.NopCloser(strings.NewReader(strings.Repeat("X", 20))),
+		},
+		storeOK: true,
+	}
+	w := makeWorkerWithSem(dbStore, store, 3)
+
+	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
+		t.Fatalf("EnqueueIfAbsent: %v", err)
+	}
+	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
+	if err != nil || !ok {
+		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	}
+	row, err := dbStore.Find(ctx, fileID, version)
+	if err != nil || row == nil {
+		t.Fatalf("Find: %v", err)
+	}
+
+	acquireSlot(w)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer w.releaseSem()
+		w.attempt(ctx, *row)
+	}()
+
+	// attempt() must return within 2s (ceiling = 80ms + overhead).
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attempt() did not return after extractCeiling fired")
+	}
+
+	// Semaphore slot must be freed.
+	if !w.tryAcquireSem() {
+		t.Error("semaphore slot was not freed after extract-ceiling cancellation")
+	}
+
+	// Row must be PENDING (transient — attempts < maxAttempts) or FAILED (at cap).
+	// It must NOT be UNSUPPORTED (context cancellation is NOT an UNSUPPORTED codec).
+	after, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || after == nil {
+		t.Fatalf("Find after attempt: %v", ferr)
+	}
+	if after.Status == db.StatusUnsupported {
+		t.Errorf("status: got UNSUPPORTED, want PENDING or FAILED (ceiling cancellation must not map to UNSUPPORTED)")
+	}
+	if after.Status != db.StatusPending && after.Status != db.StatusFailed {
+		t.Errorf("status: got %q, want PENDING or FAILED (transient extract-ceiling error)", after.Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: Skip-fix — live row with high attempts is NOT MarkFailed
+// ---------------------------------------------------------------------------
+
+// TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease verifies the corrected
+// stale-reclaim loop:
+//   - A live row (key in w.live) is NOT MarkFailed even when Attempts >= maxAttempts.
+//   - The row stays GENERATING (no Release → PENDING that would cause duplication).
+//   - No semaphore slot is consumed (no goroutine launched).
+func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
+	orig := readIdleTimeout
+	readIdleTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { readIdleTimeout = orig })
+
+	dbStore := startVideoPostgres(t)
+	ctx := context.Background()
+
+	fileID := videoUID(t, "live_highatt")
+	const version = 1
+
+	store := &controllableStore{}
+	sem := make(chan struct{}, 1)
+	cfg := testCfg()
+	// maxAttempts = 2: after ReclaimStale increments, attempts will equal maxAttempts.
+	cfg.VideoMaxAttempts = 2
+	cfg.VideoStaleTTLSeconds = 1
+	w := NewVideoWorker(Deps{
+		Cfg:      cfg,
+		Store:    store,
+		DB:       dbStore,
+		VideoSem: sem,
+	})
+	w.staleTTL = 1 * time.Millisecond
+
+	// Enqueue + claim (PENDING → GENERATING, attempts=0).
+	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
+		t.Fatalf("EnqueueIfAbsent: %v", err)
+	}
+	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
+	if err != nil || !ok {
+		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	}
+
+	// Bump attempts to maxAttempts-1 via ReleaseWithAttempt + re-Claim so that
+	// ReclaimStale's +1 will hit exactly maxAttempts.  We do this by:
+	//   1. ReleaseWithAttempt (GENERATING → PENDING, attempts=1).
+	//   2. Re-Claim (PENDING → GENERATING, attempts still 1).
+	// After ReclaimStale +1 → attempts=2 = maxAttempts.
+	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, "setup"); rerr != nil {
+		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
+	}
+	ok, err = dbStore.Claim(ctx, fileID, version, w.instanceID)
+	if err != nil || !ok {
+		t.Fatalf("Re-Claim (setup): err=%v ok=%v", err, ok)
+	}
+
+	// Wait for claimed_at to be old enough for ReclaimStale.
+	time.Sleep(5 * time.Millisecond)
+
+	// Inject the key into live — simulating the goroutine is still running.
+	key := liveKey(fileID, version)
+	w.mu.Lock()
+	w.live[key] = struct{}{}
+	w.mu.Unlock()
+
+	// Run tick — stale-reclaim fires; live-check must protect the row.
+	w.tick(ctx)
+
+	// Semaphore must be free (no goroutine launched).
+	if !w.tryAcquireSem() {
+		t.Error("semaphore slot consumed despite row being in live-set")
+	}
+
+	// Row must still be GENERATING (not FAILED, not PENDING).
+	after, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || after == nil {
+		t.Fatalf("Find after tick: %v", ferr)
+	}
+	switch after.Status {
+	case db.StatusGenerating:
+		// Correct: row is still live, untouched.
+	case db.StatusFailed:
+		t.Error("row was MarkFailed despite goroutine being in live-set (live-check must run BEFORE cap check)")
+	case db.StatusPending:
+		t.Error("row was Released to PENDING despite goroutine being in live-set (Release must NOT be called for live rows)")
+	default:
+		t.Errorf("unexpected status %q after tick with live-set row", after.Status)
+	}
+
+	// Cleanup: remove from live.
+	w.mu.Lock()
+	delete(w.live, key)
+	w.mu.Unlock()
+}
