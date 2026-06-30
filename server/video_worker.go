@@ -27,6 +27,8 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +37,47 @@ import (
 	"github.com/zextras/carbonio-preview-ce/storage"
 	"github.com/zextras/carbonio-preview-ce/video"
 )
+
+// readIdleTimeout is the maximum silence between successive bytes on the source
+// download.  A download that stalls for longer than this is cancelled so the
+// semaphore slot is freed and the job retried on the next sweep tick.
+//
+// This is a package variable (not a const) so tests can override it to a tiny
+// value (e.g. 50ms) for speed without touching any config/KV knob.
+var readIdleTimeout = 60 * time.Second
+
+// idleReadCloser wraps a ReadCloser and resets a timer on every successful
+// read.  The timer fires dlCancel when no bytes arrive for readIdleTimeout.
+// Call Close to stop the timer and release resources.
+type idleReadCloser struct {
+	rc       io.ReadCloser
+	timer    *time.Timer
+	timeout  time.Duration
+	dlCancel context.CancelFunc
+}
+
+func newIdleReadCloser(rc io.ReadCloser, timeout time.Duration, dlCancel context.CancelFunc) *idleReadCloser {
+	irc := &idleReadCloser{
+		rc:       rc,
+		timeout:  timeout,
+		dlCancel: dlCancel,
+	}
+	irc.timer = time.AfterFunc(timeout, dlCancel)
+	return irc
+}
+
+func (irc *idleReadCloser) Read(p []byte) (n int, err error) {
+	n, err = irc.rc.Read(p)
+	if n > 0 {
+		irc.timer.Reset(irc.timeout)
+	}
+	return n, err
+}
+
+func (irc *idleReadCloser) Close() error {
+	irc.timer.Stop()
+	return irc.rc.Close()
+}
 
 // ---------------------------------------------------------------------------
 // Constants (ported from VideoPreviewWorker.java + VideoPreviewServiceImpl.java)
@@ -73,6 +116,13 @@ type VideoWorker struct {
 	sweepInterval time.Duration
 	staleTTL      time.Duration
 	maxAttempts   int
+
+	// live is the per-instance set of jobs whose goroutine is still running.
+	// Key format: fileID + "\x00" + strconv.Itoa(version).
+	// Guards against ReclaimStale re-spawning a row whose goroutine is alive
+	// on this instance (which would double-spend a second semaphore slot).
+	mu   sync.Mutex
+	live map[string]struct{}
 }
 
 // NewVideoWorker creates a VideoWorker from deps. cfg fields
@@ -103,6 +153,7 @@ func NewVideoWorker(deps Deps) *VideoWorker {
 		sweepInterval: time.Duration(sweepSec) * time.Second,
 		staleTTL:      time.Duration(staleSec) * time.Second,
 		maxAttempts:   maxAttempts,
+		live:          make(map[string]struct{}),
 	}
 }
 
@@ -171,7 +222,16 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			inFlight++
 			// Local copy for goroutine capture.
 			job := row
+			key := liveKey(job.FileID, job.Version)
+			w.mu.Lock()
+			w.live[key] = struct{}{}
+			w.mu.Unlock()
 			go func() {
+				defer func() {
+					w.mu.Lock()
+					delete(w.live, key)
+					w.mu.Unlock()
+				}()
 				defer w.releaseSem()
 				w.attempt(ctx, job)
 			}()
@@ -199,6 +259,25 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			}
 			continue
 		}
+		// Skip re-spawning if a goroutine for this job is still alive on this
+		// instance.  ReclaimStale already incremented attempts, so we undo that
+		// increment by returning the row to PENDING without a further increment —
+		// use the plain Release (not ReleaseWithAttempt) so the still-running
+		// goroutine's own outcome (MarkReady / releaseOrFail) is the one that
+		// actually counts.
+		staleKey := liveKey(stale.FileID, stale.Version)
+		w.mu.Lock()
+		_, isLive := w.live[staleKey]
+		w.mu.Unlock()
+		if isLive {
+			slog.Debug("VideoWorker: stale-reclaim skipped (goroutine still alive)",
+				"file_id", stale.FileID, "version", stale.Version)
+			if rerr := w.deps.DB.Release(ctx, stale.FileID, stale.Version, w.instanceID,
+				"stale-reclaim skipped: goroutine still alive on this instance"); rerr != nil {
+				slog.Warn("VideoWorker: Release (stale live-skip) failed", "err", rerr)
+			}
+			continue
+		}
 		if !w.tryAcquireSem() {
 			// Return to PENDING, don't count as attempt.
 			if rerr := w.deps.DB.Release(ctx, stale.FileID, stale.Version, w.instanceID, "worker busy"); rerr != nil {
@@ -208,7 +287,16 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		}
 		inFlight++
 		job := stale
+		staleJobKey := staleKey
+		w.mu.Lock()
+		w.live[staleJobKey] = struct{}{}
+		w.mu.Unlock()
 		go func() {
+			defer func() {
+				w.mu.Lock()
+				delete(w.live, staleJobKey)
+				w.mu.Unlock()
+			}()
 			defer w.releaseSem()
 			w.attempt(ctx, job)
 		}()
@@ -246,8 +334,18 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		"preview_id", previewID, "instance_id", w.instanceID)
 
 	// --- Step 1: Download source video to a seekable temp file ---
-	rc, err := w.deps.Store.RetrieveDataStreaming(ctx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
+	//
+	// The download runs under a separate child context (dlCtx) scoped ONLY to
+	// the copy phase.  An idleReadCloser wraps the source body and fires
+	// dlCancel if no bytes arrive for readIdleTimeout — cancelling the in-flight
+	// transport read so the semaphore slot is freed and the job retried.
+	// After io.Copy returns (success or stall), the watchdog timer is stopped and
+	// dlCtx is released; the subsequent probe/extract/store stages run under the
+	// original ctx (no watchdog — those phases are bounded by their own design).
+	dlCtx, dlCancel := context.WithCancel(ctx)
+	rc, err := w.deps.Store.RetrieveDataStreaming(dlCtx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
+		dlCancel()
 		if isStorageNotFound(err) {
 			slog.Warn("VideoWorker: source blob not found, marking FAILED",
 				"file_id", row.FileID, "version", row.Version)
@@ -263,19 +361,28 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	tmp, err := os.CreateTemp("", "carbonio-preview-worker-*.bin")
 	if err != nil {
 		rc.Close()
+		dlCancel()
 		w.releaseOrFail(ctx, row, err)
 		return
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
-	_, copyErr := io.Copy(tmp, rc)
-	rc.Close()
+	// Wrap rc in the idle watchdog for the duration of the copy only.
+	guard := newIdleReadCloser(rc, readIdleTimeout, dlCancel)
+	_, copyErr := io.Copy(tmp, guard)
+	// Stop the watchdog and release dlCtx immediately — the probe/extract/store
+	// stages below are NOT governed by the download watchdog.
+	guard.Close()
+	dlCancel()
+
 	if syncErr := tmp.Sync(); syncErr != nil && copyErr == nil {
 		copyErr = syncErr
 	}
 	tmp.Close()
 	if copyErr != nil {
+		slog.Warn("VideoWorker: download failed (possibly stalled idle watchdog)",
+			"file_id", row.FileID, "version", row.Version, "err", copyErr)
 		w.releaseOrFail(ctx, row, copyErr)
 		return
 	}
@@ -403,4 +510,9 @@ func truncate(s string, n int) string {
 // isStorageNotFound returns true if err wraps storage.ErrNotFound.
 func isStorageNotFound(err error) bool {
 	return errors.Is(err, storage.ErrNotFound)
+}
+
+// liveKey returns the map key used to track a running goroutine in VideoWorker.live.
+func liveKey(fileID string, version int) string {
+	return fileID + "\x00" + strconv.Itoa(version)
 }

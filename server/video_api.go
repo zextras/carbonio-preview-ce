@@ -144,7 +144,16 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 			_ = deps.DB.Release(bgCtx, fileID, version, worker.instanceID, "semaphore busy on immediate attempt")
 			return
 		}
+		key := liveKey(fileID, version)
+		worker.mu.Lock()
+		worker.live[key] = struct{}{}
+		worker.mu.Unlock()
 		go func() {
+			defer func() {
+				worker.mu.Lock()
+				delete(worker.live, key)
+				worker.mu.Unlock()
+			}()
 			defer worker.releaseSem()
 			// Re-read the row to get ownerID and serviceType (they may not be known here).
 			row, rerr := deps.DB.Find(bgCtx, fileID, version)
