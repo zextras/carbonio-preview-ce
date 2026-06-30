@@ -432,7 +432,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 
 	// Wrap rc in the idle watchdog for the duration of the copy only.
 	guard := newIdleReadCloser(rc, readIdleTimeout, dlCancel)
-	_, copyErr := io.Copy(tmp, guard)
+	_, copyErr := video.StreamToSparseTemp(tmp, guard)
 	// Stop the heartbeat goroutine and the watchdog, release dlCtx immediately.
 	// Heartbeat is ONLY for the download phase; probe/extract/store are bounded
 	// by extractCeiling (size/network-independent, applied below).

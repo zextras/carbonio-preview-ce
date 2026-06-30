@@ -43,8 +43,9 @@ func ExtractFirstFramePNG(ctx context.Context, r io.Reader) ([]byte, error) {
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	// Stream the full body — no size cap; the caller owns size policy.
-	if _, err := io.Copy(tmp, r); err != nil {
+	// Retain only head+tail; discard the middle (frame-0 lives in the head,
+	// the trailing moov/index lives in the tail). See StreamToSparseTemp.
+	if _, err := StreamToSparseTemp(tmp, r); err != nil {
 		return nil, err
 	}
 	if err := tmp.Sync(); err != nil {
