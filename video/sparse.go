@@ -27,42 +27,42 @@ const copyBufSize = 1 << 20 // 1 MiB stream read chunk
 
 // tailRing retains the last `cap` bytes written to it, in chronological order.
 type tailRing struct {
-	buf  []byte
-	cap  int
-	w    int // next write index (mod cap)
-	full bool
+	buf      []byte
+	capacity int
+	w        int // next write index (mod capacity)
+	full     bool
 }
 
 func newTailRing(c int) *tailRing {
 	if c < 0 {
 		c = 0
 	}
-	return &tailRing{buf: make([]byte, c), cap: c}
+	return &tailRing{buf: make([]byte, c), capacity: c}
 }
 
 func (t *tailRing) Write(p []byte) {
-	if t.cap == 0 || len(p) == 0 {
+	if t.capacity == 0 || len(p) == 0 {
 		return
 	}
 	// If this write alone is >= capacity, only its last cap bytes survive.
-	if len(p) >= t.cap {
-		copy(t.buf, p[len(p)-t.cap:])
+	if len(p) >= t.capacity {
+		copy(t.buf, p[len(p)-t.capacity:])
 		t.w = 0
 		t.full = true
 		return
 	}
 	end := t.w + len(p)
-	if end <= t.cap {
+	if end <= t.capacity {
 		copy(t.buf[t.w:], p)
 	} else {
-		first := t.cap - t.w
+		first := t.capacity - t.w
 		copy(t.buf[t.w:], p[:first])
 		copy(t.buf, p[first:])
 	}
-	if end >= t.cap {
+	if end >= t.capacity {
 		t.full = true
 	}
-	t.w = end % t.cap
+	t.w = end % t.capacity
 }
 
 // Bytes returns the retained bytes in chronological (oldest-first) order.
@@ -72,7 +72,7 @@ func (t *tailRing) Bytes() []byte {
 		copy(out, t.buf[:t.w])
 		return out
 	}
-	out := make([]byte, t.cap)
+	out := make([]byte, t.capacity)
 	n := copy(out, t.buf[t.w:])
 	copy(out[n:], t.buf[:t.w])
 	return out
