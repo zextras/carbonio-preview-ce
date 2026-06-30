@@ -6,7 +6,9 @@ package video
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"testing"
 )
 
@@ -104,5 +106,105 @@ func TestStreamToSparseTemp_HasHole(t *testing.T) {
 	}
 	if len(got) != len(src) {
 		t.Fatalf("size=%d, want %d", len(got), len(src))
+	}
+}
+
+// genTestVideo builds a fixture in the given container/codec, large enough to
+// exceed the tiny test windows so the sparse path leaves a real hole. Skips if
+// the encoder/muxer is unavailable in this ffmpeg build.
+func genTestVideo(t *testing.T, ext string, encArgs []string, faststart bool) []byte {
+	t.Helper()
+	if !ffmpegAvailable() {
+		t.Skip("ffmpeg not available")
+	}
+	f, err := os.CreateTemp(t.TempDir(), "fixture-*."+ext)
+	if err != nil {
+		t.Fatalf("createtemp: %v", err)
+	}
+	f.Close()
+	// High-detail testsrc, several seconds, 640x480 => comfortably > 48 KiB.
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc=duration=4:size=640x480:rate=25",
+	}
+	args = append(args, encArgs...)
+	if faststart {
+		args = append(args, "-movflags", "+faststart")
+	}
+	args = append(args, f.Name())
+	cmd := exec.Command(FFmpegPath, args...)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		t.Skipf("ffmpeg cannot produce %s with %v (encoder/muxer absent?): %v\n%s",
+			ext, encArgs, err, errb.String())
+	}
+	data, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatalf("readfile: %v", err)
+	}
+	return data
+}
+
+// assertSparseExtract reconstructs data through StreamToSparseTemp with tiny
+// windows (forcing a hole), then asserts ffprobe sees a codec and ffmpeg
+// extracts a PNG frame — proving head+tail suffices for this container.
+func assertSparseExtract(t *testing.T, data []byte) {
+	t.Helper()
+	withWindows(t, 32<<10, 16<<10) // 32 KiB head, 16 KiB tail
+	if len(data) <= headWindow+tailWindow {
+		t.Skipf("fixture too small (%d B) to exercise a hole with %d+%d windows",
+			len(data), headWindow, tailWindow)
+	}
+	f, err := os.CreateTemp(t.TempDir(), "sparse-*.bin")
+	if err != nil {
+		t.Fatalf("createtemp: %v", err)
+	}
+	defer f.Close()
+	if _, err := StreamToSparseTemp(f, bytes.NewReader(data)); err != nil {
+		t.Fatalf("StreamToSparseTemp: %v", err)
+	}
+	if err := f.Sync(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	ctx := context.Background()
+	codec, err := DetectCodecFromFile(ctx, f.Name())
+	if err != nil || codec == "" {
+		t.Fatalf("probe from sparse failed: codec=%q err=%v", codec, err)
+	}
+	png, err := ExtractFirstFramePNGFromFile(ctx, f.Name())
+	if err != nil {
+		t.Fatalf("extract from sparse failed (codec=%s): %v", codec, err)
+	}
+	if len(png) < 8 || string(png[1:4]) != "PNG" {
+		t.Fatalf("not a PNG (codec=%s, len=%d)", codec, len(png))
+	}
+	t.Logf("OK: container yielded codec=%s, frame=%d bytes from %d-byte source (sparse)",
+		codec, len(png), len(data))
+}
+
+func TestSparseExtract_AllContainers(t *testing.T) {
+	cases := []struct {
+		name      string
+		ext       string
+		encArgs   []string
+		faststart bool
+	}{
+		{"mp4_h264_faststart", "mp4", []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "2M"}, true},
+		{"mp4_h264_moov_end", "mp4", []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "2M"}, false},
+		{"mov_h264_moov_end", "mov", []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "2M"}, false},
+		{"webm_vp9", "webm", []string{"-c:v", "libvpx-vp9", "-b:v", "1M"}, false},
+		{"webm_vp8", "webm", []string{"-c:v", "libvpx", "-b:v", "1M"}, false},
+		{"mkv_h264", "mkv", []string{"-c:v", "libx264", "-pix_fmt", "yuv420p", "-b:v", "2M"}, false},
+		{"mpegts_mpeg2", "ts", []string{"-c:v", "mpeg2video", "-b:v", "2M"}, false},
+		{"avi_mpeg4", "avi", []string{"-c:v", "mpeg4", "-b:v", "2M"}, false},
+		{"ogg_theora", "ogv", []string{"-c:v", "libtheora", "-b:v", "1M"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := genTestVideo(t, tc.ext, tc.encArgs, tc.faststart)
+			assertSparseExtract(t, data)
+		})
 	}
 }
