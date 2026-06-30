@@ -49,8 +49,8 @@ type resolveResult struct {
 //  1. Not found       → EnqueueIfAbsent + fire async attempt → 202
 //  2. PENDING         → fire async attempt (non-blocking) → 202
 //  3. GENERATING      → fire async attempt (non-blocking) → 202
-//  4. READY           → verify blob in storage → 200 (previewID set)
-//     If RetrieveData returns 404 → Release to PENDING + fire async → 202
+//  4. READY           → DB-only check → 200 (previewID set)
+//     Blob existence is verified lazily by the handler: ErrNotFound → ReenqueueReady → 202
 //  5. UNSUPPORTED     → 415
 //  6. FAILED          → 422
 func resolve(
@@ -93,22 +93,8 @@ func resolve(
 			return resolveResult{httpStatus: http.StatusAccepted}
 		}
 		pid := *row.PreviewID
-		// Verify blob is actually retrievable (robustness: handles orphaned READY rows).
-		_, verr := deps.Store.RetrieveData(ctx, pid, version, serviceType, ownerID)
-		if verr != nil {
-			if errors.Is(verr, storage.ErrNotFound) {
-				// Blob gone — move READY row back to PENDING for regeneration.
-				slog.Warn("resolve: READY blob missing, re-enqueueing",
-					"file_id", fileID, "version", version, "preview_id", pid)
-				if rerr := deps.DB.ReenqueueReady(ctx, fileID, version, "blob missing in storage"); rerr != nil {
-					slog.Warn("resolve: ReenqueueReady (blob missing) error", "err", rerr)
-				}
-				fireAsyncAttempt(ctx, deps, worker, fileID, version)
-				return resolveResult{httpStatus: http.StatusAccepted}
-			}
-			slog.Warn("resolve: RetrieveData error verifying blob", "err", verr)
-			return resolveResult{httpStatus: http.StatusServiceUnavailable}
-		}
+		// DB says READY: return 200 with previewID. The handler will fetch the blob
+		// and handle a missing blob lazily (ErrNotFound → ReenqueueReady → 202).
 		return resolveResult{httpStatus: http.StatusOK, previewID: pid}
 
 	case db.StatusUnsupported:

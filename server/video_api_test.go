@@ -32,6 +32,7 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/db"
+	"github.com/zextras/carbonio-preview-ce/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/storage"
 	"github.com/zextras/carbonio-preview-ce/video"
 )
@@ -258,8 +259,8 @@ func TestResolve_Generating_Returns202(t *testing.T) {
 	}
 }
 
-// TestResolve_Ready_BlobPresent_Returns200 verifies that a READY row with a blob
-// present in storage returns 200 with the previewID set.
+// TestResolve_Ready_BlobPresent_Returns200 verifies that a READY row returns 200
+// with the previewID set. resolve() is now DB-only — it does not touch storage.
 func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
 	dbStore := startVideoPostgres(t)
 	ctx := context.Background()
@@ -272,9 +273,8 @@ func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
 		t.Fatalf("InsertReady: %v", err)
 	}
 
-	// Storage returns successfully (no error).
-	fakeStore := &fakeVideoStore{blob: []byte("jpeg-frame-data")}
-	deps := buildResolveDeps(dbStore, fakeStore)
+	// resolve() no longer calls Store for READY rows; storage is irrelevant here.
+	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
 
 	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
 	if res.httpStatus != http.StatusOK {
@@ -285,37 +285,91 @@ func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
 	}
 }
 
-// TestResolve_Ready_BlobMissing_ReenqueuesAndReturns202 verifies that a READY
-// row whose blob is gone from storage causes ReenqueueReady (row→PENDING) and
-// returns 202.
-func TestResolve_Ready_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
+// TestResolve_Ready_Returns200_DBOnly verifies that a READY row returns 200 with
+// the previewID set. After the fix, resolve() is DB-only for READY rows — it does
+// NOT check storage. Blob existence is verified lazily by the handler.
+func TestResolve_Ready_Returns200_DBOnly(t *testing.T) {
 	dbStore := startVideoPostgres(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "ready_miss")
+	fileID := videoUID(t, "ready_dbonly")
 	const version = 1
-	const previewID = "preview-gone"
+	const previewID = "preview-dbonly"
 
 	if err := dbStore.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
 		t.Fatalf("InsertReady: %v", err)
 	}
 
-	// Storage returns ErrNotFound for the blob.
+	// Even with a store that would return ErrNotFound, resolve() must return 200
+	// because it no longer touches storage for READY rows.
 	fakeStore := &fakeVideoStore{retrieveErr: storage.ErrNotFound}
 	deps := buildResolveDeps(dbStore, fakeStore)
 
 	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusAccepted {
-		t.Errorf("httpStatus: got %d, want 202", res.httpStatus)
+	if res.httpStatus != http.StatusOK {
+		t.Errorf("httpStatus: got %d, want 200 (DB-only, no storage call in resolve)", res.httpStatus)
+	}
+	if res.previewID != previewID {
+		t.Errorf("previewID: got %q, want %q", res.previewID, previewID)
+	}
+}
+
+// TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202 verifies the blob-gone
+// path at the handler level: when resolve() returns 200 (READY) but the handler's
+// own RetrieveData call returns ErrNotFound, the handler re-enqueues the row via
+// ReenqueueReady and returns 202 (Accepted).
+//
+// This test covers the robustness path previously tested in resolve(): the
+// behavior is identical — a READY row with a missing blob is re-enqueued — but the
+// check now happens in the handler (single fetch point), not resolve().
+func TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
+	dbStore := startVideoPostgres(t)
+	ctx := context.Background()
+
+	// Use a real UUID so validateUUID passes.
+	const fileID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	const version = 1
+	const previewID = "preview-blob-gone"
+
+	if err := dbStore.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
+		t.Fatalf("InsertReady: %v", err)
+	}
+
+	// Storage returns ErrNotFound — simulates orphaned READY row (blob manually deleted
+	// or PowerStore glitch).
+	fakeStore := &fakeVideoStore{retrieveErr: storage.ErrNotFound}
+	deps := buildResolveDeps(dbStore, fakeStore)
+
+	handler := buildGetVideoPreview(deps, nil)
+	_, herr := handler(ctx, &apispec.VideoGetPreviewInput{
+		ID:          fileID,
+		Version:     version,
+		Area:        "100x100",
+		ServiceType: "files",
+		Quality:     "medium",
+		OutputFormat: "jpeg",
+	})
+
+	// Handler must return a 202 Accepted error.
+	if herr == nil {
+		t.Fatal("expected a huma error (202), got nil")
+	}
+	type statusGetter interface{ GetStatus() int }
+	se, ok := herr.(statusGetter)
+	if !ok {
+		t.Fatalf("error %T does not implement GetStatus()", herr)
+	}
+	if se.GetStatus() != http.StatusAccepted {
+		t.Errorf("HTTP status: got %d, want 202", se.GetStatus())
 	}
 
 	// Row must have been moved back to PENDING with preview_id cleared.
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: err=%v row=%v", err, row)
+	row, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || row == nil {
+		t.Fatalf("Find: err=%v row=%v", ferr, row)
 	}
 	if row.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING (re-enqueued)", row.Status)
+		t.Errorf("status: got %q, want PENDING (re-enqueued by handler)", row.Status)
 	}
 	if row.PreviewID != nil {
 		t.Errorf("preview_id: got %v, want nil (cleared by ReenqueueReady)", row.PreviewID)
