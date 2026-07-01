@@ -183,3 +183,68 @@ func TestStartVideoDBAsync_ConfigValues_MatchMainGo(t *testing.T) {
 		t.Errorf("videoDBMaxBackoff = %v, want 60s", videoDBMaxBackoff)
 	}
 }
+
+// TestStartVideoDBAsync_DBReadyBeforeBuildMux_WorkerStillStarts is the
+// REGRESSION test for the real production race: main.go's ordering is
+//
+//	srv := server.New(...)          // s.worker is nil
+//	srv.StartVideoDBAsync(ctx, cfg) // background: DB opens+migrates, calls EnableVideoDB
+//	srv.Run()                       // calls buildMux(), which constructs s.worker
+//
+// If the DB becomes ready (EnableVideoDB fires) BEFORE Run()/buildMux()
+// constructs the worker, StartVideoWorker's `if s.worker != nil` check is
+// false and the start request is silently dropped. buildMux later assigns
+// s.worker, but nothing ever calls StartOnce on it — the sweep goroutine never
+// launches and PENDING rows are never processed, even though the DB gate
+// reports ready.
+//
+// This test reproduces that exact ordering (StartVideoDBAsync completes and
+// EnableVideoDB fires BEFORE buildMux is called) and asserts the worker is
+// nonetheless started. It must FAIL on the pre-fix code (s.worker.started ==
+// false, or s.worker == nil at assertion time in the worst timing) and PASS
+// once the deferred-start latch is implemented.
+func TestStartVideoDBAsync_DBReadyBeforeBuildMux_WorkerStillStarts(t *testing.T) {
+	dsn := startVideoPostgresDSN(t)
+
+	cfg := testCfg()
+	cfg.DBDSN = dsn
+	cfg.DBPoolMaxConns = 5
+
+	s := New(cfg, &mockStore{blob: []byte("src")}, cache.New(0))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the async DB init FIRST, with NO worker constructed yet
+	// (s.worker == nil at this point, matching main.go's real ordering: New()
+	// then StartVideoDBAsync() then Run()).
+	s.StartVideoDBAsync(ctx, cfg)
+
+	// Wait for the DB to actually become ready (EnableVideoDB fired) BEFORE
+	// building the mux — this is the crux of the race: enable-before-construct.
+	ok := pollUntil(15*time.Second, 100*time.Millisecond, func() bool {
+		return s.dbGate.Ready()
+	})
+	if !ok {
+		t.Fatal("gate never became ready within timeout — StartVideoDBAsync did not enable the video DB")
+	}
+
+	// ONLY NOW construct the worker, exactly like Run()/Handler() calling
+	// buildMux after the DB already came up.
+	_ = s.buildMux(nil)
+
+	if s.worker == nil {
+		t.Fatal("worker must exist (constructed by buildMux)")
+	}
+
+	// The worker must end up started even though EnableVideoDB fired before
+	// the worker existed. Poll briefly: StartOnce (if reached) launches
+	// synchronously, but allow a short grace window for the latch to fire.
+	started := pollUntil(2*time.Second, 20*time.Millisecond, func() bool {
+		return s.worker.started.Load()
+	})
+	if !started {
+		t.Error("worker was never started: DB became ready BEFORE buildMux constructed the worker, " +
+			"and the pending start request was lost — this is the main.go ordering race")
+	}
+}

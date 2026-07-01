@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -38,6 +39,28 @@ type Server struct {
 	// buildMux (gate-aware) and only actually processes rows while dbGate is
 	// ready. Started by StartVideoWorker (called from main once the DB is up).
 	worker *VideoWorker
+
+	// workerStartMu guards workerStartRequested/workerStartCtx below. It makes
+	// the "start the worker" request order-independent with respect to
+	// buildMux constructing s.worker.
+	//
+	// Production ordering (main.go) is: New() [worker nil] → StartVideoDBAsync()
+	// [background goroutine] → Run() [buildMux constructs worker]. If the
+	// background DB init finishes and calls EnableVideoDB/StartVideoWorker
+	// BEFORE Run() reaches buildMux, the old code's `if s.worker != nil` guard
+	// in StartVideoWorker silently dropped the start request — buildMux later
+	// assigns s.worker, but nothing ever calls StartOnce on it, so the sweep
+	// goroutine never launches even though the DB gate is ready.
+	//
+	// The fix: whichever of {worker construction, start request} happens
+	// LAST is responsible for actually calling StartOnce. If the start is
+	// requested before the worker exists, it is recorded here and honoured by
+	// buildMux right after s.worker is assigned. StartOnce's own atomic CAS
+	// makes calling it from both paths (or multiple times) safe — it starts
+	// the sweep goroutine exactly once regardless of ordering.
+	workerStartMu        sync.Mutex
+	workerStartRequested bool
+	workerStartCtx       context.Context
 }
 
 // Option is a functional option for Server configuration.
@@ -83,10 +106,21 @@ func (s *Server) EnableVideoDB(ctx context.Context, dbStore *db.Store) {
 // StartVideoWorker starts the background sweep goroutine if a worker exists and
 // has not been started yet. The worker itself no-ops each tick while the gate is
 // not ready, so starting it early (or before the DB is up) is safe.
+//
+// If the worker has not been constructed yet (buildMux has not run), the start
+// request is NOT dropped: it is recorded and honoured by buildMux as soon as
+// s.worker is assigned. This makes the start order-independent with respect to
+// buildMux — see the workerStartMu doc comment on Server for the full race this
+// closes.
 func (s *Server) StartVideoWorker(ctx context.Context) {
+	s.workerStartMu.Lock()
+	defer s.workerStartMu.Unlock()
 	if s.worker != nil {
 		s.worker.StartOnce(ctx)
+		return
 	}
+	s.workerStartRequested = true
+	s.workerStartCtx = ctx
 }
 
 // Run starts the server. It blocks until the process receives SIGTERM or SIGINT.
@@ -200,7 +234,7 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	// (gate-aware) and retained on the Server so it can be started once the DB is
 	// ready (EnableVideoDB / StartVideoWorker).
 	api := newHumaAPI(mux)
-	s.worker = RegisterOperations(api, Deps{
+	worker := RegisterOperations(api, Deps{
 		Cfg:      s.cfg,
 		Store:    s.store,
 		Cache:    s.cache,
@@ -208,6 +242,22 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 		VideoSem: videoSem,
 		DBGate:   s.dbGate,
 	})
+
+	// Assign s.worker and check/honour a deferred start request atomically
+	// under the SAME lock that StartVideoWorker uses to read/write s.worker.
+	// This closes the race where EnableVideoDB/StartVideoWorker fires
+	// concurrently with buildMux: without the shared lock, the assignment
+	// below and the `if s.worker != nil` read in StartVideoWorker can race
+	// (flagged by `go test -race`). See the workerStartMu doc comment on
+	// Server for the full ordering issue this pairing fixes. StartOnce's
+	// atomic CAS makes calling it here safe even if the normal post-ready
+	// path also calls it (whichever runs first wins; the other is a no-op).
+	s.workerStartMu.Lock()
+	s.worker = worker
+	if s.workerStartRequested {
+		s.worker.StartOnce(s.workerStartCtx)
+	}
+	s.workerStartMu.Unlock()
 
 	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).
 	registerDocRoutes(mux)
