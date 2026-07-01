@@ -2,11 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-package migrate
+// Package cemig holds the CE (Community Edition) migration set.
+//
+// It registers itself into the "ce" migration set on import (see init below),
+// which is the whole point of moving it out of the framework package
+// (config/migrate): a plain import of config/migrate no longer pulls in the
+// CE migrations, so the Advanced binary — which imports config/migrate for
+// the framework but does NOT import this package — never inherits CE's V1.
+package cemig
+
+import "github.com/zextras/carbonio-preview-ce/config/migrate"
 
 func init() {
-	if err := Register(V1MigrateFromPythonIni()); err != nil {
-		panic("migrate: register V1: " + err.Error())
+	if err := migrate.RegisterInSet("ce", V1MigrateFromPythonIni()); err != nil {
+		panic("cemig: register V1 into set \"ce\": " + err.Error())
 	}
 }
 
@@ -28,23 +37,21 @@ func init() {
 //
 // Keys in the ADVANCED V2 territory (nginx lookup / memcached) are deliberately
 // absent from both maps; they survive in the ini until the advanced binary runs
-// its V2.
-//
-// Exported so that the ADVANCED module can call it directly (or re-use its
-// entry maps to build V1+V2).
-func V1MigrateFromPythonIni() Migration {
-	rename := func(newKey string) EntryFunc {
-		return func(_, oldValue string, dest ConfigStore) error {
+// its own V1/V2 (registered into the "advanced" set, entirely separate from
+// this "ce" set).
+func V1MigrateFromPythonIni() migrate.Migration {
+	rename := func(newKey string) migrate.EntryFunc {
+		return func(_, oldValue string, dest migrate.ConfigStore) error {
 			return dest.Set(newKey, oldValue)
 		}
 	}
 
-	return Migration{
+	return migrate.Migration{
 		Version: 1,
 		Name:    "V1__MigrateFromPythonIni",
 
 		// ── Networking entries (INI section.key → config.properties key) ──────────
-		NetworkingEntries: map[string]EntryFunc{
+		NetworkingEntries: map[string]migrate.EntryFunc{
 			"carbonio.preview.default_host":         rename("carbonio.service.host"),
 			"carbonio.preview.default_port":         rename("carbonio.service.port"),
 			"carbonio.storages.default_host":        rename("carbonio.storages.host"),
@@ -64,7 +71,7 @@ func V1MigrateFromPythonIni() Migration {
 		},
 
 		// ── Application entries (INI section.key → Consul KV raw path) ───────────
-		ApplicationEntries: map[string]EntryFunc{
+		ApplicationEntries: map[string]migrate.EntryFunc{
 			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/enable-document-preview"),
 			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/enable-document-thumbnail"),
 			// Operator timeout overrides are carried into Consul KV so that an
