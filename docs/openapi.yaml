@@ -1568,7 +1568,7 @@ paths:
         - pdf
   /preview/video/{id}/{version}/:
     delete:
-      description: "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204."
+      description: "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204. When the video-preview database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error."
       operationId: deleteVideoPreview
       parameters:
         - description: UUID of the video attachment
@@ -1614,24 +1614,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Failed Dependency
         "500":
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Internal Server Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Service Unavailable
       summary: Delete Video Preview
       tags:
         - video
   /preview/video/{id}/{version}/copy/:
     post:
-      description: Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY.
+      description: Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY. When the video-preview database is unavailable this is a no-op that still returns 200 with an empty body (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.
       operationId: copyVideoPreview
       parameters:
         - description: UUID of the SOURCE video attachment
@@ -1702,6 +1702,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Failed Dependency
         "500":
           content:
             application/json:
@@ -1714,18 +1720,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Bad Gateway
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Service Unavailable
       summary: Copy Video Preview
       tags:
         - video
   /preview/video/{id}/{version}/{area}/:
     get:
-      description: Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed.
+      description: Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed, 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).
       operationId: getVideoPreview
       parameters:
         - description: UUID of the video attachment
@@ -1857,6 +1857,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Failed Dependency
         "500":
           content:
             application/json:
@@ -1880,7 +1886,7 @@ paths:
         - video
   /preview/video/{id}/{version}/{area}/thumbnail/:
     get:
-      description: Serves a thumbnail of the stored first-frame preview of a video attachment.
+      description: Serves a thumbnail of the stored first-frame preview of a video attachment. Returns 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).
       operationId: getVideoThumbnail
       parameters:
         - description: UUID of the video attachment
@@ -2015,6 +2021,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Unprocessable Entity
+        "424":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Failed Dependency
         "500":
           content:
             application/json:
