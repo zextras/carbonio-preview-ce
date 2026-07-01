@@ -48,7 +48,7 @@ func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
 	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, "was not in list"); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestResolve_Unsupported_CodecNotInList_Returns415(t *testing.T) {
 	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, "not in list"); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestResolve_Unsupported_NoCodec_Returns415(t *testing.T) {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
 	// Mark UNSUPPORTED WITHOUT setting a codec first.
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, "no codec stored"); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
 	// Bump attempts to maxAttempts-1 so the next attempt hits the cap.
-	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, "prior failure"); rerr != nil {
+	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
 	ok2, err2 := dbStore.Claim(ctx, fileID, version, w.instanceID)
@@ -427,10 +427,10 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
 		t.Fatalf("SetCodec (setup): %v", err)
 	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, "not in list"); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported (setup): %v", err)
 	}
-	if err := dbStore.ReenqueueUnsupported(ctx, fileID, version, "codec now in list"); err != nil {
+	if err := dbStore.ReenqueueUnsupported(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueUnsupported (setup): %v", err)
 	}
 

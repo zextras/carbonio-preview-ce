@@ -6,7 +6,6 @@ package db
 
 import (
 	"context"
-	"strings"
 	"testing"
 )
 
@@ -79,8 +78,8 @@ func TestSetCodec_WrongInstanceNoop(t *testing.T) {
 }
 
 // TestReenqueueUnsupported_MovesToPendingAndPreservesCodec verifies that
-// ReenqueueUnsupported transitions an UNSUPPORTED row to PENDING, preserves the
-// codec column, and records last_error.
+// ReenqueueUnsupported transitions an UNSUPPORTED row to PENDING and preserves
+// the codec column.
 func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -101,7 +100,7 @@ func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 	if err := store.SetCodec(ctx, fileID, version, instID, codec); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
-	if err := store.MarkUnsupported(ctx, fileID, version, instID, "codec not in list"); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -117,8 +116,7 @@ func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 		t.Fatalf("codec before: got %v, want %q", before.Codec, codec)
 	}
 
-	const reason = "codec now in supported list"
-	if err := store.ReenqueueUnsupported(ctx, fileID, version, reason); err != nil {
+	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueUnsupported: %v", err)
 	}
 
@@ -139,9 +137,6 @@ func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 	if after.ClaimedAt != nil {
 		t.Errorf("ClaimedAt: got %v, want nil", after.ClaimedAt)
 	}
-	if after.LastError == nil || !strings.Contains(*after.LastError, "codec now in") {
-		t.Errorf("LastError: got %v, want string containing %q", after.LastError, "codec now in")
-	}
 }
 
 // TestReenqueueUnsupported_NoopOnPending verifies that ReenqueueUnsupported
@@ -157,7 +152,7 @@ func TestReenqueueUnsupported_NoopOnPending(t *testing.T) {
 		t.Fatalf("EnqueueIfAbsent: %v", err)
 	}
 
-	if err := store.ReenqueueUnsupported(ctx, fileID, version, "should not apply"); err != nil {
+	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
 	}
 
@@ -187,11 +182,11 @@ func TestReenqueueUnsupported_NoopOnFailed(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
-	if err := store.MarkFailed(ctx, fileID, version, instID, "too many attempts"); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
-	if err := store.ReenqueueUnsupported(ctx, fileID, version, "should not apply"); err != nil {
+	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
 	}
 

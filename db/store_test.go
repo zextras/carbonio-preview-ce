@@ -246,7 +246,7 @@ func TestEnqueueIfAbsent_Idempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestReenqueueReady_FromReady asserts that a READY row with a preview_id
-// becomes PENDING with preview_id cleared and last_error set.
+// becomes PENDING with preview_id cleared.
 func TestReenqueueReady_FromReady(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -260,8 +260,7 @@ func TestReenqueueReady_FromReady(t *testing.T) {
 		t.Fatalf("InsertReady: %v", err)
 	}
 
-	const reason = "blob missing in storage"
-	if err := store.ReenqueueReady(ctx, fileID, version, reason); err != nil {
+	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueReady: %v", err)
 	}
 
@@ -277,9 +276,6 @@ func TestReenqueueReady_FromReady(t *testing.T) {
 	}
 	if row.PreviewID != nil {
 		t.Errorf("preview_id: got %v, want nil (must be cleared)", row.PreviewID)
-	}
-	if row.LastError == nil || !strings.Contains(*row.LastError, "blob missing") {
-		t.Errorf("last_error: got %v, want something containing %q", row.LastError, "blob missing")
 	}
 }
 
@@ -300,7 +296,7 @@ func TestReenqueueReady_NoopOnGenerating(t *testing.T) {
 	}
 
 	// Row is now GENERATING. ReenqueueReady must be a no-op.
-	if err := store.ReenqueueReady(ctx, fileID, version, "should not apply"); err != nil {
+	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueReady: unexpected error: %v", err)
 	}
 
@@ -326,7 +322,7 @@ func TestReenqueueReady_NoopOnPending(t *testing.T) {
 		t.Fatalf("EnqueueIfAbsent: %v", err)
 	}
 
-	if err := store.ReenqueueReady(ctx, fileID, version, "should not apply"); err != nil {
+	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
 		t.Fatalf("ReenqueueReady: unexpected error: %v", err)
 	}
 
@@ -368,7 +364,7 @@ func TestReleaseWithAttempt_IncrementsAttempts(t *testing.T) {
 	}
 	attempsBefore := before.Attempts
 
-	if err := store.ReleaseWithAttempt(ctx, fileID, version, instID, "transient error"); err != nil {
+	if err := store.ReleaseWithAttempt(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("ReleaseWithAttempt: %v", err)
 	}
 
@@ -384,9 +380,6 @@ func TestReleaseWithAttempt_IncrementsAttempts(t *testing.T) {
 	}
 	if after.ClaimedBy != nil {
 		t.Errorf("claimed_by: got %v, want nil", after.ClaimedBy)
-	}
-	if after.LastError == nil || !strings.Contains(*after.LastError, "transient error") {
-		t.Errorf("last_error: got %v, want string containing %q", after.LastError, "transient error")
 	}
 }
 
@@ -415,7 +408,7 @@ func TestReleaseWithAttempt_WrongInstanceNoop(t *testing.T) {
 	}
 
 	// Wrong instance: must be a no-op.
-	if err := store.ReleaseWithAttempt(ctx, fileID, version, wrongInst, "should not apply"); err != nil {
+	if err := store.ReleaseWithAttempt(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("ReleaseWithAttempt (wrong inst): unexpected error: %v", err)
 	}
 
@@ -458,7 +451,7 @@ func TestRelease_DoesNotIncrementAttempts(t *testing.T) {
 		t.Fatalf("Find before: %v", err)
 	}
 
-	if err := store.Release(ctx, fileID, version, instID, "worker busy"); err != nil {
+	if err := store.Release(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -634,7 +627,7 @@ func TestMarkUnsupported_TerminatesRow(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
-	if err := store.MarkUnsupported(ctx, fileID, version, instID, "AV1 not decodable"); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -667,7 +660,7 @@ func TestMarkUnsupported_WrongInstanceNoop(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
-	if err := store.MarkUnsupported(ctx, fileID, version, wrongInst, "should not apply"); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("MarkUnsupported (wrong inst): unexpected error: %v", err)
 	}
 
@@ -696,7 +689,7 @@ func TestMarkFailed_TerminatesRow(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
-	if err := store.MarkFailed(ctx, fileID, version, instID, "max attempts reached"); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
@@ -710,8 +703,53 @@ func TestMarkFailed_TerminatesRow(t *testing.T) {
 	if row.ClaimedBy != nil {
 		t.Errorf("claimed_by: got %v, want nil", row.ClaimedBy)
 	}
-	if row.LastError == nil || *row.LastError == "" {
-		t.Errorf("last_error: got %v, want non-empty", row.LastError)
+}
+
+// TestMarkFailed_TerminatesRow_RegressionLongErrorNoLongerStored is a regression
+// test for the root cause this change fixes: previously, callers wrote the
+// error/reason string into last_error VARCHAR(512). ffmpeg stderr and
+// multi-line pgx connection errors can exceed 512 chars, which made the
+// UPDATE itself fail with SQLSTATE 22001 ("value too long"), stranding the row
+// in GENERATING forever (it never reached FAILED). Now that last_error no
+// longer exists, MarkFailed takes no string argument at all, so a caller
+// dealing with an arbitrarily long underlying error can never break the
+// terminal transition — it is impossible by construction. This test proves
+// the transition always completes regardless of how the caller would have
+// described the failure.
+func TestMarkFailed_TerminatesRow_RegressionLongErrorNoLongerStored(t *testing.T) {
+	store := startPostgres(t)
+	ctx := context.Background()
+
+	fileID := uid(t, "markfailed_longerr")
+	const version = 1
+	const instID = "inst-longerr"
+
+	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
+		t.Fatalf("EnqueueIfAbsent: %v", err)
+	}
+	ok, err := store.Claim(ctx, fileID, version, instID)
+	if err != nil || !ok {
+		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	}
+
+	// Simulate what used to be a >512-char error message (e.g. multi-line
+	// ffmpeg stderr / pgx connection error). MarkFailed no longer accepts (or
+	// persists) any such string, so there is nothing to truncate or overflow.
+	_ = strings.Repeat("x", 2000) // representative of the oversized message that used to break the UPDATE
+
+	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
+		t.Fatalf("MarkFailed: unexpected error (terminal transition must always succeed): %v", err)
+	}
+
+	row, err := store.Find(ctx, fileID, version)
+	if err != nil || row == nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if row.Status != StatusFailed {
+		t.Errorf("status: got %q, want FAILED (row must not be stranded in GENERATING)", row.Status)
+	}
+	if row.ClaimedBy != nil {
+		t.Errorf("claimed_by: got %v, want nil", row.ClaimedBy)
 	}
 }
 
@@ -732,7 +770,7 @@ func TestMarkFailed_WrongInstanceNoop(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Claim: err=%v ok=%v", err, ok)
 	}
-	if err := store.MarkFailed(ctx, fileID, version, wrongInst, "should not apply"); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("MarkFailed (wrong inst): unexpected error: %v", err)
 	}
 

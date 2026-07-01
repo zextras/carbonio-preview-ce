@@ -269,7 +269,9 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			// busy, stop feeding — remaining rows stay PENDING for the next tick.
 			if !w.tryAcquireSem() {
 				// Return the row to PENDING without counting an attempt.
-				if rerr := w.db().Release(ctx, row.FileID, row.Version, w.instanceID, "worker busy"); rerr != nil {
+				slog.Debug("VideoWorker: worker busy, releasing without attempt increment",
+					"file_id", row.FileID, "version", row.Version)
+				if rerr := w.db().Release(ctx, row.FileID, row.Version, w.instanceID); rerr != nil {
 					slog.Warn("VideoWorker: Release (busy) failed", "err", rerr)
 				}
 				break
@@ -332,15 +334,18 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		// Row is genuinely dead (crashed instance or this instance lost the goroutine).
 		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
 		if stale.Attempts >= w.maxAttempts {
-			if ferr := w.db().MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID,
-				fmt.Sprintf("max attempts (%d) reached after stale reclaim", w.maxAttempts)); ferr != nil {
+			slog.Warn("VideoWorker: max attempts reached after stale reclaim, marking FAILED",
+				"file_id", stale.FileID, "version", stale.Version, "max_attempts", w.maxAttempts)
+			if ferr := w.db().MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID); ferr != nil {
 				slog.Warn("VideoWorker: MarkFailed (stale cap) failed", "err", ferr)
 			}
 			continue
 		}
 		if !w.tryAcquireSem() {
 			// Return to PENDING, don't count as attempt.
-			if rerr := w.db().Release(ctx, stale.FileID, stale.Version, w.instanceID, "worker busy"); rerr != nil {
+			slog.Debug("VideoWorker: worker busy on stale-reclaimed row, releasing without attempt increment",
+				"file_id", stale.FileID, "version", stale.Version)
+			if rerr := w.db().Release(ctx, stale.FileID, stale.Version, w.instanceID); rerr != nil {
 				slog.Warn("VideoWorker: Release (stale busy) failed", "err", rerr)
 			}
 			break
@@ -385,7 +390,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 				"file_id", row.FileID, "version", row.Version, "panic", r,
 				"stack", string(debug.Stack()))
 			if store := w.db(); store != nil {
-				_ = store.Release(ctx, row.FileID, row.Version, w.instanceID, "panic in attempt")
+				_ = store.Release(ctx, row.FileID, row.Version, w.instanceID)
 			}
 		}
 	}()
@@ -418,7 +423,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		if isStorageNotFound(err) {
 			slog.Warn("VideoWorker: source blob not found, marking FAILED",
 				"file_id", row.FileID, "version", row.Version)
-			if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID, "source blob not found"); merr != nil {
+			if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID); merr != nil {
 				slog.Warn("VideoWorker: MarkFailed (not found) failed", "err", merr)
 			}
 			return
@@ -530,8 +535,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	if !isSupportedVideoCodec(codec) {
 		slog.Warn("VideoWorker: codec not in supported list, marking UNSUPPORTED",
 			"file_id", row.FileID, "version", row.Version, "codec", codec)
-		if merr := w.db().MarkUnsupported(ctx, row.FileID, row.Version, w.instanceID,
-			fmt.Sprintf("codec %q is not supported", codec)); merr != nil {
+		if merr := w.db().MarkUnsupported(ctx, row.FileID, row.Version, w.instanceID); merr != nil {
 			slog.Warn("VideoWorker: MarkUnsupported failed", "err", merr)
 		}
 		return
@@ -540,16 +544,13 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	// --- Step 4: Extract first frame from the already-downloaded temp file ---
 	pngBytes, err := videoFirstFrameFromFileFunc(extractCtx, tmpName)
 	if err != nil {
-		errMsg := truncate(err.Error(), 512)
 		if errors.Is(err, video.ErrExtractFailed) || errors.Is(err, video.ErrExtractTimeout) {
 			// Supported codec but could not decode — treat as transient until cap,
 			// then FAILED (never UNSUPPORTED: the codec IS known-good).
 			slog.Warn("VideoWorker: frame extraction failed for supported codec, releasing with attempt increment",
 				"file_id", row.FileID, "version", row.Version, "codec", codec, "err", err)
-			w.releaseOrFail(ctx, row, fmt.Errorf("%s", errMsg))
-		} else {
-			w.releaseOrFail(ctx, row, err)
 		}
+		w.releaseOrFail(ctx, row, err)
 		return
 	}
 
@@ -568,20 +569,20 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 }
 
 // releaseOrFail increments attempts and either releases to PENDING or marks FAILED at cap.
+// The triggering error is logged here (in full, untruncated) for observability;
+// it is never persisted to the DB.
 func (w *VideoWorker) releaseOrFail(ctx context.Context, row db.VideoPreview, err error) {
-	errMsg := truncate(err.Error(), 512)
 	slog.Warn("VideoWorker: transient error, releasing to PENDING with attempt increment",
 		"file_id", row.FileID, "version", row.Version, "err", err,
 		"attempts_after", row.Attempts+1)
 	if row.Attempts+1 >= w.maxAttempts {
 		slog.Warn("VideoWorker: max attempts reached, marking FAILED",
-			"file_id", row.FileID, "version", row.Version, "max_attempts", w.maxAttempts)
-		if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID,
-			fmt.Sprintf("max attempts (%d) reached: %s", w.maxAttempts, errMsg)); merr != nil {
+			"file_id", row.FileID, "version", row.Version, "max_attempts", w.maxAttempts, "err", err)
+		if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID); merr != nil {
 			slog.Warn("VideoWorker: MarkFailed (transient cap) failed", "err", merr)
 		}
 	} else {
-		if rerr := w.db().ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID, errMsg); rerr != nil {
+		if rerr := w.db().ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID); rerr != nil {
 			slog.Warn("VideoWorker: ReleaseWithAttempt failed", "err", rerr)
 		}
 	}
@@ -608,20 +609,6 @@ func (w *VideoWorker) releaseSem() {
 		return
 	}
 	<-w.deps.VideoSem
-}
-
-// truncate caps a string to at most n bytes (UTF-8-safe).
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	// Cut at a rune boundary.
-	for i := n; i >= 0; i-- {
-		if s[i] < 0x80 || s[i] >= 0xC0 {
-			return s[:i]
-		}
-	}
-	return s[:n]
 }
 
 // isStorageNotFound returns true if err wraps storage.ErrNotFound.

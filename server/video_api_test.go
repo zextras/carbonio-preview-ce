@@ -390,7 +390,7 @@ func TestResolve_Unsupported_Returns415(t *testing.T) {
 	if _, err := dbStore.Claim(ctx, fileID, version, "inst-1"); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, "inst-1", "AV1"); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, "inst-1"); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -415,7 +415,7 @@ func TestResolve_Failed_Returns422(t *testing.T) {
 	if _, err := dbStore.Claim(ctx, fileID, version, "inst-1"); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if err := dbStore.MarkFailed(ctx, fileID, version, "inst-1", "too many attempts"); err != nil {
+	if err := dbStore.MarkFailed(ctx, fileID, version, "inst-1"); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
@@ -671,7 +671,7 @@ func TestAttempt_Transient_AtCap_MarksFailed(t *testing.T) {
 	// Simulate attempts=1 already accumulated (e.g. from a prior ReclaimStale).
 	// The worker reads row.Attempts from the DB at attempt() call time; bump it
 	// via the public API: ReleaseWithAttempt to increment attempts to 1, then re-Claim.
-	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, "prior failure"); rerr != nil {
+	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
 	ok2, err2 := dbStore.Claim(ctx, fileID, version, w.instanceID)

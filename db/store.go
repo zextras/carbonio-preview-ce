@@ -55,7 +55,6 @@ type VideoPreview struct {
 	ServiceType string
 	ClaimedBy   *string
 	ClaimedAt   *time.Time
-	LastError   *string
 	Attempts    int
 	Codec       *string
 	CreatedAt   time.Time
@@ -173,7 +172,6 @@ func scanVideoPreview(rows pgx.Rows) (VideoPreview, error) {
 		&vp.ServiceType,
 		&vp.ClaimedBy,
 		&vp.ClaimedAt,
-		&vp.LastError,
 		&vp.Attempts,
 		&vp.Codec,
 		&vp.CreatedAt,
@@ -212,7 +210,7 @@ func scanAll(rows pgx.Rows) ([]VideoPreview, error) {
 
 // selectCols is the canonical column list for SELECT * equivalents.
 const selectCols = `file_id, version, status, preview_id, owner_id, service_type,
-    claimed_by, claimed_at, last_error, attempts, codec, created_at, updated_at`
+    claimed_by, claimed_at, attempts, codec, created_at, updated_at`
 
 // ---------------------------------------------------------------------------
 // Query methods
@@ -315,12 +313,12 @@ func (s *Store) FindPendingNewest(ctx context.Context, limit int) ([]VideoPrevie
 }
 
 // MarkReady transitions a GENERATING row owned by instanceID to READY,
-// recording previewID and clearing claimed_by/claimed_at/last_error.
+// recording previewID and clearing claimed_by/claimed_at.
 func (s *Store) MarkReady(ctx context.Context, fileID string, version int, instanceID, previewID string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
          SET status='READY', preview_id=$1,
-             claimed_by=NULL, claimed_at=NULL, last_error=NULL, updated_at=now()
+             claimed_by=NULL, claimed_at=NULL, updated_at=now()
          WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
 		previewID, fileID, version, instanceID,
 	)
@@ -331,14 +329,15 @@ func (s *Store) MarkReady(ctx context.Context, fileID string, version int, insta
 }
 
 // MarkUnsupported transitions a GENERATING row owned by instanceID to UNSUPPORTED
-// (terminal — ffmpeg cannot decode this format).
-func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int, instanceID, errMsg string) error {
+// (terminal — ffmpeg cannot decode this format). The caller is responsible for
+// logging the underlying reason (e.g. via slog) — it is not persisted to the DB.
+func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int, instanceID string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
-         SET status='UNSUPPORTED', last_error=$1,
+         SET status='UNSUPPORTED',
              claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
-		errMsg, fileID, version, instanceID,
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
 	)
 	if err != nil {
 		return fmt.Errorf("db.MarkUnsupported: %w", err)
@@ -348,14 +347,16 @@ func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int,
 
 // MarkFailed transitions a GENERATING row owned by instanceID to FAILED
 // (terminal — max attempts exhausted).  Guards on claimed_by=$inst to match
-// WSC's EbeanVideoPreviewRepository.markFailed semantics.
-func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, instanceID, errMsg string) error {
+// WSC's EbeanVideoPreviewRepository.markFailed semantics. The caller is
+// responsible for logging the underlying reason (e.g. via slog) — it is not
+// persisted to the DB.
+func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, instanceID string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
-         SET status='FAILED', last_error=$1,
+         SET status='FAILED',
              claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
-		errMsg, fileID, version, instanceID,
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
 	)
 	if err != nil {
 		return fmt.Errorf("db.MarkFailed: %w", err)
@@ -364,15 +365,15 @@ func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, inst
 }
 
 // Release returns a GENERATING row owned by instanceID back to PENDING without
-// incrementing attempts (used for transient/storage/deadline errors).
-// last_error is recorded for observability.
-func (s *Store) Release(ctx context.Context, fileID string, version int, instanceID, errMsg string) error {
+// incrementing attempts (used for transient/storage/deadline errors). The
+// caller is responsible for logging the underlying reason (e.g. via slog) —
+// it is not persisted to the DB.
+func (s *Store) Release(ctx context.Context, fileID string, version int, instanceID string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
-         SET status='PENDING', claimed_by=NULL, claimed_at=NULL,
-             last_error=$1, updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
-		errMsg, fileID, version, instanceID,
+         SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now()
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
 	)
 	if err != nil {
 		return fmt.Errorf("db.Release: %w", err)
@@ -382,14 +383,16 @@ func (s *Store) Release(ctx context.Context, fileID string, version int, instanc
 
 // ReenqueueReady moves a READY row back to PENDING for regeneration
 // (e.g. when its preview blob is missing from storage). Clears preview_id
-// so a stale blob id is never reused. Guarded on status='READY'.
-func (s *Store) ReenqueueReady(ctx context.Context, fileID string, version int, reason string) error {
+// so a stale blob id is never reused. Guarded on status='READY'. The caller
+// is responsible for logging the underlying reason (e.g. via slog) — it is
+// not persisted to the DB.
+func (s *Store) ReenqueueReady(ctx context.Context, fileID string, version int) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
          SET status='PENDING', preview_id=NULL, claimed_by=NULL, claimed_at=NULL,
-             last_error=$3, updated_at=now()
+             updated_at=now()
          WHERE file_id=$1 AND version=$2 AND status='READY'`,
-		fileID, version, reason,
+		fileID, version,
 	)
 	if err != nil {
 		return fmt.Errorf("db.ReenqueueReady: %w", err)
@@ -416,14 +419,15 @@ func (s *Store) SetCodec(ctx context.Context, fileID string, version int, instan
 // ReenqueueUnsupported moves an UNSUPPORTED row back to PENDING for re-generation
 // (used when the codec list has been expanded to now include the row's codec).
 // The codec column is intentionally preserved so the worker can skip re-probe.
-// Guarded on status='UNSUPPORTED' — no-op on any other status.
-func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version int, reason string) error {
+// Guarded on status='UNSUPPORTED' — no-op on any other status. The caller is
+// responsible for logging the underlying reason (e.g. via slog) — it is not
+// persisted to the DB.
+func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version int) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
-         SET status='PENDING', claimed_by=NULL, claimed_at=NULL,
-             last_error=$3, updated_at=now()
+         SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now()
          WHERE file_id=$1 AND version=$2 AND status='UNSUPPORTED'`,
-		fileID, version, reason,
+		fileID, version,
 	)
 	if err != nil {
 		return fmt.Errorf("db.ReenqueueUnsupported: %w", err)
@@ -455,14 +459,16 @@ func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, insta
 // ReleaseWithAttempt releases a GENERATING row back to PENDING AND increments
 // attempts. Guarded on status='GENERATING' AND claimed_by=$inst. Used for
 // soft/transient failures so that repeated fast failures eventually hit
-// maxAttempts (unlike plain Release which never increments).
-func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID, errMsg string) error {
+// maxAttempts (unlike plain Release which never increments). The caller is
+// responsible for logging the underlying reason (e.g. via slog) — it is not
+// persisted to the DB.
+func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
          SET status='PENDING', claimed_by=NULL, claimed_at=NULL,
-             attempts=attempts+1, last_error=$1, updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
-		errMsg, fileID, version, instanceID,
+             attempts=attempts+1, updated_at=now()
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
 	)
 	if err != nil {
 		return fmt.Errorf("db.ReleaseWithAttempt: %w", err)

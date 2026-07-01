@@ -91,7 +91,9 @@ func resolve(
 	case db.StatusReady:
 		if row.PreviewID == nil || *row.PreviewID == "" {
 			// Unexpected: READY without a previewID — move back to PENDING for regeneration.
-			if rerr := store.ReenqueueReady(ctx, fileID, version, "READY with nil previewID"); rerr != nil {
+			slog.Warn("resolve: READY row with nil previewID, re-enqueueing",
+				"file_id", fileID, "version", version)
+			if rerr := store.ReenqueueReady(ctx, fileID, version); rerr != nil {
 				slog.Warn("resolve: ReenqueueReady (nil previewID) error", "err", rerr)
 			}
 			fireAsyncAttempt(ctx, deps, worker, fileID, version)
@@ -105,7 +107,9 @@ func resolve(
 	case db.StatusUnsupported:
 		// If the codec is now in the supported list (binary expanded), re-enqueue.
 		if row.Codec != nil && *row.Codec != "" && isSupportedVideoCodec(*row.Codec) {
-			if rerr := store.ReenqueueUnsupported(ctx, fileID, version, "codec now in supported list"); rerr != nil {
+			slog.Info("resolve: codec now in supported list, re-enqueueing",
+				"file_id", fileID, "version", version, "codec", *row.Codec)
+			if rerr := store.ReenqueueUnsupported(ctx, fileID, version); rerr != nil {
 				slog.Warn("resolve: ReenqueueUnsupported error", "err", rerr)
 			}
 			fireAsyncAttempt(ctx, deps, worker, fileID, version)
@@ -147,7 +151,9 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 		// Acquire semaphore non-blocking.
 		if !worker.tryAcquireSem() {
 			// Busy — return the row without counting an attempt (back-pressure, not a failure).
-			_ = store.Release(bgCtx, fileID, version, worker.instanceID, "semaphore busy on immediate attempt")
+			slog.Debug("fireAsyncAttempt: semaphore busy on immediate attempt, releasing without attempt increment",
+				"file_id", fileID, "version", version)
+			_ = store.Release(bgCtx, fileID, version, worker.instanceID)
 			return
 		}
 		key := liveKey(fileID, version)
@@ -164,7 +170,14 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 			// Re-read the row to get ownerID and serviceType (they may not be known here).
 			row, rerr := store.Find(bgCtx, fileID, version)
 			if rerr != nil || row == nil {
-				_ = store.Release(bgCtx, fileID, version, worker.instanceID, "row vanished before attempt")
+				if rerr != nil {
+					slog.Warn("fireAsyncAttempt: Find error before attempt, releasing", "err", rerr,
+						"file_id", fileID, "version", version)
+				} else {
+					slog.Debug("fireAsyncAttempt: row vanished before attempt, releasing",
+						"file_id", fileID, "version", version)
+				}
+				_ = store.Release(bgCtx, fileID, version, worker.instanceID)
 				return
 			}
 			worker.attempt(bgCtx, *row)
@@ -224,8 +237,10 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 		if rerr != nil {
 			if errors.Is(rerr, storage.ErrNotFound) {
 				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
+				slog.Warn("getVideoPreview: blob 404 after resolve, re-enqueueing",
+					"file_id", id, "version", input.Version, "err", rerr)
 				if store := deps.videoStore(); store != nil {
-					_ = store.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve")
+					_ = store.ReenqueueReady(ctx, id, input.Version)
 				}
 				return nil, huma.NewError(http.StatusAccepted, "generating")
 			}
@@ -298,8 +313,10 @@ func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context
 		if rerr != nil {
 			if errors.Is(rerr, storage.ErrNotFound) {
 				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
+				slog.Warn("getVideoThumbnail: blob 404 after resolve, re-enqueueing",
+					"file_id", id, "version", input.Version, "err", rerr)
 				if store := deps.videoStore(); store != nil {
-					_ = store.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve (thumb)")
+					_ = store.ReenqueueReady(ctx, id, input.Version)
 				}
 				return nil, huma.NewError(http.StatusAccepted, "generating")
 			}

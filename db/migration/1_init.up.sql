@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS video_preview (
     service_type VARCHAR(16)  NOT NULL,
     claimed_by   VARCHAR(64),
     claimed_at   TIMESTAMP WITH TIME ZONE,
-    last_error   VARCHAR(512),
     attempts     INT          NOT NULL DEFAULT 0,
     codec        VARCHAR(64),
     created_at   TIMESTAMP WITH TIME ZONE NOT NULL,
