@@ -22,6 +22,21 @@ import (
 // non-root way to make those specific syscalls fail without faking the
 // filesystem. The MkdirAll, CreateTemp, and rename arms ARE covered below.
 
+// genericDropInMigration returns a literal, framework-only fixture equivalent
+// in shape to a real drop-in migration (log.level → PREVIEW_LOG_LEVEL), used
+// so these framework-mechanics tests don't need to import a concrete
+// migration set (that would defeat the point of moving CE's V1 out of this
+// package into config/migrate/cemig).
+func genericDropInMigration() Migration {
+	return Migration{
+		Version: 1,
+		Name:    "V1__GenericDropIn",
+		DropInEnvEntries: map[string]string{
+			"log.level": "PREVIEW_LOG_LEVEL",
+		},
+	}
+}
+
 // TestRunDropInEnvEntries_MkdirAllFails covers the MkdirAll-error arm: the
 // drop-in destination's parent cannot be created because an ancestor path
 // component is a regular file (not a directory).
@@ -36,14 +51,15 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
 
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  filepath.Join(dir, "config.properties"),
-			ConsulURL:  srv.URL,
-			DropInPath: dropInPath,
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   dropInPath,
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -51,7 +67,7 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 		// runOne via runDropInEnvEntries must hit the MkdirAll error arm and
 		// return 0 migrated for the drop-in; the log.level key must therefore
 		// survive in the ini (retryable on next run).
-		n := runner.runDropInEnvEntries(V1MigrateFromPythonIni())
+		n := runner.runDropInEnvEntries(genericDropInMigration())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on MkdirAll failure", n)
 		}
@@ -79,19 +95,20 @@ func TestRunDropInEnvEntries_CreateTempFails(t *testing.T) {
 
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  filepath.Join(dir, "config.properties"),
-			ConsulURL:  srv.URL,
-			DropInPath: dropInPath,
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   dropInPath,
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
-		n := runner.runDropInEnvEntries(V1MigrateFromPythonIni())
+		n := runner.runDropInEnvEntries(genericDropInMigration())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on CreateTemp failure", n)
 		}
@@ -117,19 +134,20 @@ func TestRunDropInEnvEntries_RenameFails(t *testing.T) {
 
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
+		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  filepath.Join(dir, "config.properties"),
-			ConsulURL:  srv.URL,
-			DropInPath: dropInPath,
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   dropInPath,
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
-		n := runner.runDropInEnvEntries(V1MigrateFromPythonIni())
+		n := runner.runDropInEnvEntries(genericDropInMigration())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on rename failure", n)
 		}
@@ -170,7 +188,7 @@ func TestRun_PropertiesSaveError(t *testing.T) {
 			"[myservice]\nfoo = bar\n")
 		srv := newOKConsul(t)
 
-		if err := Register(Migration{
+		if err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__NetOnly",
 			NetworkingEntries: map[string]EntryFunc{
@@ -182,10 +200,11 @@ func TestRun_PropertiesSaveError(t *testing.T) {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  propsPath,
-			ConsulURL:  srv.URL,
-			DropInPath: filepath.Join(dir, "log-level.conf"),
+			IniPath:      iniPath,
+			PropsPath:    propsPath,
+			ConsulURL:    srv.URL,
+			DropInPath:   filepath.Join(dir, "log-level.conf"),
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -215,7 +234,7 @@ func TestRun_IniSaveError(t *testing.T) {
 		srv := newOKConsul(t)
 
 		// Migrate the only key so the ini becomes empty → save() renames.
-		if err := Register(Migration{
+		if err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__AllMigrate",
 			NetworkingEntries: map[string]EntryFunc{
@@ -227,10 +246,11 @@ func TestRun_IniSaveError(t *testing.T) {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  filepath.Join(dir, "config.properties"),
-			ConsulURL:  srv.URL,
-			DropInPath: filepath.Join(dir, "log-level.conf"),
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   filepath.Join(dir, "log-level.conf"),
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -262,7 +282,7 @@ func TestRun_IniSaveToError(t *testing.T) {
 			"[myservice]\nfoo = bar\nadvanced_key = keep\n")
 		srv := newOKConsul(t)
 
-		if err := Register(Migration{
+		if err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__PartialKeep",
 			NetworkingEntries: map[string]EntryFunc{
@@ -274,10 +294,11 @@ func TestRun_IniSaveToError(t *testing.T) {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  filepath.Join(dir, "config.properties"),
-			ConsulURL:  srv.URL,
-			DropInPath: filepath.Join(dir, "log-level.conf"),
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   filepath.Join(dir, "log-level.conf"),
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)

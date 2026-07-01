@@ -6,7 +6,6 @@ package migrate
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,23 +16,27 @@ import (
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// withCleanRegistry runs f with a clean registry and restores the original
-// registry state afterwards.  NOT safe for parallel sub-tests.
+// withCleanRegistry runs f with every migration set cleared and restores the
+// original sets afterwards.  NOT safe for parallel sub-tests.
 func withCleanRegistry(t *testing.T, f func()) {
 	t.Helper()
 	// save
-	registryMu.Lock()
-	saved := make([]Migration, len(registry))
-	copy(saved, registry)
-	registry = nil
-	registryMu.Unlock()
+	setsMu.Lock()
+	saved := make(map[string][]Migration, len(sets))
+	for k, v := range sets {
+		cp := make([]Migration, len(v))
+		copy(cp, v)
+		saved[k] = cp
+	}
+	sets = map[string][]Migration{}
+	setsMu.Unlock()
 
 	f()
 
 	// restore
-	registryMu.Lock()
-	registry = saved
-	registryMu.Unlock()
+	setsMu.Lock()
+	sets = saved
+	setsMu.Unlock()
 }
 
 // writeFile creates a temp file with the given content.
@@ -46,70 +49,45 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// sampleIni returns a minimal Python-style config.ini content.
-const sampleIni = `[carbonio.preview]
-name = preview
-default_host = 1.2.3.4
-default_port = 10000
-timeout_in_seconds = 30
-docs-timeout = 15
-workers = 2
-image_name = image
-health_name = health
-pdf_name = pdf
-document_name = document
-enable_document_preview = true
-enable_document_thumbnail = false
-
-[log]
-format = %%(asctime)s
-level = info
-path = /var/log/carbonio/preview/
-
-[image_constants]
-minimum_resolution = 80
-
-[carbonio.storages]
-name = slimstore
-download_api = download
-health_check = health/live
-default_protocol = http
-default_host = 1.2.3.4
-default_port = 20000
-
-[carbonio.docs-editor]
-default_protocol = http
-default_host = 1.2.3.4
-default_port = 20001
-service_endpoint = services/docs/editor
-convert_api = cool/convert-to
-`
-
 // ── Registration tests ────────────────────────────────────────────────────────
 
-func TestRegister_BadName(t *testing.T) {
+func TestRegisterInSet_BadName(t *testing.T) {
 	withCleanRegistry(t, func() {
-		err := Register(Migration{Version: 1, Name: "BadName"})
+		err := RegisterInSet("ce", Migration{Version: 1, Name: "BadName"})
 		if err == nil {
 			t.Fatal("expected error for bad name, got nil")
 		}
 	})
 }
 
-func TestRegister_DuplicateVersion(t *testing.T) {
+func TestRegisterInSet_DuplicateVersionWithinSameSet(t *testing.T) {
 	withCleanRegistry(t, func() {
 		m := Migration{Version: 1, Name: "V1__Alpha"}
-		if err := Register(m); err != nil {
+		if err := RegisterInSet("ce", m); err != nil {
 			t.Fatalf("first register: %v", err)
 		}
-		err := Register(Migration{Version: 1, Name: "V1__Beta"})
+		err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__Beta"})
 		if err == nil {
-			t.Fatal("expected error for duplicate version, got nil")
+			t.Fatal("expected error for duplicate version within the same set, got nil")
 		}
 	})
 }
 
-func TestRegister_VersionAscendingExecution(t *testing.T) {
+// TestRegisterInSet_SameVersionAcrossDifferentSetsAllowed is the crux of the
+// isolation contract: a CE V1 and an Advanced V1 are unrelated migrations and
+// must NOT collide just because they share a version number.
+func TestRegisterInSet_SameVersionAcrossDifferentSetsAllowed(t *testing.T) {
+	withCleanRegistry(t, func() {
+		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE"}); err != nil {
+			t.Fatalf("register ce V1: %v", err)
+		}
+		if err := RegisterInSet("advanced", Migration{Version: 1, Name: "V1__Advanced"}); err != nil {
+			t.Fatalf("register advanced V1 (same version, different set): %v", err)
+		}
+	})
+}
+
+func TestOrderedSet_VersionAscending(t *testing.T) {
 	withCleanRegistry(t, func() {
 		var order []int
 		var mu sync.Mutex
@@ -117,7 +95,7 @@ func TestRegister_VersionAscendingExecution(t *testing.T) {
 		for _, v := range []int{3, 1, 2} {
 			vv := v
 			name := fmt.Sprintf("V%d__Test", vv)
-			err := Register(Migration{
+			err := RegisterInSet("ce", Migration{
 				Version: vv,
 				Name:    name,
 				NetworkingEntries: map[string]EntryFunc{
@@ -134,8 +112,8 @@ func TestRegister_VersionAscendingExecution(t *testing.T) {
 			}
 		}
 
-		// registered() must return them in ascending order
-		migs := registered()
+		// orderedSet must return them in ascending order.
+		migs := orderedSet("ce")
 		for i := 0; i < len(migs)-1; i++ {
 			if migs[i].Version >= migs[i+1].Version {
 				t.Errorf("not ascending: %d >= %d", migs[i].Version, migs[i+1].Version)
@@ -144,126 +122,75 @@ func TestRegister_VersionAscendingExecution(t *testing.T) {
 	})
 }
 
-// ── Full idempotency test ─────────────────────────────────────────────────────
-
-func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
+// TestOrderedSet_UnknownSetIsEmpty verifies that an unregistered set name
+// returns nil/empty rather than panicking or returning another set's data.
+func TestOrderedSet_UnknownSetIsEmpty(t *testing.T) {
 	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		iniPath := writeFile(t, dir, "config.ini", sampleIni)
-		propsPath := filepath.Join(dir, "config.properties")
+		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE"}); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		got := orderedSet("does-not-exist")
+		if len(got) != 0 {
+			t.Errorf("orderedSet(unknown) = %v, want empty", got)
+		}
+	})
+}
 
-		// Track KV PUT and DELETE calls.
-		kvPuts := map[string]string{}
-		kvDeletes := map[string]bool{}
-		var kvMu sync.Mutex
+// TestOrderedSet_Isolation is the whole point of the named-sets redesign: a
+// migration registered into set "ce" must never appear when running any other
+// set, and vice versa — no inheritance merely by both sets existing in the
+// same process/registry.
+func TestOrderedSet_Isolation(t *testing.T) {
+	withCleanRegistry(t, func() {
+		var ceRan, otherRan bool
 
-		// Stub Consul server: GET ?raw returns the last PUT value; DELETE tracks.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// strip /v1/kv/ prefix
-			path := r.URL.Path[len("/v1/kv/"):]
-			if r.Header.Get("X-Consul-Token") != "tok123" {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			kvMu.Lock()
-			defer kvMu.Unlock()
-			switch r.Method {
-			case http.MethodPut:
-				body, _ := io.ReadAll(r.Body)
-				kvPuts[path] = string(body)
-				kvDeletes[path] = false
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, "true")
-			case http.MethodGet:
-				if kvDeletes[path] {
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				if v, ok := kvPuts[path]; ok {
-					w.WriteHeader(http.StatusOK)
-					fmt.Fprint(w, v)
-					return
-				}
-				w.WriteHeader(http.StatusNotFound)
-			case http.MethodDelete:
-				kvDeletes[path] = true
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, "true")
-			}
-		}))
-		defer srv.Close()
-
-		// Register V1 using the real migration with a temp drop-in path.
-		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register V1: %v", err)
+		if err := RegisterInSet("ce", Migration{
+			Version: 1,
+			Name:    "V1__CE",
+			NetworkingEntries: map[string]EntryFunc{
+				"ceonly.key": func(_, _ string, _ ConfigStore) error {
+					ceRan = true
+					return nil
+				},
+			},
+		}); err != nil {
+			t.Fatalf("register ce: %v", err)
+		}
+		if err := RegisterInSet("other", Migration{
+			Version: 1,
+			Name:    "V1__Other",
+			NetworkingEntries: map[string]EntryFunc{
+				"otheronly.key": func(_, _ string, _ ConfigStore) error {
+					otherRan = true
+					return nil
+				},
+			},
+		}); err != nil {
+			t.Fatalf("register other: %v", err)
 		}
 
-		// ── First run ────────────────────────────────────────────────────────────
+		dir := t.TempDir()
+		iniPath := writeFile(t, dir, "config.ini",
+			"[ceonly]\nkey = x\n\n[otheronly]\nkey = y\n")
+		srv := newOKConsul(t)
+
 		runner, err := NewRunner(Paths{
-			IniPath:     iniPath,
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok123",
-			DropInPath:  dropInPath,
+			IniPath:      iniPath,
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			ConsulURL:    srv.URL,
+			DropInPath:   filepath.Join(dir, "log-level.conf"),
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
 		runner.Run()
 
-		// config.properties must exist and contain correct networking keys.
-		propsData, err := os.ReadFile(propsPath)
-		if err != nil {
-			t.Fatalf("read props: %v", err)
+		if !ceRan {
+			t.Error("running set \"ce\" must execute ce's own migration")
 		}
-		propsContent := string(propsData)
-		mustContain(t, propsContent, "carbonio.service.host=1.2.3.4")
-		mustContain(t, propsContent, "carbonio.service.port=10000")
-		mustContain(t, propsContent, "carbonio.storages.host=1.2.3.4")
-		mustContain(t, propsContent, "carbonio.docs-editor.host=1.2.3.4")
-		mustContain(t, propsContent, "# Migrated by carbonio-preview setup")
-
-		// Consul KV: the four application entries must have been PUT.
-		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-preview", "true")
-		mustKvPut(t, kvPuts, "carbonio-preview/enable-document-thumbnail", "false")
-		mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "30")
-		mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "15")
-
-		// The INI file must have been renamed since all CE keys migrated.
-		if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
-			t.Errorf("expected config.ini to be renamed, still exists at %s", iniPath)
-		}
-		if _, err := os.Stat(iniPath + ".migrated"); err != nil {
-			t.Errorf("expected config.ini.migrated to exist: %v", err)
-		}
-
-		// ── Second run (idempotency) ──────────────────────────────────────────────
-		// INI is now .migrated so a fresh iniStore will see it as absent.
-		// Re-write it with the renamed name to simulate a fresh absent state.
-		// Actually the runner reads iniPath (config.ini) which no longer exists.
-		runner2, err := NewRunner(Paths{
-			IniPath:     iniPath, // does not exist → absent
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok123",
-			DropInPath:  dropInPath,
-		})
-		if err != nil {
-			t.Fatalf("NewRunner second: %v", err)
-		}
-		// Clear KV puts tracker to detect if any new puts happen.
-		kvMu.Lock()
-		kvPuts = map[string]string{}
-		kvMu.Unlock()
-
-		runner2.Run()
-
-		kvMu.Lock()
-		nPuts := len(kvPuts)
-		kvMu.Unlock()
-		if nPuts != 0 {
-			t.Errorf("second run: expected 0 KV PUTs, got %d", nPuts)
+		if otherRan {
+			t.Error("running set \"ce\" must NOT execute the \"other\" set's migration — no inheritance")
 		}
 	})
 }
@@ -304,7 +231,7 @@ workers = 2
 		defer srv.Close()
 
 		// Register a migration with two application entries.
-		err := Register(Migration{
+		err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__ErrorIsolation",
 			ApplicationEntries: map[string]EntryFunc{
@@ -321,10 +248,11 @@ workers = 2
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:     iniPath,
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok",
+			IniPath:      iniPath,
+			PropsPath:    propsPath,
+			ConsulURL:    srv.URL,
+			ConsulToken:  "tok",
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -371,7 +299,7 @@ func TestRunner_IniRename_WhenAllKeysMigrated(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := Register(Migration{
+		err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__Rename",
 			NetworkingEntries: map[string]EntryFunc{
@@ -385,9 +313,10 @@ func TestRunner_IniRename_WhenAllKeysMigrated(t *testing.T) {
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:   iniPath,
-			PropsPath: propsPath,
-			ConsulURL: srv.URL,
+			IniPath:      iniPath,
+			PropsPath:    propsPath,
+			ConsulURL:    srv.URL,
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -425,7 +354,7 @@ func TestRunner_IniSaved_WhenAdvancedKeysRemain(t *testing.T) {
 		defer srv.Close()
 
 		// Only register migration for "myservice.foo", not for "myservice.advanced_key".
-		err := Register(Migration{
+		err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__PartialMigration",
 			NetworkingEntries: map[string]EntryFunc{
@@ -439,9 +368,10 @@ func TestRunner_IniSaved_WhenAdvancedKeysRemain(t *testing.T) {
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:   iniPath,
-			PropsPath: propsPath,
-			ConsulURL: srv.URL,
+			IniPath:      iniPath,
+			PropsPath:    propsPath,
+			ConsulURL:    srv.URL,
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -461,102 +391,6 @@ func TestRunner_IniSaved_WhenAdvancedKeysRemain(t *testing.T) {
 		}
 		if contains(string(iniData), "foo") {
 			t.Error("migrated key foo must be removed from ini")
-		}
-	})
-}
-
-// ── Absent INI test ────────────────────────────────────────────────────────────
-
-func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
-	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		propsPath := filepath.Join(dir, "config.properties")
-
-		kvPuts := 0
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodPut {
-				kvPuts++
-			}
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "true")
-		}))
-		defer srv.Close()
-
-		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register: %v", err)
-		}
-
-		runner, err := NewRunner(Paths{
-			IniPath:     filepath.Join(dir, "does_not_exist.ini"),
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok",
-			DropInPath:  dropInPath,
-		})
-		if err != nil {
-			t.Fatalf("NewRunner: %v", err)
-		}
-		runner.Run()
-
-		if kvPuts != 0 {
-			t.Errorf("expected 0 KV PUTs for absent ini, got %d", kvPuts)
-		}
-		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
-			t.Error("properties file must not be created when ini absent")
-		}
-	})
-}
-
-// ── Token gating test (HasApplicationWork) ───────────────────────────────────
-
-func TestHasApplicationWork_TokenRequired(t *testing.T) {
-	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		iniPath := writeFile(t, dir, "config.ini", "[carbonio.preview]\nenable_document_preview = true\n")
-		propsPath := filepath.Join(dir, "config.properties")
-
-		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register: %v", err)
-		}
-
-		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  propsPath,
-			ConsulURL:  "http://localhost:8500",
-			DropInPath: dropInPath,
-		})
-		if err != nil {
-			t.Fatalf("NewRunner: %v", err)
-		}
-		if !runner.HasApplicationWork() {
-			t.Error("HasApplicationWork must be true when ini has application keys")
-		}
-	})
-}
-
-func TestHasApplicationWork_NoTokenNeededWhenAbsent(t *testing.T) {
-	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		propsPath := filepath.Join(dir, "config.properties")
-
-		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register: %v", err)
-		}
-
-		runner, err := NewRunner(Paths{
-			IniPath:    filepath.Join(dir, "no.ini"),
-			PropsPath:  propsPath,
-			ConsulURL:  "http://localhost:8500",
-			DropInPath: dropInPath,
-		})
-		if err != nil {
-			t.Fatalf("NewRunner: %v", err)
-		}
-		if runner.HasApplicationWork() {
-			t.Error("HasApplicationWork must be false when ini is absent")
 		}
 	})
 }
@@ -581,7 +415,7 @@ func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := Register(Migration{
+		err := RegisterInSet("ce", Migration{
 			Version: 1,
 			Name:    "V1__AppOnly",
 			ApplicationEntries: map[string]EntryFunc{
@@ -595,10 +429,11 @@ func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
 		}
 
 		runner, err := NewRunner(Paths{
-			IniPath:     iniPath,
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok",
+			IniPath:      iniPath,
+			PropsPath:    propsPath,
+			ConsulURL:    srv.URL,
+			ConsulToken:  "tok",
+			MigrationSet: "ce",
 		})
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
@@ -608,128 +443,6 @@ func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
 		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
 			t.Error("properties file must NOT be created for app-only migration")
 		}
-	})
-}
-
-// TestHasApplicationWork_FalseWhenOnlyDropEntries verifies that an ini
-// containing ONLY drop-only keys does not require SETUP_CONSUL_TOKEN.
-func TestHasApplicationWork_FalseWhenOnlyDropEntries(t *testing.T) {
-	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		// ini with ONLY drop-only keys — no real application KV entries.
-		iniContent := "[log]\nlevel = info\n\n[carbonio.preview]\nname = preview\n"
-		iniPath := writeFile(t, dir, "config.ini", iniContent)
-		propsPath := filepath.Join(dir, "config.properties")
-
-		dropInPath := filepath.Join(dir, "log-level.conf")
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register: %v", err)
-		}
-
-		runner, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  propsPath,
-			ConsulURL:  "http://localhost:8500", // not reachable — must not be called
-			DropInPath: dropInPath,
-		})
-		if err != nil {
-			t.Fatalf("NewRunner: %v", err)
-		}
-		if runner.HasApplicationWork() {
-			t.Error("HasApplicationWork must be false when ini contains only drop-only keys")
-		}
-
-		// Full run without a token must succeed and make ZERO Consul requests.
-		consulHits := 0
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			consulHits++
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		runner2, err := NewRunner(Paths{
-			IniPath:    iniPath,
-			PropsPath:  propsPath,
-			ConsulURL:  srv.URL,
-			DropInPath: dropInPath,
-			// No token — intentionally absent.
-		})
-		if err != nil {
-			t.Fatalf("NewRunner2: %v", err)
-		}
-		runner2.Run()
-
-		if consulHits != 0 {
-			t.Errorf("expected 0 Consul requests, got %d", consulHits)
-		}
-		// ini must have been renamed (all keys consumed).
-		if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
-			t.Error("expected config.ini to be renamed to .migrated")
-		}
-		if _, err := os.Stat(iniPath + ".migrated"); err != nil {
-			t.Errorf("expected config.ini.migrated to exist: %v", err)
-		}
-		// properties file must NOT have been created (log.level writes a drop-in,
-		// not a properties entry — the dirty flag on propertiesStore stays false).
-		if _, err := os.Stat(propsPath); !os.IsNotExist(err) {
-			t.Error("properties file must not be created when no networking entries ran")
-		}
-	})
-}
-
-// TestV1_TimeoutKeysMigrateToConsulKV verifies that timeout keys from a Python
-// config.ini are carried into Consul KV as application entries (not dropped).
-// An ini containing timeout_in_seconds=60 and docs-timeout=45 must result in
-// carbonio-preview/timeout-in-seconds=60 and carbonio-preview/docs-timeout-in-seconds=45
-// being PUT to Consul.
-func TestV1_TimeoutKeysMigrateToConsulKV(t *testing.T) {
-	withCleanRegistry(t, func() {
-		dir := t.TempDir()
-		iniContent := "[carbonio.preview]\ntimeout_in_seconds = 60\ndocs-timeout = 45\n"
-		iniPath := writeFile(t, dir, "config.ini", iniContent)
-		propsPath := filepath.Join(dir, "config.properties")
-
-		kvPuts := map[string]string{}
-		var kvMu sync.Mutex
-
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path[len("/v1/kv/"):]
-			kvMu.Lock()
-			defer kvMu.Unlock()
-			switch r.Method {
-			case http.MethodPut:
-				body, _ := io.ReadAll(r.Body)
-				kvPuts[path] = string(body)
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, "true")
-			case http.MethodGet:
-				w.WriteHeader(http.StatusNotFound)
-			case http.MethodDelete:
-				w.WriteHeader(http.StatusOK)
-				fmt.Fprint(w, "true")
-			}
-		}))
-		defer srv.Close()
-
-		if err := Register(V1MigrateFromPythonIni()); err != nil {
-			t.Fatalf("register V1: %v", err)
-		}
-
-		runner, err := NewRunner(Paths{
-			IniPath:     iniPath,
-			PropsPath:   propsPath,
-			ConsulURL:   srv.URL,
-			ConsulToken: "tok",
-		})
-		if err != nil {
-			t.Fatalf("NewRunner: %v", err)
-		}
-		runner.Run()
-
-		kvMu.Lock()
-		defer kvMu.Unlock()
-		mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "60")
-		mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "45")
 	})
 }
 
@@ -758,25 +471,6 @@ func TestSplitSectionKey(t *testing.T) {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-func mustContain(t *testing.T, haystack, needle string) {
-	t.Helper()
-	if !contains(haystack, needle) {
-		t.Errorf("expected to find %q in:\n%s", needle, haystack)
-	}
-}
-
-func mustKvPut(t *testing.T, kvPuts map[string]string, key, expectedValue string) {
-	t.Helper()
-	v, ok := kvPuts[key]
-	if !ok {
-		t.Errorf("expected KV PUT for key %q, not found in puts: %v", key, kvPuts)
-		return
-	}
-	if v != expectedValue {
-		t.Errorf("KV key %q: expected value %q, got %q", key, expectedValue, v)
-	}
-}
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||

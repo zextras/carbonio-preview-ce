@@ -10,20 +10,24 @@ import (
 	"strings"
 )
 
-// RunSetup executes registered config migrations and prints config documentation.
+// RunSetup executes the config migrations belonging to paths.MigrationSet and
+// prints config documentation.
 //
-// It mirrors SetupAwareMain from carbonio-quarkus-extensions:
+// It mirrors SetupAwareMain from carbonio-quarkus-extensions' package-scoped
+// migrations:
 //   - Reads SETUP_CONSUL_TOKEN from the environment.
 //   - Gates the token check: SETUP_CONSUL_TOKEN is required only when application
 //     entries will actually run (ini present and contains at least one application
-//     key).
-//   - Runs migrations, then always prints configsMd (a blank line followed by
-//     the embedded configs.md Markdown content).
+//     key belonging to the SELECTED SET).
+//   - Runs only the migrations registered under paths.MigrationSet (e.g. "ce"),
+//     never another edition's set, then always prints configsMd (a blank line
+//     followed by the embedded configs.md Markdown content).
 //   - Returns a non-nil error on any failure; the caller is responsible for
 //     exiting with a non-zero code.
 //
-// paths holds the injectable file paths and Consul URL; the production caller
-// passes the production paths, tests pass t.TempDir() paths directly.
+// paths holds the injectable file paths, Consul URL, and MigrationSet name;
+// the production caller passes the production paths, tests pass t.TempDir()
+// paths directly.
 // configsMd is the embedded configs.md content (config.ConfigsMd()).
 func RunSetup(consulURL string, paths Paths, configsMd string) error {
 	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))

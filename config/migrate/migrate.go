@@ -3,22 +3,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package migrate provides a one-shot config migration framework that mirrors
-// the carbonio-quarkus-extensions ConfigMigration / ConfigMigrationRunner semantics.
+// the carbonio-quarkus-extensions package-scoped ConfigMigration /
+// ConfigMigrationRunner semantics.
 //
 // Design overview:
 //
-//   - A Migration describes a versioned migration: a unique integer version, a
-//     name matching V<n>__<desc>, and two entry tables (networking and
-//     application).  Each entry is an old-source key mapped to a function that
-//     writes new entries via the injected ConfigStore.
+//   - A Migration describes a versioned migration: a unique integer version
+//     (unique within its own set), a name matching V<n>__<desc>, and two entry
+//     tables (networking and application).  Each entry is an old-source key
+//     mapped to a function that writes new entries via the injected
+//     ConfigStore.
 //
-//   - Register adds a Migration to the global registry.  Registration validates
-//     the name regex and rejects duplicate versions.
+//   - This package is FRAMEWORK ONLY: it holds no migrations of its own.
+//     Migrations are registered into NAMED SETS via RegisterInSet, so that
+//     each edition (e.g. CE, Advanced) owns its own independent set and never
+//     inherits another edition's migrations merely by importing this package.
+//     Different sets MAY reuse the same version number — a CE V1 and an
+//     Advanced V1 are unrelated and do not collide.
+//
+//   - orderedSet returns a given set's migrations in ascending version order;
+//     an unknown/absent set name returns nil.
 //
 //   - NewRunner builds a Runner wired to the stores (legacy INI source,
-//     networking properties file, Consul KV).
+//     networking properties file, Consul KV) and to the selected set name.
 //
-//   - Runner.Run executes all registered migrations in ascending version order.
+//   - Runner.Run executes the selected set's migrations in ascending version
+//     order.
 package migrate
 
 import (
@@ -74,44 +84,51 @@ type Migration struct {
 }
 
 var (
-	registryMu sync.Mutex
-	registry   []Migration
+	setsMu sync.Mutex
+	sets   = map[string][]Migration{}
 )
 
-// Register adds m to the global migration registry.
+// RegisterInSet adds m to the named migration set setName.
 // It returns an error if:
 //   - m.Name does not match ^V(\d+)__\w+$
-//   - m.Version is already registered
-func Register(m Migration) error {
+//   - m.Version is already registered WITHIN THE SAME SET (a different set
+//     may reuse the same version number — e.g. CE's V1 and Advanced's V1 are
+//     unrelated and do not collide).
+func RegisterInSet(setName string, m Migration) error {
 	if !migrationNameRE.MatchString(m.Name) {
 		return fmt.Errorf("migrate: name %q does not match V<n>__<desc> pattern", m.Name)
 	}
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	for _, existing := range registry {
+	setsMu.Lock()
+	defer setsMu.Unlock()
+	for _, existing := range sets[setName] {
 		if existing.Version == m.Version {
-			return fmt.Errorf("migrate: version %d is already registered (existing: %q)", m.Version, existing.Name)
+			return fmt.Errorf("migrate: version %d is already registered in set %q (existing: %q)", m.Version, setName, existing.Name)
 		}
 	}
-	registry = append(registry, m)
+	sets[setName] = append(sets[setName], m)
 	return nil
 }
 
-// registered returns a version-ascending copy of the registry.
-func registered() []Migration {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	out := make([]Migration, len(registry))
-	copy(out, registry)
+// orderedSet returns a version-ascending copy of the named set's migrations.
+// An unknown or absent set name returns nil.
+func orderedSet(setName string) []Migration {
+	setsMu.Lock()
+	defer setsMu.Unlock()
+	src := sets[setName]
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]Migration, len(src))
+	copy(out, src)
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Version < out[j].Version
 	})
 	return out
 }
 
-// resetRegistry clears the registry — used only in tests.
-func resetRegistry() {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry = nil
+// resetSets clears every registered set — used only in tests.
+func resetSets() {
+	setsMu.Lock()
+	defer setsMu.Unlock()
+	sets = map[string][]Migration{}
 }

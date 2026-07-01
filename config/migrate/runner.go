@@ -20,18 +20,19 @@ type Runner struct {
 	net        *propertiesStore
 	kv         *consulKvStore
 	dropInPath string // destination for the log-level systemd drop-in
+	setName    string // selected migration set (e.g. "ce", "advanced")
 }
 
-// HasApplicationWork returns true if at least one registered migration has an
-// application entry whose old key is present in the legacy ini.  This is used
-// by --setup to decide whether SETUP_CONSUL_TOKEN is required before any
-// modification is made.
+// HasApplicationWork returns true if at least one migration in the runner's
+// selected set has an application entry whose old key is present in the
+// legacy ini.  This is used by --setup to decide whether SETUP_CONSUL_TOKEN is
+// required before any modification is made.
 // It must be consulted BEFORE Run() — the token gate is enforced only by call ordering in RunSetup.
 func (r *Runner) HasApplicationWork() bool {
 	if r.ini.isAbsent() {
 		return false
 	}
-	for _, m := range registered() {
+	for _, m := range orderedSet(r.setName) {
 		for oldKey := range m.ApplicationEntries {
 			if _, ok := r.ini.get(oldKey); ok {
 				return true
@@ -41,7 +42,8 @@ func (r *Runner) HasApplicationWork() bool {
 	return false
 }
 
-// Paths holds the injectable file paths and consul URL, for testing.
+// Paths holds the injectable file paths, consul URL, and selected migration
+// set name, for testing.
 type Paths struct {
 	IniPath     string
 	PropsPath   string
@@ -50,6 +52,9 @@ type Paths struct {
 	// DropInPath is the destination for the log-level systemd drop-in file.
 	// Defaults to DefaultDropInPath when empty.
 	DropInPath string
+	// MigrationSet names the set of migrations to run (e.g. "ce", "advanced").
+	// An unknown or empty set name results in zero migrations being run.
+	MigrationSet string
 }
 
 // DefaultDropInPath is the production path for the log-level systemd drop-in.
@@ -74,10 +79,10 @@ func NewRunner(p Paths) (*Runner, error) {
 		return nil, err
 	}
 	kv := newConsulKvStore(p.ConsulURL, p.ConsulToken)
-	return &Runner{ini: ini, net: net, kv: kv, dropInPath: p.effectiveDropInPath()}, nil
+	return &Runner{ini: ini, net: net, kv: kv, dropInPath: p.effectiveDropInPath(), setName: p.MigrationSet}, nil
 }
 
-// Run executes all registered migrations in version-ascending order.
+// Run executes the runner's selected migration set in version-ascending order.
 //
 // Output mirrors ConfigMigrationRunner:
 //
@@ -90,7 +95,7 @@ func NewRunner(p Paths) (*Runner, error) {
 // entry migrated.  The ini store is always saved (or renamed) at the end if
 // the ini was not absent.
 func (r *Runner) Run() {
-	migrations := registered()
+	migrations := orderedSet(r.setName)
 	if len(migrations) == 0 {
 		fmt.Println("Config migration: no migrations found.")
 		return
