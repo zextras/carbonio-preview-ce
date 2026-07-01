@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
 	"github.com/zextras/carbonio-preview-ce/docs"
 
@@ -137,26 +136,12 @@ func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 	}
 }
 
-// TestMigrationSetResolution_DefaultsToCE verifies the exact wiring
-// runSetupIfRequested performs: config.DefaultForKey("migrations-package")
-// resolves to "ce" purely (no Consul fetch needed), matching what main.go
-// threads into migrate.Paths.MigrationSet.
-func TestMigrationSetResolution_DefaultsToCE(t *testing.T) {
-	got, ok := config.DefaultForKey("migrations-package")
-	if !ok {
-		t.Fatal("config.DefaultForKey(\"migrations-package\") ok=false, want true")
-	}
-	if got != "ce" {
-		t.Errorf("config.DefaultForKey(\"migrations-package\") = %q, want \"ce\"", got)
-	}
-}
-
 // TestSetupEndToEnd_RunsOnlyCEMigrations proves the fix end-to-end at the
-// cmd/carbonio-preview level: migrate.RunSetup, driven with the SAME
-// MigrationSet resolution main.go performs ("ce", CE's own default), executes
-// CE's V1 migration (an application key gets PUT to Consul) — the whole point
-// being that this binary only ever runs its OWN "ce" set, never inherits any
-// other edition's migrations just because config/migrate is imported.
+// cmd/carbonio-preview level: migrate.RunSetup, driven with the SAME hardcoded
+// MigrationSet main.go passes ("ce"), executes CE's V1 migration (an application
+// key gets PUT to Consul) — the whole point being that this binary only ever
+// runs its OWN "ce" set, never inherits any other edition's migrations just
+// because config/migrate is imported.
 func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "config.ini")
@@ -176,16 +161,12 @@ func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	migrationSet, ok := config.DefaultForKey("migrations-package")
-	if !ok {
-		migrationSet = "ce"
-	}
 	t.Setenv("SETUP_CONSUL_TOKEN", "tok")
 	paths := migrate.Paths{
 		IniPath:      iniPath,
 		PropsPath:    filepath.Join(dir, "config.properties"),
 		DropInPath:   filepath.Join(dir, "log-level.conf"),
-		MigrationSet: migrationSet,
+		MigrationSet: "ce", // hardcoded, matching main.go (dev-only, not KV config)
 	}
 	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
 		t.Fatalf("RunSetup: %v", err)

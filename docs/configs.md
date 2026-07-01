@@ -38,7 +38,6 @@ Overridable by Consul KV
 | `carbonio-preview/docs-timeout-in-seconds` | `15` |  |
 | `carbonio-preview/enable-document-preview` | `true` |  |
 | `carbonio-preview/enable-document-thumbnail` | `false` |  |
-| `carbonio-preview/migrations-package` | `ce` |  |
 | `carbonio-preview/pdf-workers` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/render-concurrency` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/timeout-in-seconds` | `30` |  |

@@ -221,20 +221,14 @@ func runSetupIfRequested(args []string) (handled bool, exitCode int) {
 	}
 	consulURL := args[idx+1]
 
-	// Resolve the migration set from the registry's compile-time default —
-	// pure, no Consul fetch, matching config.DefaultForKey's contract. CE
-	// always defaults to "ce"; an unknown key would only happen if the
-	// registry entry were ever removed, so falling back to "ce" here keeps
-	// --setup working even in that case.
-	migrationSet, ok := config.DefaultForKey("migrations-package")
-	if !ok || migrationSet == "" {
-		migrationSet = "ce"
-	}
-
 	paths := migrate.Paths{
-		IniPath:      "/etc/carbonio/preview/config.ini",
-		PropsPath:    "/etc/carbonio/preview/config.properties",
-		MigrationSet: migrationSet,
+		IniPath:   "/etc/carbonio/preview/config.ini",
+		PropsPath: "/etc/carbonio/preview/config.properties",
+		// migrationSet is HARDCODED (dev-only), NOT operator/KV config: each
+		// edition owns its migration set (mirrors extensions' BUILD_TIME
+		// quarkus.carbonio-bootstrap.migrations-package). CE always runs "ce";
+		// Advanced's own main hardcodes "advanced".
+		MigrationSet: "ce",
 	}
 	if err := migrate.RunSetup(consulURL, paths, docs.ConfigsMd()); err != nil {
 		fmt.Fprintln(os.Stderr, err)

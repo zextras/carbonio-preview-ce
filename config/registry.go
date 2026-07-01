@@ -138,27 +138,6 @@ func registeredKeys(ns Namespace) []KeyEntry {
 	return out
 }
 
-// DefaultForKey returns the compile-time registry default for the given key
-// (matched across all namespaces) and true if a matching entry is registered,
-// or ("", false) otherwise.
-//
-// This is used at --setup time, BEFORE the Consul/properties config chain is
-// loaded (config.Load has not run yet — --setup must remain pure and must not
-// require a reachable Consul just to read a key's own default). Callers that
-// need a fully resolved value (env > file/KV > default) must use config.Load
-// and the resolved Config struct instead; DefaultForKey only ever returns the
-// hard-coded fallback.
-func DefaultForKey(key string) (string, bool) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	for _, e := range registry {
-		if e.Key == key {
-			return e.Default, true
-		}
-	}
-	return "", false
-}
-
 // registeredKeyMap returns a map of key→KeyEntry for the given namespace.
 func registeredKeyMap(ns Namespace) map[string]KeyEntry {
 	keys := registeredKeys(ns)
@@ -326,28 +305,6 @@ func registerCEKeys() {
 		// concurrency is governed by video-concurrency (VideoSem), which is shared
 		// between the background worker and on-request generation attempts. A separate
 		// worker-only concurrency bound was parsed but never used and has been removed.
-		// ── Migration selection ───────────────────────────────────────────────
-		// migrations-package selects which named migration SET (see
-		// config/migrate.RegisterInSet / orderedSet) the --setup path runs.
-		// Mirrors carbonio-quarkus-extensions' package-scoped migrations
-		// (and carbonio-tasks-ce's migrations-package key): each edition owns
-		// its own migration set so CE and Advanced never inherit each other's
-		// migrations. Default "ce" — the CE binary always runs its own "ce"
-		// set unless an operator overrides it (not expected in practice).
-		//
-		// NOTE: named "migrations-package" (flat, hyphenated) rather than the
-		// dotted "carbonio.migrations.package" form used in some other repos,
-		// to match this registry's own convention for application keys (all
-		// existing application keys are flat/hyphenated, e.g.
-		// "enable-document-preview", "db-pool-max-conns" — none carry a
-		// "carbonio." dotted prefix; that prefix is added by KvPath via
-		// ServiceName instead).
-		{
-			Key:         "migrations-package",
-			Namespace:   NamespaceApplication,
-			Default:     "ce",
-			Description: "Selects the named migration set run by --setup (config/migrate). CE always defaults to \"ce\".",
-		},
 		{
 			Key:         "video-sweep-interval-seconds",
 			Namespace:   NamespaceApplication,
