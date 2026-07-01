@@ -289,6 +289,7 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"docs-timeout-in-seconds",
 		"enable-document-preview",
 		"enable-document-thumbnail",
+		"migrations-package",
 		"pdf-workers",
 		"render-concurrency",
 		"timeout-in-seconds",
@@ -306,6 +307,45 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		if appKeys[i].Key != want {
 			t.Errorf("application[%d] = %q, want %q", i, appKeys[i].Key, want)
 		}
+	}
+}
+
+// TestMigrationsPackageKeyRegistered asserts the carbonio.migrations.package
+// selector (config/migrate.RegisterInSet / orderedSet set name) is registered
+// with default "ce" — CE always runs its own migration set, never Advanced's.
+func TestMigrationsPackageKeyRegistered(t *testing.T) {
+	m := registeredKeyMap(NamespaceApplication)
+	e, ok := m["migrations-package"]
+	if !ok {
+		t.Fatal("application key \"migrations-package\" not registered")
+	}
+	if e.Default != "ce" {
+		t.Errorf("migrations-package default = %q, want \"ce\"", e.Default)
+	}
+	if e.HiddenFromDocs {
+		t.Error("migrations-package must be visible in docs (HiddenFromDocs=false)")
+	}
+}
+
+// TestDefaultForKey covers the --setup-time helper used to resolve a key's
+// compile-time default WITHOUT requiring config.Load() (no Consul fetch).
+func TestDefaultForKey(t *testing.T) {
+	got, ok := DefaultForKey("migrations-package")
+	if !ok {
+		t.Fatal("DefaultForKey(\"migrations-package\") ok=false, want true")
+	}
+	if got != "ce" {
+		t.Errorf("DefaultForKey(\"migrations-package\") = %q, want \"ce\"", got)
+	}
+
+	// A networking key must also resolve (DefaultForKey is namespace-agnostic).
+	got, ok = DefaultForKey("carbonio.service.host")
+	if !ok || got != "127.78.0.6" {
+		t.Errorf("DefaultForKey(\"carbonio.service.host\") = (%q, %v), want (\"127.78.0.6\", true)", got, ok)
+	}
+
+	if _, ok := DefaultForKey("does-not-exist"); ok {
+		t.Error("DefaultForKey(unknown key) ok=true, want false")
 	}
 }
 
