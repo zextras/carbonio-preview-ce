@@ -4,16 +4,16 @@ Apache-2.0 (https://spdx.org/licenses/Apache-2.0.html) applies to:
   github.com/oklog/run (v1.1.0)
   google.golang.org/genproto/googleapis/rpc (v0.0.0-20251202230838-ff82c1b0f217)
   google.golang.org/grpc (v1.79.3)
-  gopkg.in/ini.v1 (v1.67.0)
+  gopkg.in/ini.v1 (v1.67.3)
 
 BSD-3-Clause (https://spdx.org/licenses/BSD-3-Clause.html) applies to:
 
   github.com/golang/protobuf (v1.5.4)
   github.com/google/uuid (v1.6.0)
-  golang.org/x/net (v0.53.0)
-  golang.org/x/sync (v0.20.0)
-  golang.org/x/sys (v0.43.0)
-  golang.org/x/text (v0.37.0)
+  golang.org/x/net (v0.55.0)
+  golang.org/x/sync (v0.21.0)
+  golang.org/x/sys (v0.45.0)
+  golang.org/x/text (v0.38.0)
   google.golang.org/protobuf (v1.36.11)
 
 MIT (https://spdx.org/licenses/MIT.html) applies to:
@@ -27,7 +27,7 @@ MIT (https://spdx.org/licenses/MIT.html) applies to:
   github.com/jackc/pgservicefile (v0.0.0-20240606120523-5a60cdf6a761)
   github.com/jackc/pgx/v5 (v5.10.0)
   github.com/jackc/puddle/v2 (v2.2.2)
-  github.com/klippa-app/go-pdfium (v1.19.3)
+  github.com/klippa-app/go-pdfium (v1.19.4)
   github.com/mattn/go-colorable (v0.1.14)
   github.com/mattn/go-isatty (v0.0.21)
 
