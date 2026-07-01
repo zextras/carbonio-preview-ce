@@ -66,11 +66,12 @@ type Server struct {
 // Option is a functional option for Server configuration.
 type Option func(*Server)
 
-// WithDB eagerly attaches a ready video-preview database store to the server.
-// It is the "DB already available at construction" path (Advanced's main, or a
-// caller that opened the pool synchronously). CE's main.go instead opens the DB
-// in the background and calls EnableVideoDB once it is ready, so a transient
-// mesh-upstream startup race never blocks the server from booting.
+// WithDB eagerly attaches a ready video-preview database store. It ONLY flips
+// the readiness gate — it does NOT start the background worker. It exists for
+// callers that already hold an open pool (chiefly tests). Production mains (BOTH
+// CE and Advanced) do NOT use WithDB: they call StartVideoDBAsync, which opens
+// the DB in the background (no boot-time hard dependency on it) and, once ready,
+// calls EnableVideoDB to flip the gate AND start the worker.
 //
 // When neither WithDB nor EnableVideoDB has fired, the video-preview DB layer is
 // disabled: video preview/thumbnail return 424 (Failed Dependency) and the
@@ -82,10 +83,10 @@ func WithDB(dbStore *db.Store) Option {
 }
 
 // New constructs a Server. cfg and store must not be nil. c may be nil (cache
-// disabled). Pass functional options (e.g. WithDB) to enable optional layers.
-// The Advanced edition calls New from its own main and should pass WithDB to
-// enable video-preview scheduling; CE's main.go enables it asynchronously via
-// EnableVideoDB after a background pool-open + Migrate.
+// disabled). Both editions (CE and Advanced) call New from their own main and
+// then call StartVideoDBAsync(ctx, cfg) to enable video previews asynchronously
+// (background pool-open + Migrate, then gate + worker start). WithDB is an
+// eager/test-only convenience and is not used by the production mains.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
 	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newVideoGate()}
 	for _, opt := range opts {
