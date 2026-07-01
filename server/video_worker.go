@@ -29,6 +29,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -149,6 +150,18 @@ type VideoWorker struct {
 	// on this instance (which would double-spend a second semaphore slot).
 	mu   sync.Mutex
 	live map[string]struct{}
+
+	// started guards StartOnce so the sweep goroutine is launched at most once
+	// even if EnableVideoDB is called multiple times (e.g. background init retry
+	// races). 0 = not started, 1 = started.
+	started atomic.Bool
+}
+
+// db resolves the current video-preview DB store via the readiness gate (or the
+// static deps.DB fallback in tests). Returns nil while the DB is not ready.
+// Every worker DB access goes through this so the store can flip after boot.
+func (w *VideoWorker) db() *db.Store {
+	return w.deps.videoStore()
 }
 
 // NewVideoWorker creates a VideoWorker from deps. cfg fields
@@ -180,6 +193,15 @@ func NewVideoWorker(deps Deps) *VideoWorker {
 		staleTTL:      time.Duration(staleSec) * time.Second,
 		maxAttempts:   maxAttempts,
 		live:          make(map[string]struct{}),
+	}
+}
+
+// StartOnce launches the sweep goroutine at most once, regardless of how many
+// times it is called. Safe to call from the background DB-init goroutine (which
+// may retry) once the DB becomes ready.
+func (w *VideoWorker) StartOnce(ctx context.Context) {
+	if w.started.CompareAndSwap(false, true) {
+		w.Start(ctx)
 	}
 }
 
@@ -216,11 +238,18 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		}
 	}()
 
+	// DB not ready (absent creds, or a transient outage after boot): skip this
+	// sweep entirely. The worker self-resumes on the next tick once the gate is
+	// ready, with no restart.
+	if w.db() == nil {
+		return
+	}
+
 	inFlight := 0
 
 	// (a) PENDING newest-first: fetch up to MAX_IN_FLIGHT*4 candidates, claim
 	//     each, and submit bounded by VideoSem (shared ffmpeg concurrency slot).
-	rows, err := w.deps.DB.FindPendingNewest(ctx, maxInFlight*4)
+	rows, err := w.db().FindPendingNewest(ctx, maxInFlight*4)
 	if err != nil {
 		slog.Warn("VideoWorker: FindPendingNewest failed", "err", err)
 	} else {
@@ -228,7 +257,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			if inFlight >= maxInFlight {
 				break
 			}
-			claimed, cerr := w.deps.DB.Claim(ctx, row.FileID, row.Version, w.instanceID)
+			claimed, cerr := w.db().Claim(ctx, row.FileID, row.Version, w.instanceID)
 			if cerr != nil {
 				slog.Warn("VideoWorker: Claim failed", "file_id", row.FileID, "version", row.Version, "err", cerr)
 				continue
@@ -240,7 +269,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			// busy, stop feeding — remaining rows stay PENDING for the next tick.
 			if !w.tryAcquireSem() {
 				// Return the row to PENDING without counting an attempt.
-				if rerr := w.deps.DB.Release(ctx, row.FileID, row.Version, w.instanceID, "worker busy"); rerr != nil {
+				if rerr := w.db().Release(ctx, row.FileID, row.Version, w.instanceID, "worker busy"); rerr != nil {
 					slog.Warn("VideoWorker: Release (busy) failed", "err", rerr)
 				}
 				break
@@ -268,7 +297,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 	if inFlight >= maxInFlight {
 		return
 	}
-	staleRows, serr := w.deps.DB.ReclaimStale(ctx, w.instanceID, w.staleTTL)
+	staleRows, serr := w.db().ReclaimStale(ctx, w.instanceID, w.staleTTL)
 	if serr != nil {
 		slog.Warn("VideoWorker: ReclaimStale failed", "err", serr)
 		return
@@ -303,7 +332,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		// Row is genuinely dead (crashed instance or this instance lost the goroutine).
 		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
 		if stale.Attempts >= w.maxAttempts {
-			if ferr := w.deps.DB.MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID,
+			if ferr := w.db().MarkFailed(ctx, stale.FileID, stale.Version, w.instanceID,
 				fmt.Sprintf("max attempts (%d) reached after stale reclaim", w.maxAttempts)); ferr != nil {
 				slog.Warn("VideoWorker: MarkFailed (stale cap) failed", "err", ferr)
 			}
@@ -311,7 +340,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		}
 		if !w.tryAcquireSem() {
 			// Return to PENDING, don't count as attempt.
-			if rerr := w.deps.DB.Release(ctx, stale.FileID, stale.Version, w.instanceID, "worker busy"); rerr != nil {
+			if rerr := w.db().Release(ctx, stale.FileID, stale.Version, w.instanceID, "worker busy"); rerr != nil {
 				slog.Warn("VideoWorker: Release (stale busy) failed", "err", rerr)
 			}
 			break
@@ -355,7 +384,9 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 			slog.Error("VideoWorker: attempt panicked",
 				"file_id", row.FileID, "version", row.Version, "panic", r,
 				"stack", string(debug.Stack()))
-			_ = w.deps.DB.Release(ctx, row.FileID, row.Version, w.instanceID, "panic in attempt")
+			if store := w.db(); store != nil {
+				_ = store.Release(ctx, row.FileID, row.Version, w.instanceID, "panic in attempt")
+			}
 		}
 	}()
 
@@ -387,7 +418,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		if isStorageNotFound(err) {
 			slog.Warn("VideoWorker: source blob not found, marking FAILED",
 				"file_id", row.FileID, "version", row.Version)
-			if merr := w.deps.DB.MarkFailed(ctx, row.FileID, row.Version, w.instanceID, "source blob not found"); merr != nil {
+			if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID, "source blob not found"); merr != nil {
 				slog.Warn("VideoWorker: MarkFailed (not found) failed", "err", merr)
 			}
 			return
@@ -415,7 +446,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		for {
 			select {
 			case <-ticker.C:
-				if herr := w.deps.DB.Heartbeat(ctx, row.FileID, row.Version, w.instanceID); herr != nil {
+				if herr := w.db().Heartbeat(ctx, row.FileID, row.Version, w.instanceID); herr != nil {
 					slog.Warn("VideoWorker: download heartbeat failed (non-fatal)", "err", herr,
 						"file_id", row.FileID, "version", row.Version)
 				} else {
@@ -490,7 +521,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 			return
 		}
 		// Persist the codec immediately so it survives future re-enqueue cycles.
-		if serr := w.deps.DB.SetCodec(ctx, row.FileID, row.Version, w.instanceID, codec); serr != nil {
+		if serr := w.db().SetCodec(ctx, row.FileID, row.Version, w.instanceID, codec); serr != nil {
 			slog.Warn("VideoWorker: SetCodec failed (non-fatal)", "err", serr)
 		}
 	}
@@ -499,7 +530,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	if !isSupportedVideoCodec(codec) {
 		slog.Warn("VideoWorker: codec not in supported list, marking UNSUPPORTED",
 			"file_id", row.FileID, "version", row.Version, "codec", codec)
-		if merr := w.deps.DB.MarkUnsupported(ctx, row.FileID, row.Version, w.instanceID,
+		if merr := w.db().MarkUnsupported(ctx, row.FileID, row.Version, w.instanceID,
 			fmt.Sprintf("codec %q is not supported", codec)); merr != nil {
 			slog.Warn("VideoWorker: MarkUnsupported failed", "err", merr)
 		}
@@ -529,7 +560,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 		return
 	}
 
-	if merr := w.deps.DB.MarkReady(ctx, row.FileID, row.Version, w.instanceID, previewID); merr != nil {
+	if merr := w.db().MarkReady(ctx, row.FileID, row.Version, w.instanceID, previewID); merr != nil {
 		slog.Warn("VideoWorker: MarkReady failed", "file_id", row.FileID, "version", row.Version, "err", merr)
 	} else {
 		slog.Info("VideoWorker: frame generated", "file_id", row.FileID, "version", row.Version, "preview_id", previewID, "codec", codec)
@@ -545,12 +576,12 @@ func (w *VideoWorker) releaseOrFail(ctx context.Context, row db.VideoPreview, er
 	if row.Attempts+1 >= w.maxAttempts {
 		slog.Warn("VideoWorker: max attempts reached, marking FAILED",
 			"file_id", row.FileID, "version", row.Version, "max_attempts", w.maxAttempts)
-		if merr := w.deps.DB.MarkFailed(ctx, row.FileID, row.Version, w.instanceID,
+		if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID,
 			fmt.Sprintf("max attempts (%d) reached: %s", w.maxAttempts, errMsg)); merr != nil {
 			slog.Warn("VideoWorker: MarkFailed (transient cap) failed", "err", merr)
 		}
 	} else {
-		if rerr := w.deps.DB.ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID, errMsg); rerr != nil {
+		if rerr := w.db().ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID, errMsg); rerr != nil {
 			slog.Warn("VideoWorker: ReleaseWithAttempt failed", "err", rerr)
 		}
 	}

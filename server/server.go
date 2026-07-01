@@ -27,32 +27,66 @@ type Server struct {
 	cfg   *config.Config
 	store storage.Client
 	cache *cache.Cache
-	db    *db.Store
+	// dbGate is the request-time readiness signal for the video-preview DB.
+	// It always exists (never nil). Its store starts nil (video disabled) and is
+	// flipped to ready — either eagerly by WithDB, or asynchronously by the
+	// caller (main.go) once the background DB init succeeds. Video handlers and
+	// the worker consult it on every use, so the DB can come up after boot and
+	// re-enable video with no process restart.
+	dbGate *videoGate
+	// worker is the video-preview background sweeper. It is constructed in
+	// buildMux (gate-aware) and only actually processes rows while dbGate is
+	// ready. Started by StartVideoWorker (called from main once the DB is up).
+	worker *VideoWorker
 }
 
 // Option is a functional option for Server configuration.
 type Option func(*Server)
 
-// WithDB attaches a video-preview database store to the server.
-// When not provided, the video-preview DB layer is disabled and video HTTP
-// handlers will return 503.  The worker agent also checks for nil before
-// starting.
+// WithDB eagerly attaches a ready video-preview database store to the server.
+// It is the "DB already available at construction" path (Advanced's main, or a
+// caller that opened the pool synchronously). CE's main.go instead opens the DB
+// in the background and calls EnableVideoDB once it is ready, so a transient
+// mesh-upstream startup race never blocks the server from booting.
+//
+// When neither WithDB nor EnableVideoDB has fired, the video-preview DB layer is
+// disabled: video preview/thumbnail return 424 (Failed Dependency) and the
+// worker does not process rows. Image/PDF/document/health are unaffected.
 func WithDB(dbStore *db.Store) Option {
 	return func(s *Server) {
-		s.db = dbStore
+		s.dbGate.Set(dbStore)
 	}
 }
 
 // New constructs a Server. cfg and store must not be nil. c may be nil (cache
 // disabled). Pass functional options (e.g. WithDB) to enable optional layers.
 // The Advanced edition calls New from its own main and should pass WithDB to
-// enable video-preview scheduling; CE's main.go does so by default.
+// enable video-preview scheduling; CE's main.go enables it asynchronously via
+// EnableVideoDB after a background pool-open + Migrate.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
-	s := &Server{cfg: cfg, store: store, cache: c}
+	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newVideoGate()}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
+}
+
+// EnableVideoDB publishes a ready DB store to the gate and (idempotently) starts
+// the video worker. It is safe to call from a background goroutine after the
+// server is already serving: the gate flip is atomic and the handlers pick it up
+// on the next request with no restart. Calling it more than once is harmless.
+func (s *Server) EnableVideoDB(ctx context.Context, dbStore *db.Store) {
+	s.dbGate.Set(dbStore)
+	s.StartVideoWorker(ctx)
+}
+
+// StartVideoWorker starts the background sweep goroutine if a worker exists and
+// has not been started yet. The worker itself no-ops each tick while the gate is
+// not ready, so starting it early (or before the DB is up) is safe.
+func (s *Server) StartVideoWorker(ctx context.Context) {
+	if s.worker != nil {
+		s.worker.StartOnce(ctx)
+	}
 }
 
 // Run starts the server. It blocks until the process receives SIGTERM or SIGINT.
@@ -162,15 +196,17 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 
 	videoSem := make(chan struct{}, s.cfg.VideoConcurrency)
 
-	// Register all operations under huma.
+	// Register all operations under huma. The video worker is constructed here
+	// (gate-aware) and retained on the Server so it can be started once the DB is
+	// ready (EnableVideoDB / StartVideoWorker).
 	api := newHumaAPI(mux)
-	RegisterOperations(api, Deps{
+	s.worker = RegisterOperations(api, Deps{
 		Cfg:      s.cfg,
 		Store:    s.store,
 		Cache:    s.cache,
 		Sem:      sem,
 		VideoSem: videoSem,
-		DB:       s.db,
+		DBGate:   s.dbGate,
 	})
 
 	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).

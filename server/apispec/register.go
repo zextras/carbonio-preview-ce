@@ -381,9 +381,9 @@ func RegisterVideoOps(
 		Method:      http.MethodGet,
 		Path:        "/preview/video/{id}/{version}/{area}/",
 		Summary:     "Get Video Preview",
-		Description: "Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed.",
+		Description: "Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed, 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).",
 		Tags:        []string{"video"},
-		Errors:      []int{202, 400, 404, 415, 422, 502, 503},
+		Errors:      []int{202, 400, 404, 415, 422, 424, 502, 503},
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
@@ -395,9 +395,9 @@ func RegisterVideoOps(
 		Method:      http.MethodGet,
 		Path:        "/preview/video/{id}/{version}/{area}/thumbnail/",
 		Summary:     "Get Video Thumbnail",
-		Description: "Serves a thumbnail of the stored first-frame preview of a video attachment.",
+		Description: "Serves a thumbnail of the stored first-frame preview of a video attachment. Returns 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).",
 		Tags:        []string{"video"},
-		Errors:      []int{202, 400, 404, 415, 422, 502, 503},
+		Errors:      []int{202, 400, 404, 415, 422, 424, 502, 503},
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
@@ -409,10 +409,10 @@ func RegisterVideoOps(
 		Method:        http.MethodDelete,
 		Path:          "/preview/video/{id}/{version}/",
 		Summary:       "Delete Video Preview",
-		Description:   "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204.",
+		Description:   "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204. When the video-preview database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.",
 		Tags:          []string{"video"},
 		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{422, 503},
+		Errors:        []int{422, 424},
 	}, deletePreview)
 
 	// POST /preview/video/{id}/{version}/copy/
@@ -421,8 +421,8 @@ func RegisterVideoOps(
 		Method:      http.MethodPost,
 		Path:        "/preview/video/{id}/{version}/copy/",
 		Summary:     "Copy Video Preview",
-		Description: "Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY.",
+		Description: "Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY. When the video-preview database is unavailable this is a no-op that still returns 200 with an empty body (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.",
 		Tags:        []string{"video"},
-		Errors:      []int{404, 422, 502, 503},
+		Errors:      []int{404, 422, 424, 502},
 	}, copyPreview)
 }

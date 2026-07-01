@@ -62,20 +62,25 @@ func resolve(
 	serviceType string,
 	ownerID string,
 ) resolveResult {
-	if deps.DB == nil {
-		// DB layer disabled — service cannot handle video.
-		return resolveResult{httpStatus: http.StatusServiceUnavailable}
+	store := deps.videoStore()
+	if store == nil {
+		// DB layer disabled / not ready — the dependency is down. 424 (Failed
+		// Dependency): operational, NOT 415 (which is a genuinely-unsupported
+		// codec, and requires a working DB to have been probed).
+		return resolveResult{httpStatus: http.StatusFailedDependency}
 	}
 
-	row, err := deps.DB.Find(ctx, fileID, version)
+	row, err := store.Find(ctx, fileID, version)
 	if err != nil {
 		slog.Warn("resolve: DB.Find error", "file_id", fileID, "version", version, "err", err)
-		return resolveResult{httpStatus: http.StatusServiceUnavailable}
+		// A connection-level error at runtime means the DB went down after boot:
+		// degrade to 424 (dependency down), same as boot-time absence.
+		return resolveResult{httpStatus: http.StatusFailedDependency}
 	}
 
 	if row == nil {
 		// Not found: enqueue and fire an immediate attempt.
-		if eerr := deps.DB.EnqueueIfAbsent(ctx, fileID, version, ownerID, serviceType); eerr != nil {
+		if eerr := store.EnqueueIfAbsent(ctx, fileID, version, ownerID, serviceType); eerr != nil {
 			slog.Warn("resolve: EnqueueIfAbsent error", "err", eerr)
 		}
 		fireAsyncAttempt(ctx, deps, worker, fileID, version)
@@ -86,7 +91,7 @@ func resolve(
 	case db.StatusReady:
 		if row.PreviewID == nil || *row.PreviewID == "" {
 			// Unexpected: READY without a previewID — move back to PENDING for regeneration.
-			if rerr := deps.DB.ReenqueueReady(ctx, fileID, version, "READY with nil previewID"); rerr != nil {
+			if rerr := store.ReenqueueReady(ctx, fileID, version, "READY with nil previewID"); rerr != nil {
 				slog.Warn("resolve: ReenqueueReady (nil previewID) error", "err", rerr)
 			}
 			fireAsyncAttempt(ctx, deps, worker, fileID, version)
@@ -100,7 +105,7 @@ func resolve(
 	case db.StatusUnsupported:
 		// If the codec is now in the supported list (binary expanded), re-enqueue.
 		if row.Codec != nil && *row.Codec != "" && isSupportedVideoCodec(*row.Codec) {
-			if rerr := deps.DB.ReenqueueUnsupported(ctx, fileID, version, "codec now in supported list"); rerr != nil {
+			if rerr := store.ReenqueueUnsupported(ctx, fileID, version, "codec now in supported list"); rerr != nil {
 				slog.Warn("resolve: ReenqueueUnsupported error", "err", rerr)
 			}
 			fireAsyncAttempt(ctx, deps, worker, fileID, version)
@@ -127,21 +132,22 @@ func resolve(
 // an in-flight generateFirstFrameJPEG call. Values (trace ids etc.) are
 // preserved; only the cancellation signal is dropped.
 func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileID string, version int) {
-	if worker == nil || deps.DB == nil {
+	store := deps.videoStore()
+	if worker == nil || store == nil {
 		return
 	}
 	// Detach from request lifetime: keep values but drop cancellation so that
 	// the 202 response completing does not cancel the in-flight generation.
 	bgCtx := context.WithoutCancel(ctx)
 	go func() {
-		claimed, err := deps.DB.Claim(bgCtx, fileID, version, worker.instanceID)
+		claimed, err := store.Claim(bgCtx, fileID, version, worker.instanceID)
 		if err != nil || !claimed {
 			return // lost the race or DB error — sweep will retry
 		}
 		// Acquire semaphore non-blocking.
 		if !worker.tryAcquireSem() {
 			// Busy — return the row without counting an attempt (back-pressure, not a failure).
-			_ = deps.DB.Release(bgCtx, fileID, version, worker.instanceID, "semaphore busy on immediate attempt")
+			_ = store.Release(bgCtx, fileID, version, worker.instanceID, "semaphore busy on immediate attempt")
 			return
 		}
 		key := liveKey(fileID, version)
@@ -156,9 +162,9 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 			}()
 			defer worker.releaseSem()
 			// Re-read the row to get ownerID and serviceType (they may not be known here).
-			row, rerr := deps.DB.Find(bgCtx, fileID, version)
+			row, rerr := store.Find(bgCtx, fileID, version)
 			if rerr != nil || row == nil {
-				_ = deps.DB.Release(bgCtx, fileID, version, worker.instanceID, "row vanished before attempt")
+				_ = store.Release(bgCtx, fileID, version, worker.instanceID, "row vanished before attempt")
 				return
 			}
 			worker.attempt(bgCtx, *row)
@@ -172,8 +178,11 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 
 func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
 	return func(ctx context.Context, input *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
-		if deps.DB == nil {
-			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		// Top-level short-circuit: with no ready DB we cannot even probe the
+		// codec, so return 424 (Failed Dependency) BEFORE the resolve() state
+		// machine. Distinct from 415 (genuinely-unsupported codec).
+		if deps.videoStore() == nil {
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -199,8 +208,9 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 			return nil, huma.NewError(http.StatusUnsupportedMediaType, "video format not supported")
 		case http.StatusUnprocessableEntity:
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "video preview generation failed")
-		case http.StatusServiceUnavailable:
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		case http.StatusFailedDependency:
+			// DB went down between the top-level check and resolve() — degrade to 424.
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 		// Status 200: serve the READY frame through the image pipeline.
 		pid := res.previewID
@@ -214,8 +224,8 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 		if rerr != nil {
 			if errors.Is(rerr, storage.ErrNotFound) {
 				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
-				if deps.DB != nil {
-					_ = deps.DB.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve")
+				if store := deps.videoStore(); store != nil {
+					_ = store.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve")
 				}
 				return nil, huma.NewError(http.StatusAccepted, "generating")
 			}
@@ -244,8 +254,10 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 
 func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
 	return func(ctx context.Context, input *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
-		if deps.DB == nil {
-			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		// Top-level short-circuit: no ready DB ⇒ 424 (Failed Dependency), BEFORE
+		// resolve(). Distinct from 415 (genuinely-unsupported codec).
+		if deps.videoStore() == nil {
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -271,8 +283,9 @@ func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context
 			return nil, huma.NewError(http.StatusUnsupportedMediaType, "video format not supported")
 		case http.StatusUnprocessableEntity:
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "video preview generation failed")
-		case http.StatusServiceUnavailable:
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+		case http.StatusFailedDependency:
+			// DB went down between the top-level check and resolve() — degrade to 424.
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 		pid := res.previewID
 
@@ -285,8 +298,8 @@ func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context
 		if rerr != nil {
 			if errors.Is(rerr, storage.ErrNotFound) {
 				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
-				if deps.DB != nil {
-					_ = deps.DB.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve (thumb)")
+				if store := deps.videoStore(); store != nil {
+					_ = store.ReenqueueReady(ctx, id, input.Version, "blob 404 after resolve (thumb)")
 				}
 				return nil, huma.NewError(http.StatusAccepted, "generating")
 			}
@@ -311,8 +324,14 @@ func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context
 
 func buildDeleteVideoPreview(deps Deps) func(context.Context, *apispec.VideoDeleteInput) (*struct{}, error) {
 	return func(ctx context.Context, input *apispec.VideoDeleteInput) (*struct{}, error) {
-		if deps.DB == nil {
-			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		// DB down/absent ⇒ no-op success (204). Delete is called fire-and-forget
+		// by WSC on node deletion; surfacing an error would make the caller retry
+		// forever / log noise. There is no row to delete when the DB is down, and
+		// the row (if any) will be swept out later — nothing is leaked.
+		store := deps.videoStore()
+		if store == nil {
+			slog.Warn("deleteVideoPreview: video DB not ready — no-op success")
+			return nil, nil
 		}
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -322,10 +341,16 @@ func buildDeleteVideoPreview(deps Deps) func(context.Context, *apispec.VideoDele
 		serviceType := string(input.ServiceType)
 		ownerHeader := input.FileOwnerID
 
-		row, derr := deps.DB.Find(ctx, id, input.Version)
+		row, derr := store.Find(ctx, id, input.Version)
 		if derr != nil {
+			// Runtime DB connection error: degrade to no-op success (same rationale
+			// as the absent-DB path above).
+			if isDBConnError(derr) {
+				slog.Warn("deleteVideoPreview: DB connection down — no-op success", "err", derr)
+				return nil, nil
+			}
 			slog.Warn("deleteVideoPreview: DB.Find error", "err", derr)
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 
 		// Best-effort blob delete (if a preview frame exists).
@@ -337,9 +362,13 @@ func buildDeleteVideoPreview(deps Deps) func(context.Context, *apispec.VideoDele
 		}
 
 		// Delete the DB row unconditionally (idempotent).
-		if dberr := deps.DB.DeleteByFileId(ctx, id, input.Version); dberr != nil {
+		if dberr := store.DeleteByFileId(ctx, id, input.Version); dberr != nil {
+			if isDBConnError(dberr) {
+				slog.Warn("deleteVideoPreview: DB connection down on delete — no-op success", "err", dberr)
+				return nil, nil
+			}
 			slog.Warn("deleteVideoPreview: DB.DeleteByFileId error", "err", dberr)
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 
 		// 204 No Content — huma emits no body when the output struct is nil.
@@ -357,8 +386,14 @@ func buildDeleteVideoPreview(deps Deps) func(context.Context, *apispec.VideoDele
 
 func buildCopyVideoPreview(deps Deps) func(context.Context, *apispec.VideoCopyInput) (*apispec.VideoCopyOutput, error) {
 	return func(ctx context.Context, input *apispec.VideoCopyInput) (*apispec.VideoCopyOutput, error) {
-		if deps.DB == nil {
-			return nil, huma.NewError(http.StatusServiceUnavailable, "video preview DB not configured")
+		// DB down/absent ⇒ no-op success (empty body). Copy is called
+		// fire-and-forget by WSC on node copy; surfacing an error would make the
+		// caller retry/log. The destination simply has no video preview yet — it
+		// will be regenerated lazily on first request once the DB is back.
+		store := deps.videoStore()
+		if store == nil {
+			slog.Warn("copyVideoPreview: video DB not ready — no-op success")
+			return &apispec.VideoCopyOutput{}, nil
 		}
 		srcID, err := validateUUID(input.ID)
 		if err != nil {
@@ -374,10 +409,14 @@ func buildCopyVideoPreview(deps Deps) func(context.Context, *apispec.VideoCopyIn
 		srcOwner := input.FileOwnerID
 		dstOwner := input.TargetOwnerID
 
-		row, ferr := deps.DB.Find(ctx, srcID, input.Version)
+		row, ferr := store.Find(ctx, srcID, input.Version)
 		if ferr != nil {
+			if isDBConnError(ferr) {
+				slog.Warn("copyVideoPreview: DB connection down — no-op success", "err", ferr)
+				return &apispec.VideoCopyOutput{}, nil
+			}
 			slog.Warn("copyVideoPreview: DB.Find error", "err", ferr)
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 		if row == nil || row.Status != db.StatusReady || row.PreviewID == nil || *row.PreviewID == "" {
 			return nil, huma.NewError(http.StatusNotFound, "source video preview not ready")
@@ -403,13 +442,13 @@ func buildCopyVideoPreview(deps Deps) func(context.Context, *apispec.VideoCopyIn
 		}
 
 		// Insert a READY row for the target file ID (ON CONFLICT DO NOTHING — idempotent).
-		if ierr := deps.DB.InsertReady(ctx, targetFileID, input.Version, dstOwner, serviceType, newPreviewID); ierr != nil {
+		if ierr := store.InsertReady(ctx, targetFileID, input.Version, dstOwner, serviceType, newPreviewID); ierr != nil {
 			// Best-effort cleanup of the newly stored blob.
 			go func() {
 				_ = deps.Store.Delete(context.Background(), newPreviewID, input.Version, serviceType, dstOwner)
 			}()
 			slog.Warn("copyVideoPreview: InsertReady error", "err", ierr)
-			return nil, huma.NewError(http.StatusServiceUnavailable, config.Msg.GenericErrorStorage)
+			return nil, huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 		}
 
 		out := &apispec.VideoCopyOutput{}

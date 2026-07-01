@@ -47,7 +47,15 @@ type Deps struct {
 	// disabled (spec-only gendocs mode or unit tests that do not exercise video
 	// endpoints). The video worker and video HTTP handlers must check for nil and
 	// either skip or return an appropriate error.
+	//
+	// Prefer Deps.videoStore() over reading DB directly: when a DBGate is
+	// attached (production) it is the authoritative, request-time readiness
+	// signal; DB is the static fallback used by tests.
 	DB *db.Store
+	// DBGate, when non-nil, is the request-time readiness signal for the video
+	// DB. Its store may start nil and flip to ready after boot (background init),
+	// re-enabling video with no restart. When nil, handlers fall back to DB.
+	DBGate *videoGate
 }
 
 // ---------------------------------------------------------------------------
@@ -55,15 +63,15 @@ type Deps struct {
 // It is called by both the live server and cmd/gendocs.
 // ---------------------------------------------------------------------------
 
-// worker is the process-wide VideoWorker singleton, started lazily from
-// RegisterOperations when Deps.DB is non-nil. It is package-level so that
-// video_api.go handlers can reference it; a nil worker means video DB is disabled.
-var worker *VideoWorker
-
 // RegisterOperations registers all huma-managed operations onto api.
 // It is called by both the live server and cmd/gendocs.
-// When deps.DB is non-nil the video worker is constructed and started here.
-func RegisterOperations(api huma.API, deps Deps) {
+//
+// The video worker is ALWAYS constructed (it is gate-aware: it no-ops each tick
+// while the DB is not ready) and returned so the caller can start it once the DB
+// is up. It is NOT started here — the server owns the worker lifecycle via
+// Server.EnableVideoDB / StartVideoWorker so a transient DB outage at boot never
+// blocks registration. Returns nil only in pure spec-only gendocs mode (no cfg).
+func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 	semMW := semaphoreMiddleware(api, deps.Sem)
 	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem)
 	_ = vsemMW // vsemMW is no longer used for the removed generate endpoint
@@ -84,12 +92,13 @@ func RegisterOperations(api huma.API, deps Deps) {
 		semMW)
 
 	// Video GET / DELETE / copy endpoints (Q5: generate endpoint removed).
-	// Worker is started only when DB is available.
+	// Build the worker whenever a config is present (spec-only gendocs has none).
+	// The worker resolves its store through deps.videoStore() at tick time, so it
+	// is safe to construct before the DB is ready; it processes rows only once the
+	// gate flips.
 	var w *VideoWorker
-	if deps.DB != nil {
+	if deps.Cfg != nil {
 		w = NewVideoWorker(deps)
-		worker = w
-		w.Start(context.Background())
 	}
 	apispec.RegisterVideoOps(api,
 		buildGetVideoPreview(deps, w),
@@ -97,6 +106,7 @@ func RegisterOperations(api huma.API, deps Deps) {
 		buildDeleteVideoPreview(deps),
 		buildCopyVideoPreview(deps),
 	)
+	return w
 }
 
 // newHumaAPI constructs a huma API over the given mux with all Carbonio settings.
