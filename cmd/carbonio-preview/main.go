@@ -83,33 +83,106 @@ func main() {
 	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).
 	outCache := cache.New(cfg.CacheMaxBytes)
 
-	// Build the video-preview database store.
-	// Fail-fast if credentials are absent or the DB is unreachable:
-	// a preview service without a DB cannot serve or schedule video previews.
-	ctx := context.Background()
-	var dbStore *db.Store
+	// Create the server. The video-preview DB is NEVER a boot-time hard
+	// dependency: preview must serve image/pdf/document/health regardless of DB
+	// state. Video previews are enabled asynchronously once the DB is ready.
+	srv := server.New(cfg, storageClient, outCache)
+
+	// Root context cancelled on shutdown, used by the background DB init and the
+	// video worker sweep goroutine.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	if cfg.DBDSN == "" {
-		slog.Error("FATAL: database credentials not found in Consul KV — ensure carbonio-preview-db-bootstrap has run")
-		os.Exit(1)
+		// No credentials: run WITHOUT a video DB. Video previews return 424
+		// (unsupported/dependency-down), the worker stays off; all other previews
+		// and health are unaffected. A single clear WARN — not a fatal.
+		slog.Warn("video-preview DB not configured; video previews disabled " +
+			"(returning failed-dependency); image/pdf/document previews and health unaffected. " +
+			"Run carbonio-preview-db-bootstrap to enable video previews.")
+	} else {
+		// Initialise the DB in the BACKGROUND with capped-backoff retry so a
+		// transient failure (e.g. the Consul mesh upstream not yet up at boot —
+		// the race that previously caused a FATAL + systemd restart loop) is
+		// absorbed and self-heals with no crash. On success the video DB is
+		// enabled and the worker started; the pool is closed on shutdown.
+		go initVideoDBWithRetry(ctx, cfg, srv)
 	}
-	dbStore, err := db.New(ctx, cfg.DBDSN, db.PoolConfig{
+
+	// Run blocks until SIGTERM/SIGINT; it always starts the HTTP listener.
+	srv.Run()
+}
+
+// initVideoDBWithRetry opens the video-preview DB pool and runs migrations,
+// retrying with capped exponential backoff until it succeeds or ctx is
+// cancelled. On success it enables the video DB on the server (flips the
+// readiness gate + starts the worker) and closes the pool when ctx is done.
+//
+// It NEVER exits the process: a persistently-unreachable DB simply means video
+// previews stay disabled (424) while everything else keeps serving.
+func initVideoDBWithRetry(ctx context.Context, cfg *config.Config, srv *server.Server) {
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 60 * time.Second
+	)
+	backoff := initialBackoff
+	attempt := 0
+	for {
+		attempt++
+		store, err := openAndMigrateDB(ctx, cfg)
+		if err == nil {
+			slog.Info("video-preview DB ready; enabling video previews", "attempts", attempt)
+			srv.EnableVideoDB(ctx, store)
+			// Close the pool on shutdown.
+			go func() {
+				<-ctx.Done()
+				store.Close()
+			}()
+			return
+		}
+
+		if ctx.Err() != nil {
+			// Shutting down — stop retrying.
+			return
+		}
+		slog.Warn("video-preview DB not ready yet; retrying "+
+			"(other previews unaffected, video returns failed-dependency until DB is up)",
+			"attempt", attempt, "retry_in", backoff.String(), "err", err)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+// openAndMigrateDB opens the pool (with a ping) and applies migrations. Both
+// steps are bounded by a per-attempt timeout so a hung connect cannot wedge the
+// retry loop.
+func openAndMigrateDB(ctx context.Context, cfg *config.Config) (*db.Store, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	store, err := db.New(attemptCtx, cfg.DBDSN, db.PoolConfig{
 		MaxConns:        cfg.DBPoolMaxConns,
 		MinConns:        cfg.DBPoolMinConns,
 		MaxConnLifetime: time.Duration(cfg.DBConnMaxLifetime) * time.Second,
 	})
 	if err != nil {
-		slog.Error("FATAL: database pool open failed", "err", err)
-		os.Exit(1)
+		return nil, err
 	}
-	if err := dbStore.Migrate(ctx); err != nil {
-		slog.Error("FATAL: database migration failed", "err", err)
-		os.Exit(1)
+	if err := store.Migrate(attemptCtx); err != nil {
+		store.Close()
+		return nil, err
 	}
-	defer dbStore.Close()
-
-	// Create and run the server (with DB store for video-preview scheduling).
-	srv := server.New(cfg, storageClient, outCache, server.WithDB(dbStore))
-	srv.Run()
+	return store, nil
 }
 
 // findArg returns the index of name in args, or -1 if not found.
