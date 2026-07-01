@@ -39,6 +39,13 @@ import (
 	"github.com/zextras/carbonio-preview-ce/cache"
 	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
+	// Blank-imported so its init() registers the "ce" migration set into the
+	// config/migrate framework (RegisterInSet). Without this import, no CE
+	// migrations exist to run at --setup time — a plain import of
+	// config/migrate no longer carries them (that's the whole point: it lets
+	// the Advanced binary import config/migrate for the framework alone,
+	// without inheriting CE's migrations).
+	_ "github.com/zextras/carbonio-preview-ce/config/migrate/cemig"
 	"github.com/zextras/carbonio-preview-ce/db"
 	"github.com/zextras/carbonio-preview-ce/docs"
 	"github.com/zextras/carbonio-preview-ce/render"
@@ -213,9 +220,21 @@ func runSetupIfRequested(args []string) (handled bool, exitCode int) {
 		return true, 1
 	}
 	consulURL := args[idx+1]
+
+	// Resolve the migration set from the registry's compile-time default —
+	// pure, no Consul fetch, matching config.DefaultForKey's contract. CE
+	// always defaults to "ce"; an unknown key would only happen if the
+	// registry entry were ever removed, so falling back to "ce" here keeps
+	// --setup working even in that case.
+	migrationSet, ok := config.DefaultForKey("migrations-package")
+	if !ok || migrationSet == "" {
+		migrationSet = "ce"
+	}
+
 	paths := migrate.Paths{
-		IniPath:   "/etc/carbonio/preview/config.ini",
-		PropsPath: "/etc/carbonio/preview/config.properties",
+		IniPath:      "/etc/carbonio/preview/config.ini",
+		PropsPath:    "/etc/carbonio/preview/config.properties",
+		MigrationSet: migrationSet,
 	}
 	if err := migrate.RunSetup(consulURL, paths, docs.ConfigsMd()); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -13,8 +13,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zextras/carbonio-preview-ce/config"
 	"github.com/zextras/carbonio-preview-ce/config/migrate"
 	"github.com/zextras/carbonio-preview-ce/docs"
+
+	// Blank-imported for the same reason main.go does: this test package
+	// exercises the --setup path end-to-end and must see CE's "ce" migration
+	// set registered, exactly like the production binary.
+	_ "github.com/zextras/carbonio-preview-ce/config/migrate/cemig"
 )
 
 // TestFindArg verifies the pure --setup flag locator.
@@ -128,6 +134,64 @@ func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 	// When ini is absent there is no application work, so no token is needed.
 	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
 		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", err)
+	}
+}
+
+// TestMigrationSetResolution_DefaultsToCE verifies the exact wiring
+// runSetupIfRequested performs: config.DefaultForKey("migrations-package")
+// resolves to "ce" purely (no Consul fetch needed), matching what main.go
+// threads into migrate.Paths.MigrationSet.
+func TestMigrationSetResolution_DefaultsToCE(t *testing.T) {
+	got, ok := config.DefaultForKey("migrations-package")
+	if !ok {
+		t.Fatal("config.DefaultForKey(\"migrations-package\") ok=false, want true")
+	}
+	if got != "ce" {
+		t.Errorf("config.DefaultForKey(\"migrations-package\") = %q, want \"ce\"", got)
+	}
+}
+
+// TestSetupEndToEnd_RunsOnlyCEMigrations proves the fix end-to-end at the
+// cmd/carbonio-preview level: migrate.RunSetup, driven with the SAME
+// MigrationSet resolution main.go performs ("ce", CE's own default), executes
+// CE's V1 migration (an application key gets PUT to Consul) — the whole point
+// being that this binary only ever runs its OWN "ce" set, never inherits any
+// other edition's migrations just because config/migrate is imported.
+func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
+	dir := t.TempDir()
+	iniPath := filepath.Join(dir, "config.ini")
+	if err := os.WriteFile(iniPath, []byte("[carbonio.preview]\nenable_document_preview = true\n"), 0o644); err != nil {
+		t.Fatalf("write ini: %v", err)
+	}
+
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			puts++
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	migrationSet, ok := config.DefaultForKey("migrations-package")
+	if !ok {
+		migrationSet = "ce"
+	}
+	t.Setenv("SETUP_CONSUL_TOKEN", "tok")
+	paths := migrate.Paths{
+		IniPath:      iniPath,
+		PropsPath:    filepath.Join(dir, "config.properties"),
+		DropInPath:   filepath.Join(dir, "log-level.conf"),
+		MigrationSet: migrationSet,
+	}
+	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if puts == 0 {
+		t.Error("expected CE's V1 migration to PUT enable-document-preview to Consul KV; got 0 PUTs — migration set resolution is broken")
 	}
 }
 
