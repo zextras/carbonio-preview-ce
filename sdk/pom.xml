@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.zextras.carbonio.preview</groupId>
+  <artifactId>carbonio-preview-ce-rest-sdk</artifactId>
+  <version>${revision}${changelist}</version>
+  <name>Carbonio Preview CE - REST SDK</name>
+
+  <properties>
+    <revision>0.0.0</revision>
+    <changelist>-SNAPSHOT</changelist>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <openapi-generator.version>7.9.0</openapi-generator.version>
+  </properties>
+
+  <repositories>
+    <repository>
+      <id>zextras-java-sdk</id>
+      <name>Zextras public maven repo</name>
+      <url>https://zextras.jfrog.io/artifactory/java-sdk</url>
+    </repository>
+  </repositories>
+
+  <distributionManagement>
+    <snapshotRepository>
+      <id>zextras-java-sdk</id>
+      <name>Zextras private repository</name>
+      <url>https://zextras.jfrog.io/artifactory/maven-snapshot</url>
+    </snapshotRepository>
+    <repository>
+      <id>zextras-java-sdk</id>
+      <name>Zextras private repository</name>
+      <url>https://zextras.jfrog.io/artifactory/public-maven-repo</url>
+    </repository>
+  </distributionManagement>
+
+  <dependencies>
+    <!-- Generated client runtime: HTTP transport -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.17.2</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
+      <version>2.17.2</version>
+    </dependency>
+    <dependency>
+      <groupId>jakarta.annotation</groupId>
+      <artifactId>jakarta.annotation-api</artifactId>
+      <version>3.0.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.swagger.core.v3</groupId>
+      <artifactId>swagger-annotations-jakarta</artifactId>
+      <version>2.2.22</version>
+    </dependency>
+    <!-- httpmime + httpclient required by the native library's multipart support -->
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpmime</artifactId>
+      <version>4.5.14</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient</artifactId>
+      <version>4.5.14</version>
+    </dependency>
+
+    <!-- Test dependencies -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.3</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock</artifactId>
+      <version>3.9.1</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Generate the REST client from the OpenAPI spec -->
+      <plugin>
+        <groupId>org.openapitools</groupId>
+        <artifactId>openapi-generator-maven-plugin</artifactId>
+        <version>${openapi-generator.version}</version>
+        <executions>
+          <execution>
+            <id>generate-preview-client</id>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+            <phase>generate-sources</phase>
+            <configuration>
+              <inputSpec>${project.basedir}/../docs/openapi.yaml</inputSpec>
+              <generatorName>java</generatorName>
+              <library>native</library>
+              <output>${project.build.directory}/generated-sources/openapi</output>
+              <apiPackage>com.zextras.carbonio.preview.sdk.rest.api</apiPackage>
+              <modelPackage>com.zextras.carbonio.preview.sdk.rest.model</modelPackage>
+              <invokerPackage>com.zextras.carbonio.preview.sdk.rest</invokerPackage>
+              <generateApiTests>false</generateApiTests>
+              <generateModelTests>false</generateModelTests>
+              <generateApiDocumentation>false</generateApiDocumentation>
+              <generateModelDocumentation>false</generateModelDocumentation>
+              <skipValidateSpec>true</skipValidateSpec>
+              <configOptions>
+                <useJakartaEe>true</useJakartaEe>
+                <serializationLibrary>jackson</serializationLibrary>
+                <dateLibrary>java8</dateLibrary>
+                <openApiNullable>false</openApiNullable>
+                <hideGenerationTimestamp>true</hideGenerationTimestamp>
+                <sourceFolder>src/main/java</sourceFolder>
+              </configOptions>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Register generated sources so the compiler picks them up -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <id>add-generated-sources</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>add-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${project.build.directory}/generated-sources/openapi/src/main/java</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Pin compiler to a version that honours maven.compiler.release -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <!-- Surefire for JUnit 5 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.3.1</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

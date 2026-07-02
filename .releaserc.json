@@ -1,5 +1,6 @@
 {
-  "branches": ["devel"],
+  "branches": ["devel", "pre-release"],
+  "repositoryUrl": "https://github.com/zextras/carbonio-preview-ce",
   "tagFormat": "v${version}",
   "plugins": [
     [
@@ -38,14 +39,14 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "sed -i 's/version=\"[^\"]*\"/version=\"${nextRelease.version}\"/' setup.py && sed -i 's/^pkgver=.*/pkgver=\"${nextRelease.version}\"/' package/preview/PKGBUILD"
+        "prepareCmd": "sed -i 's/^pkgver=.*/pkgver=\"${nextRelease.version}\"/' package/PKGBUILD && sed -i 's/^pkgrel=.*/pkgrel=\"1\"/' package/PKGBUILD"
       }
     ],
     [
       "@semantic-release/git",
       {
-        "assets": ["setup.py", "CHANGELOG.md", "package/preview/PKGBUILD"],
-        "message": "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
+        "assets": ["CHANGELOG.md", "package/PKGBUILD"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ]
   ]

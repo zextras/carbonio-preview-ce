@@ -8,11 +8,17 @@ WORKDIR /staging
 COPY ../../. .
 
 RUN mkdir -p staging && \
-    cp -r app staging/ && \
     cp -r package staging/ && \
-    cp requirements.txt staging/ && \
-    cp README.md staging/ && \
-    cp setup.py staging/
+    cp -r cache staging/ && \
+    cp -r cmd staging/ && \
+    cp -r config staging/ && \
+    cp -r render staging/ && \
+    cp -r server staging/ && \
+    cp -r storage staging/ && \
+    cp -r video staging/ && \
+    cp go.mod staging/ && \
+    cp go.sum staging/ && \
+    { [ -f README.md ] && cp README.md staging/ || true; }
 
 # Stage Ubuntu 20.04 (Focal)
 FROM docker.io/m0rf30/yap-ubuntu-focal:1.44 AS ubuntu-focal-builder

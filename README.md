@@ -41,6 +41,66 @@ There is no difference in quality between the two,
 by asking for a jpeg format and changing the quality parameter.
 Asking for a GIF output can only be done when the input file is a GIF, otherwise it will raise and error.
 
+## Logging
+
+The service uses Go's standard `log/slog` library with a `TextHandler` on stderr.
+
+The log level is controlled by the **`PREVIEW_LOG_LEVEL`** environment variable. This is a per-instance,
+framework-level knob (equivalent to `QUARKUS_LOG_LEVEL` in Quarkus services) — it is **not** part
+of the Carbonio networking/application config chain and does not appear in `configs.txt` or the
+registry.
+
+| Value | Effective level | Notes |
+|-------|----------------|-------|
+| `debug` | DEBUG | All messages |
+| `info` (default) | INFO | Default when variable is absent or empty |
+| `warning` / `warn` | WARN | Python `logging` alias accepted |
+| `error` | ERROR | |
+| `critical` | ERROR | Python `CRITICAL` has no slog equivalent; mapped to Error |
+
+Values are case-insensitive. An unrecognised value causes the service to fail-fast at startup.
+
+**Per-instance configuration via systemd drop-in:**
+
+```bash
+systemctl edit carbonio-preview
+```
+
+Add:
+
+```ini
+[Service]
+Environment="PREVIEW_LOG_LEVEL=debug"
+```
+
+**Automatic migration:** When upgrading from the legacy Python service, if `config.ini` contains
+a `[log] level` key, the `--setup` migration rewrites it as a systemd drop-in at
+`/etc/systemd/system/carbonio-preview.service.d/log-level.conf`. The pending-setups script
+runs `systemctl daemon-reload` immediately after so the level is active before the service
+restarts.
+
+## Runtime Tuning
+
+The following per-instance environment variables control performance characteristics.
+They are set via systemd drop-in (same mechanism as `PREVIEW_LOG_LEVEL`) and are **not**
+part of the Carbonio networking/application config chain.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PREVIEW_RENDER_CONCURRENCY` | *CPU count* | Max concurrent image-render operations |
+| `PREVIEW_PDF_WORKERS` | *CPU count* | PDFium subprocess pool size |
+| `PREVIEW_VIPS_CONCURRENCY` | `1` | libvips threads per operation |
+
+The two downstream timeouts are **Consul KV** keys (not env vars), configurable
+fleet-wide but intentionally omitted from the generated config docs:
+
+| Consul KV key | Default | Description |
+|---------------|---------|-------------|
+| `carbonio-preview/timeout-in-seconds` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
+| `carbonio-preview/docs-timeout-in-seconds` | `15` | Timeout (s) for carbonio-docs-editor (Collabora) conversion |
+
+Values must be positive integers >= 1. An invalid value causes the service to fail-fast at startup.
+
 ## APIs Documentation 📚
 
 Once the service is up and running, APIs will be found

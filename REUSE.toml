@@ -31,3 +31,21 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2022 Zextras <https://www.zextras.com>"
 SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = [
+  "docs/openapi.yaml",
+  "docs/openapi.json",
+  "server/static/openapi.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+# Generated third-party dependency manifest (dt3_thirdparties / go-licence-detector).
+# Emitted without an inline SPDX header; covered here so the REUSE lint gate passes.
+[[annotations]]
+path = "THIRDPARTIES"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 ## [1.3.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.2.0...v1.3.0) (2026-06-18)
 
 ### Features

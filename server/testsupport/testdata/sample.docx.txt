@@ -1,0 +1,3 @@
+Sample document content for preview full-flow tests.
+This text is the upstream document the storages mock serves;
+the Collabora mock converts it to the PDF fixture.

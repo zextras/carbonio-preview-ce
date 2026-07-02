@@ -5,7 +5,12 @@
 *.deb
 *.rpm
 .coverage
+coverage.out
+coverage.html
 .idea
+.run/
+/carbonio-preview
+/carbonio-preview-bin
 __pycache__
 app/core/resources/config.ini
 app/core/resources/messages.ini
@@ -16,3 +21,7 @@ package/carbonio-preview-ce.tar.xz
 preview.log
 scratch.py
 venv
+
+# Maven build output (sdk module)
+sdk/target/
+sdk/.flattened-pom.xml
