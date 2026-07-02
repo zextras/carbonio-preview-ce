@@ -1,3 +1,5 @@
+## [2.0.0](https://github.com/zextras/carbonio-preview-ce/compare/v1.3.1...v2.0.0) (2026-07-02)
+
 <!--
 SPDX-FileCopyrightText: 2026 Zextras <https://www.zextras.com>
 
