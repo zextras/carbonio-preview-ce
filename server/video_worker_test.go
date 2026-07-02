@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/db"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/db"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 // ---------------------------------------------------------------------------

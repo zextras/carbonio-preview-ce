@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/zextras/carbonio-preview-ce/db"
+	"github.com/zextras/carbonio-preview-ce/v2/db"
 )
 
 // videoGate holds the video-preview DB store behind an atomic pointer so the

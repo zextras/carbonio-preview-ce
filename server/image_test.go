@@ -18,8 +18,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 // ---- mock storage ----

@@ -24,9 +24,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/db"
-	"github.com/zextras/carbonio-preview-ce/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/db"
+	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
 )
 
 // statusOf extracts the HTTP status carried by a huma error.

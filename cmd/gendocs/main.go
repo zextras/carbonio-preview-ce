@@ -32,7 +32,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
-	"github.com/zextras/carbonio-preview-ce/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
 )
 
 func main() {

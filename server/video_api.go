@@ -22,11 +22,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/db"
-	"github.com/zextras/carbonio-preview-ce/server/apispec"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/db"
+	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 // ---------------------------------------------------------------------------

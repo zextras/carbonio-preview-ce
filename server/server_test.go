@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
 )
 
 // Run is intentionally NOT unit-tested here: it calls render.InitVips, requires

@@ -18,13 +18,13 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/db"
-	"github.com/zextras/carbonio-preview-ce/render"
-	"github.com/zextras/carbonio-preview-ce/server/apispec"
-	"github.com/zextras/carbonio-preview-ce/storage"
-	"github.com/zextras/carbonio-preview-ce/video"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/db"
+	"github.com/zextras/carbonio-preview-ce/v2/render"
+	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/video"
 )
 
 // ---------------------------------------------------------------------------
