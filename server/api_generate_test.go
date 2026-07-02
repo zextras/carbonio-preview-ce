@@ -12,8 +12,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/storage"
-	"github.com/zextras/carbonio-preview-ce/video"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/video"
 )
 
 // genFakeStore records StoreData calls and serves a canned video stream. A

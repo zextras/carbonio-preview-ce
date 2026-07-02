@@ -36,20 +36,20 @@ import (
 	"os"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/config/migrate"
 	// Blank-imported so its init() registers the "ce" migration set into the
 	// config/migrate framework (RegisterInSet). Without this import, no CE
 	// migrations exist to run at --setup time — a plain import of
 	// config/migrate no longer carries them (that's the whole point: it lets
 	// the Advanced binary import config/migrate for the framework alone,
 	// without inheriting CE's migrations).
-	_ "github.com/zextras/carbonio-preview-ce/config/migrate/cemig"
-	"github.com/zextras/carbonio-preview-ce/docs"
-	"github.com/zextras/carbonio-preview-ce/render"
-	"github.com/zextras/carbonio-preview-ce/server"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	_ "github.com/zextras/carbonio-preview-ce/v2/config/migrate/cemig"
+	"github.com/zextras/carbonio-preview-ce/v2/docs"
+	"github.com/zextras/carbonio-preview-ce/v2/render"
+	"github.com/zextras/carbonio-preview-ce/v2/server"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 func main() {

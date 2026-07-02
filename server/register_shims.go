@@ -12,7 +12,7 @@ package server
 import (
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/zextras/carbonio-preview-ce/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
 )
 
 func registerImageOps(api huma.API, deps Deps) {

@@ -33,10 +33,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/cache"
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/server/testsupport"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/cache"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/server/testsupport"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 // fullFlowFixtures holds the real test bytes, loaded once.

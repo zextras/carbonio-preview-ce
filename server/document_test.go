@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/config"
-	"github.com/zextras/carbonio-preview-ce/render"
-	"github.com/zextras/carbonio-preview-ce/storage"
+	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v2/render"
+	"github.com/zextras/carbonio-preview-ce/v2/storage"
 )
 
 // stubCollaboraConvert replaces collaboraConvertFunc for the duration of a test.
