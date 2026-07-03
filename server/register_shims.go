@@ -57,11 +57,3 @@ func registerVideoOps(api huma.API, deps Deps) {
 		buildCopyVideoPreview(deps),
 	)
 }
-
-// registerGenerateOps is retained as a no-op shim for tests that reference it.
-// The public POST /preview/video/generate/ endpoint has been removed (spec Q5).
-// Tests that exercised the HTTP route are updated to test generateFirstFrameJPEG
-// directly; the shim prevents test compilation errors.
-func registerGenerateOps(_ huma.API, _ Deps) {
-	// Intentionally empty: the generate HTTP route is removed.
-}

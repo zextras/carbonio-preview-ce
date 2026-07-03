@@ -24,7 +24,6 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v2/render"
 	"github.com/zextras/carbonio-preview-ce/v2/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v2/storage"
-	"github.com/zextras/carbonio-preview-ce/v2/video"
 )
 
 // ---------------------------------------------------------------------------
@@ -861,8 +860,8 @@ const JPEGQuality = 90
 // generateFirstFrameJPEG streams the source video, extracts the first frame
 // (PNG via the existing extractor), re-encodes it to JPEG q90 at full resolution
 // (no resize), and stores it under the CALLER-SUPPLIED target node id (a UUID
-// minted by WSC). Returns that id (echoed). Errors are returned raw; the handler
-// maps them to HTTP status codes via mapStorageOrExtractError.
+// minted by WSC). Returns that id (echoed). Errors are returned raw for the
+// caller to classify.
 func generateFirstFrameJPEG(
 	ctx context.Context,
 	store storage.Client,
@@ -924,60 +923,4 @@ func encodePNGToJPEGAndStore(
 		return "", err
 	}
 	return storedID, nil
-}
-
-// mapStorageOrExtractError maps a generate-pipeline error to the correct HTTP
-// status:
-//   - context deadline exceeded            → 504
-//   - video.ErrExtractFailed (AV1/corrupt) → 422
-//   - video.ErrExtractTimeout              → 504
-//   - storage.ErrNotFound                  → 404
-//   - everything else                      → 502
-func mapStorageOrExtractError(ctx context.Context, err error) error {
-	if ctx.Err() == context.DeadlineExceeded || errors.Is(err, video.ErrExtractTimeout) {
-		return huma.NewError(http.StatusGatewayTimeout, "preview request timed out")
-	}
-	switch {
-	case errors.Is(err, video.ErrExtractFailed):
-		return huma.NewError(http.StatusUnprocessableEntity, config.Msg.FormatNotSupported)
-	case errors.Is(err, storage.ErrNotFound):
-		return huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-	default:
-		return huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
-	}
-}
-
-func buildGenerateVideoPreview(deps Deps) func(context.Context, *apispec.GenerateVideoInput) (*apispec.GenerateVideoOutput, error) {
-	return func(ctx context.Context, input *apispec.GenerateVideoInput) (*apispec.GenerateVideoOutput, error) {
-		// Single authoritative deadline: governs the FULL lifecycle of this
-		// request (storage download + ffmpeg first-frame + JPEG encode + store).
-		ctx, cancel := context.WithTimeout(ctx, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
-		defer cancel()
-
-		id, err := validateUUID(input.ID)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: input.ID})
-		}
-		target, err := validateUUID(input.Target)
-		if err != nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
-				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "query.target", Value: input.Target})
-		}
-
-		storedID, gerr := generateFirstFrameJPEG(
-			ctx, deps.Store, id, input.Version, string(input.ServiceType), input.FileOwnerID, target,
-		)
-		if gerr != nil {
-			if ctx.Err() == context.Canceled {
-				return nil, nil // client disconnected — nothing to write
-			}
-			log.Printf("generateVideoPreview: %v", gerr)
-			return nil, mapStorageOrExtractError(ctx, gerr)
-		}
-
-		out := &apispec.GenerateVideoOutput{}
-		out.Body.PreviewID = storedID
-		return out, nil
-	}
 }
