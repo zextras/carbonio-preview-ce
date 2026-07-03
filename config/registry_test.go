@@ -283,6 +283,9 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	// The list includes all registered application keys (db-pool-*, video-*, etc.).
 	appExpected := []string{
 		"cache-max-mb",
+		"database.credentials.db-name",
+		"database.credentials.db-password",
+		"database.credentials.db-username",
 		"db-conn-max-lifetime-seconds",
 		"db-pool-max-conns",
 		"db-pool-min-conns",

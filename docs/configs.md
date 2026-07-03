@@ -32,6 +32,9 @@ Overridable by Consul KV
 | Key | Default | If not set |
 | --- | ------- | ---------- |
 | `carbonio-preview/cache-max-mb` | `256` |  |
+| `carbonio-preview/database/credentials/db-name` | *(not set)* | Crashes; but always set by database bootstrap |
+| `carbonio-preview/database/credentials/db-password` | *(not set)* | Crashes; but always set by database bootstrap |
+| `carbonio-preview/database/credentials/db-username` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/db-conn-max-lifetime-seconds` | `600` |  |
 | `carbonio-preview/db-pool-max-conns` | `10` |  |
 | `carbonio-preview/db-pool-min-conns` | `2` |  |
