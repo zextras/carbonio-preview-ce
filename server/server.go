@@ -30,10 +30,9 @@ type Server struct {
 	cache *cache.Cache
 	// dbGate is the request-time readiness signal for the video-preview DB.
 	// It always exists (never nil). Its store starts nil (video disabled) and is
-	// flipped to ready — either eagerly by WithDB, or asynchronously by the
-	// caller (main.go) once the background DB init succeeds. Video handlers and
-	// the worker consult it on every use, so the DB can come up after boot and
-	// re-enable video with no process restart.
+	// flipped to ready asynchronously by the caller (main.go) once the background
+	// DB init succeeds. Video handlers and the worker consult it on every use, so
+	// the DB can come up after boot and re-enable video with no process restart.
 	dbGate *videoGate
 	// worker is the video-preview background sweeper. It is constructed in
 	// buildMux (gate-aware) and only actually processes rows while dbGate is
@@ -66,27 +65,14 @@ type Server struct {
 // Option is a functional option for Server configuration.
 type Option func(*Server)
 
-// WithDB eagerly attaches a ready video-preview database store. It ONLY flips
-// the readiness gate — it does NOT start the background worker. It exists for
-// callers that already hold an open pool (chiefly tests). Production mains (BOTH
-// CE and Advanced) do NOT use WithDB: they call StartVideoDBAsync, which opens
-// the DB in the background (no boot-time hard dependency on it) and, once ready,
-// calls EnableVideoDB to flip the gate AND start the worker.
-//
-// When neither WithDB nor EnableVideoDB has fired, the video-preview DB layer is
-// disabled: video preview/thumbnail return 424 (Failed Dependency) and the
-// worker does not process rows. Image/PDF/document/health are unaffected.
-func WithDB(dbStore *db.Store) Option {
-	return func(s *Server) {
-		s.dbGate.Set(dbStore)
-	}
-}
-
 // New constructs a Server. cfg and store must not be nil. c may be nil (cache
 // disabled). Both editions (CE and Advanced) call New from their own main and
 // then call StartVideoDBAsync(ctx, cfg) to enable video previews asynchronously
-// (background pool-open + Migrate, then gate + worker start). WithDB is an
-// eager/test-only convenience and is not used by the production mains.
+// (background pool-open + Migrate, then gate + worker start).
+//
+// When EnableVideoDB has not yet fired, the video-preview DB layer is disabled:
+// video preview/thumbnail return 424 (Failed Dependency) and the worker does not
+// process rows. Image/PDF/document/health are unaffected.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
 	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newVideoGate()}
 	for _, opt := range opts {
@@ -222,10 +208,11 @@ func (s *Server) Handler() http.Handler {
 // All resource operations (image, health, pdf, document, video-generate) are
 // registered under huma (code-first OpenAPI).
 //
-// sem is the shared render-concurrency semaphore (image/PDF/document). The
-// dedicated video-generate semaphore is built here from cfg.VideoConcurrency
-// (APPLICATION key video-concurrency, default runtime.NumCPU()) so a flood of
-// generate calls can never starve image previews, and vice-versa.
+// sem is the shared render semaphore (image/PDF/document), sized by the
+// render.max-concurrent-operations key. The dedicated video semaphore is built
+// here from cfg.VideoConcurrency (APPLICATION key
+// video.max-concurrent-extractions, default runtime.NumCPU()) so a flood of
+// video jobs can never starve image previews, and vice-versa.
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
 

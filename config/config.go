@@ -56,19 +56,25 @@ type Config struct {
 	DocumentConversionServiceEndpoint string
 	DocumentConversionConvertAPI      string
 
-	// RenderConcurrency is the maximum number of concurrent image-render operations.
-	// Application-layer key "render-concurrency" (Consul KV carbonio-preview/render-concurrency
-	// / env APPLICATION_CONFIG_RENDER_CONCURRENCY). Defaults to runtime.NumCPU() when absent.
+	// RenderConcurrency is the maximum number of concurrent render operations
+	// (image, PDF, document; does not apply to video).
+	// Application-layer key "render.max-concurrent-operations" (Consul KV
+	// carbonio-preview/render/max-concurrent-operations / env
+	// APPLICATION_CONFIG_RENDER_MAX_CONCURRENT_OPERATIONS). Defaults to
+	// runtime.NumCPU() when absent.
 	RenderConcurrency int
 
 	// PDFWorkers is the size of the PDFium subprocess worker pool.
-	// Application-layer key "pdf-workers" (Consul KV carbonio-preview/pdf-workers
-	// / env APPLICATION_CONFIG_PDF_WORKERS). Defaults to runtime.NumCPU() when absent.
+	// Application-layer key "render.pdf-subprocess-pool-size" (Consul KV
+	// carbonio-preview/render/pdf-subprocess-pool-size / env
+	// APPLICATION_CONFIG_RENDER_PDF_SUBPROCESS_POOL_SIZE). Defaults to
+	// runtime.NumCPU() when absent.
 	PDFWorkers int
 
 	// VideoConcurrency is the maximum number of concurrent video first-frame
-	// generate operations. Application-layer key "video-concurrency" (Consul KV
-	// carbonio-preview/video-concurrency / env APPLICATION_CONFIG_VIDEO_CONCURRENCY).
+	// extraction jobs. Application-layer key "video.max-concurrent-extractions"
+	// (Consul KV carbonio-preview/video/max-concurrent-extractions / env
+	// APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS).
 	// Defaults to runtime.NumCPU() when absent.
 	VideoConcurrency int
 
@@ -78,9 +84,10 @@ type Config struct {
 	VIPSConcurrency int
 
 	// CacheMaxBytes is the byte budget of the in-process rendered-output cache,
-	// derived from the "cache-max-mb" application key (MiB → bytes). 0 disables
-	// the cache. Application key ⇒ env override APPLICATION_CONFIG_CACHE_MAX_MB
-	// is accepted automatically by the resolver chain.
+	// derived from the "render.cache-max-mb" application key (MiB → bytes). 0
+	// disables the cache. Application key ⇒ env override
+	// APPLICATION_CONFIG_RENDER_CACHE_MAX_MB is accepted automatically by the
+	// resolver chain.
 	CacheMaxBytes int64
 
 	// Derived addresses (computed once in Load)
@@ -110,10 +117,11 @@ type Config struct {
 	DBConnMaxLifetime int
 
 	// ── Video worker ─────────────────────────────────────────────────────────
-	// Application-layer keys video-sweep-interval-seconds / video-stale-ttl-seconds /
-	// video-max-attempts. Zero values are resolved to defaults in the worker itself
-	// (matching WSC Java constants). Total ffmpeg concurrency is governed by
-	// VideoConcurrency (video-concurrency key) via the shared VideoSem.
+	// Application-layer keys video.poll-interval-seconds /
+	// video.stuck-generation-timeout-seconds / video.max-attempts. Zero values are
+	// resolved to defaults in the worker itself (matching WSC Java constants).
+	// Total ffmpeg concurrency is governed by VideoConcurrency
+	// (video.max-concurrent-extractions key) via the shared VideoSem.
 	VideoSweepIntervalSeconds int
 	VideoStaleTTLSeconds      int
 	VideoMaxAttempts          int
@@ -209,30 +217,30 @@ func Load() error {
 	// ── Application layer ──────────────────────────────────────────────────────
 	var parseErr error
 
-	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "enable-document-preview", parseErr)
-	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "enable-document-thumbnail", parseErr)
-	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "timeout-in-seconds", parseErr)
-	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "docs-timeout-in-seconds", parseErr)
+	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "document.enable-preview", parseErr)
+	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "document.enable-thumbnail", parseErr)
+	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "storage.fetch-timeout-seconds", parseErr)
+	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "document.conversion-timeout-seconds", parseErr)
 
 	var cacheMaxMB int
-	cacheMaxMB, parseErr = appNonNegativeInt(r, "cache-max-mb", parseErr)
+	cacheMaxMB, parseErr = appNonNegativeInt(r, "render.cache-max-mb", parseErr)
 
 	// Concurrency knobs (APPLICATION layer). Absent → 0 here → runtime.NumCPU()
 	// fallback below. A present-but-invalid value (non-integer or < 1) fails fast
 	// via appPositiveInt.
-	c.RenderConcurrency, parseErr = appPositiveInt(r, "render-concurrency", parseErr)
-	c.PDFWorkers, parseErr = appPositiveInt(r, "pdf-workers", parseErr)
-	c.VideoConcurrency, parseErr = appPositiveInt(r, "video-concurrency", parseErr)
+	c.RenderConcurrency, parseErr = appPositiveInt(r, "render.max-concurrent-operations", parseErr)
+	c.PDFWorkers, parseErr = appPositiveInt(r, "render.pdf-subprocess-pool-size", parseErr)
+	c.VideoConcurrency, parseErr = appPositiveInt(r, "video.max-concurrent-extractions", parseErr)
 
 	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetime int
-	dbPoolMaxConns, parseErr = appPositiveInt(r, "db-pool-max-conns", parseErr)
-	dbPoolMinConns, parseErr = appPositiveInt(r, "db-pool-min-conns", parseErr)
-	dbConnMaxLifetime, parseErr = appPositiveInt(r, "db-conn-max-lifetime-seconds", parseErr)
+	dbPoolMaxConns, parseErr = appPositiveInt(r, "database.pool.max-connections", parseErr)
+	dbPoolMinConns, parseErr = appPositiveInt(r, "database.pool.min-connections", parseErr)
+	dbConnMaxLifetime, parseErr = appPositiveInt(r, "database.pool.connection-max-lifetime-seconds", parseErr)
 
 	var videoSweepInterval, videoStaleTTL, videoMaxAttempts int
-	videoSweepInterval, parseErr = appPositiveInt(r, "video-sweep-interval-seconds", parseErr)
-	videoStaleTTL, parseErr = appPositiveInt(r, "video-stale-ttl-seconds", parseErr)
-	videoMaxAttempts, parseErr = appPositiveInt(r, "video-max-attempts", parseErr)
+	videoSweepInterval, parseErr = appPositiveInt(r, "video.poll-interval-seconds", parseErr)
+	videoStaleTTL, parseErr = appPositiveInt(r, "video.stuck-generation-timeout-seconds", parseErr)
+	videoMaxAttempts, parseErr = appPositiveInt(r, "video.max-attempts", parseErr)
 
 	if parseErr != nil {
 		return parseErr

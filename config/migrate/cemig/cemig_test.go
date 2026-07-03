@@ -221,10 +221,10 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 	mustContain(t, propsContent, "# Migrated by carbonio-preview setup")
 
 	// Consul KV: the four application entries must have been PUT.
-	mustKvPut(t, kvPuts, "carbonio-preview/enable-document-preview", "true")
-	mustKvPut(t, kvPuts, "carbonio-preview/enable-document-thumbnail", "false")
-	mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "30")
-	mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "15")
+	mustKvPut(t, kvPuts, "carbonio-preview/document/enable-preview", "true")
+	mustKvPut(t, kvPuts, "carbonio-preview/document/enable-thumbnail", "false")
+	mustKvPut(t, kvPuts, "carbonio-preview/storage/fetch-timeout-seconds", "30")
+	mustKvPut(t, kvPuts, "carbonio-preview/document/conversion-timeout-seconds", "15")
 
 	// The INI file must have been renamed since all CE keys migrated.
 	if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
@@ -449,8 +449,8 @@ func TestV1_TimeoutKeysMigrateToConsulKV(t *testing.T) {
 
 	kvMu.Lock()
 	defer kvMu.Unlock()
-	mustKvPut(t, kvPuts, "carbonio-preview/timeout-in-seconds", "60")
-	mustKvPut(t, kvPuts, "carbonio-preview/docs-timeout-in-seconds", "45")
+	mustKvPut(t, kvPuts, "carbonio-preview/storage/fetch-timeout-seconds", "60")
+	mustKvPut(t, kvPuts, "carbonio-preview/document/conversion-timeout-seconds", "45")
 }
 
 // ── V1 log.level → systemd drop-in migration tests ────────────────────────────

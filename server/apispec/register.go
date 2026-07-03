@@ -39,8 +39,6 @@ type Handlers struct {
 	PostDocumentPreview   func(context.Context, *DocPostPreviewInput) (*BinOut, error)
 	PostDocumentThumbnail func(context.Context, *DocPostThumbnailInput) (*BinOut, error)
 
-	GenerateVideoPreview func(context.Context, *GenerateVideoInput) (*GenerateVideoOutput, error)
-
 	GetVideoPreview    func(context.Context, *VideoGetPreviewInput) (*BinOut, error)
 	GetVideoThumbnail  func(context.Context, *VideoGetThumbnailInput) (*BinOut, error)
 	DeleteVideoPreview func(context.Context, *VideoDeleteInput) (*struct{}, error)
@@ -56,10 +54,9 @@ func Register(api huma.API, h Handlers, semMW, videoSemMW func(huma.Context, fun
 	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail, semMW)
 	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail, semMW)
 	RegisterVideoOps(api, h.GetVideoPreview, h.GetVideoThumbnail, h.DeleteVideoPreview, h.CopyVideoPreview)
-	// NOTE: RegisterGenerateOps is intentionally NOT called here.
-	// The public POST /preview/video/generate/... endpoint has been removed (Q5).
-	// Generation runs only via the internal worker. The videoSemMW arg is kept in
-	// the signature for backward-compatibility with callers; it is unused.
+	// NOTE: the public POST /preview/video/generate/... endpoint has been removed
+	// (spec Q5). Generation runs only via the internal worker. The videoSemMW arg
+	// is kept in the signature for backward-compatibility with callers; it is unused.
 	_ = videoSemMW
 }
 
@@ -88,8 +85,6 @@ func RegisterStubs(api huma.API) {
 		GetDocumentThumbnail:  func(_ context.Context, _ *DocGetThumbnailInput) (*BinOut, error) { return nil, nil },
 		PostDocumentPreview:   func(_ context.Context, _ *DocPostPreviewInput) (*BinOut, error) { return nil, nil },
 		PostDocumentThumbnail: func(_ context.Context, _ *DocPostThumbnailInput) (*BinOut, error) { return nil, nil },
-
-		GenerateVideoPreview: func(_ context.Context, _ *GenerateVideoInput) (*GenerateVideoOutput, error) { return nil, nil },
 
 		GetVideoPreview:    func(_ context.Context, _ *VideoGetPreviewInput) (*BinOut, error) { return nil, nil },
 		GetVideoThumbnail:  func(_ context.Context, _ *VideoGetThumbnailInput) (*BinOut, error) { return nil, nil },
@@ -336,26 +331,6 @@ func RegisterDocumentOps(
 		Responses:   map[string]*huma.Response{"200": ImageBinaryResponse},
 		Middlewares: huma.Middlewares{semMW},
 	}, postThumbnail)
-}
-
-// ---------------------------------------------------------------------------
-// Video generate operation (REMOVED — kept for internal generate path only)
-// ---------------------------------------------------------------------------
-
-// RegisterGenerateOps is retained for package-API stability but is NO LONGER
-// called from Register or RegisterStubs. The public POST /preview/video/generate/
-// endpoint has been removed (spec Q5): generation runs only via the internal
-// worker / resolve() fast-path. The videoSemMW arg is kept in the signature
-// so any Advanced-edition callers that still reference this symbol compile.
-func RegisterGenerateOps(
-	api huma.API,
-	generatePreview func(context.Context, *GenerateVideoInput) (*GenerateVideoOutput, error),
-	videoSemMW func(huma.Context, func(huma.Context)),
-) {
-	// Intentionally empty: the public generate endpoint is removed.
-	// The internal generateFirstFrameJPEG function is still used by the worker.
-	_, _ = api, generatePreview
-	_ = videoSemMW
 }
 
 // ---------------------------------------------------------------------------

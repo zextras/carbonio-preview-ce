@@ -117,8 +117,8 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-// TestPDFWorkersFallbackToCPUCount verifies that when pdf-workers is absent from
-// all sources, PDFWorkers is set to runtime.NumCPU().
+// TestPDFWorkersFallbackToCPUCount verifies that when render.pdf-subprocess-pool-size
+// is absent from all sources, PDFWorkers is set to runtime.NumCPU().
 func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
@@ -132,9 +132,9 @@ func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 // TestConfig_ConcurrencyFromApplicationEnv verifies that the three concurrency
 // knobs resolve from the APPLICATION_CONFIG_* env layer (the migrated chain).
 func TestConfig_ConcurrencyFromApplicationEnv(t *testing.T) {
-	t.Setenv("APPLICATION_CONFIG_RENDER_CONCURRENCY", "4")
-	t.Setenv("APPLICATION_CONFIG_PDF_WORKERS", "2")
-	t.Setenv("APPLICATION_CONFIG_VIDEO_CONCURRENCY", "3")
+	t.Setenv("APPLICATION_CONFIG_RENDER_MAX_CONCURRENT_OPERATIONS", "4")
+	t.Setenv("APPLICATION_CONFIG_RENDER_PDF_SUBPROCESS_POOL_SIZE", "2")
+	t.Setenv("APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS", "3")
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -154,9 +154,9 @@ func TestConfig_ConcurrencyFromApplicationEnv(t *testing.T) {
 // from Consul KV (carbonio-preview/<key>).
 func TestConfig_ConcurrencyFromKV(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
-		"render-concurrency": "6",
-		"pdf-workers":        "7",
-		"video-concurrency":  "8",
+		"render/max-concurrent-operations": "6",
+		"render/pdf-subprocess-pool-size":  "7",
+		"video/max-concurrent-extractions": "8",
 	})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -282,11 +282,11 @@ func TestEnvOverridesDocsEditorHost(t *testing.T) {
 	}
 }
 
-// TestStoragesTimeoutKVOverride verifies that the "timeout-in-seconds" Consul KV
-// key overrides the default (30) and is reflected in ServiceTimeoutInSeconds.
+// TestStoragesTimeoutKVOverride verifies that the "storage/fetch-timeout-seconds"
+// Consul KV key overrides the default (30) and is reflected in ServiceTimeoutInSeconds.
 func TestStoragesTimeoutKVOverride(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
-		"timeout-in-seconds": "60",
+		"storage/fetch-timeout-seconds": "60",
 	})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -296,11 +296,11 @@ func TestStoragesTimeoutKVOverride(t *testing.T) {
 	}
 }
 
-// TestDocsTimeoutKVOverride verifies that the "docs-timeout-in-seconds" Consul KV
-// key overrides the default (15) and is reflected in ServiceDocsTimeout.
+// TestDocsTimeoutKVOverride verifies that the "document/conversion-timeout-seconds"
+// Consul KV key overrides the default (15) and is reflected in ServiceDocsTimeout.
 func TestDocsTimeoutKVOverride(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
-		"docs-timeout-in-seconds": "45",
+		"document/conversion-timeout-seconds": "45",
 	})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -363,8 +363,8 @@ func TestPropertiesFileOverride(t *testing.T) {
 // application flags are reflected in the populated Config.
 func TestConsulKVOverride(t *testing.T) {
 	srv2 := buildKVServer(t, map[string]string{
-		"enable-document-preview":   "false",
-		"enable-document-thumbnail": "true",
+		"document/enable-preview":   "false",
+		"document/enable-thumbnail": "true",
 	})
 	if err := loadWithConsul(t, srv2); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -419,8 +419,8 @@ func TestAreDocsEnabled(t *testing.T) {
 
 	// Both disabled via KV
 	srv2 := buildKVServer(t, map[string]string{
-		"enable-document-preview":   "false",
-		"enable-document-thumbnail": "false",
+		"document/enable-preview":   "false",
+		"document/enable-thumbnail": "false",
 	})
 	if err := loadWithConsul(t, srv2); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -431,8 +431,8 @@ func TestAreDocsEnabled(t *testing.T) {
 
 	// Only thumbnail enabled
 	srv3 := buildKVServer(t, map[string]string{
-		"enable-document-preview":   "false",
-		"enable-document-thumbnail": "true",
+		"document/enable-preview":   "false",
+		"document/enable-thumbnail": "true",
 	})
 	if err := loadWithConsul(t, srv3); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -444,19 +444,20 @@ func TestAreDocsEnabled(t *testing.T) {
 
 // ─── parse-failure → error ────────────────────────────────────────────────────
 
-// TestParseFailureKVTimeout verifies that a non-integer "timeout-in-seconds"
-// Consul KV value causes Load() to return an error naming the key.
+// TestParseFailureKVTimeout verifies that a non-integer
+// "storage/fetch-timeout-seconds" Consul KV value causes Load() to return an
+// error naming the key.
 func TestParseFailureKVTimeout(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
-		"timeout-in-seconds": "not-a-number",
+		"storage/fetch-timeout-seconds": "not-a-number",
 	})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad timeout-in-seconds value, got nil")
+		t.Fatal("expected error for bad storage.fetch-timeout-seconds value, got nil")
 	}
-	if !strings.Contains(err.Error(), "timeout-in-seconds") {
-		t.Errorf("error %q should mention key %q", err.Error(), "timeout-in-seconds")
+	if !strings.Contains(err.Error(), "storage.fetch-timeout-seconds") {
+		t.Errorf("error %q should mention key %q", err.Error(), "storage.fetch-timeout-seconds")
 	}
 }
 
@@ -464,94 +465,96 @@ func TestParseFailureKVTimeout(t *testing.T) {
 // error naming the key.
 func TestParseFailureBoolKey(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
-		"enable-document-preview": "yes",
+		"document/enable-preview": "yes",
 	})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
 		t.Fatal("expected error for bad bool value, got nil")
 	}
-	const wantKey = "enable-document-preview"
+	const wantKey = "document.enable-preview"
 	if !strings.Contains(err.Error(), wantKey) {
 		t.Errorf("error %q should mention key %q", err.Error(), wantKey)
 	}
 }
 
-// TestParseFailurePDFWorkers verifies that a bad pdf-workers KV value is an error
-// naming the key.
+// TestParseFailurePDFWorkers verifies that a bad render/pdf-subprocess-pool-size
+// KV value is an error naming the key.
 func TestParseFailurePDFWorkers(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"pdf-workers": "banana"})
+	srv := buildKVServer(t, map[string]string{"render/pdf-subprocess-pool-size": "banana"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for bad pdf-workers value, got nil")
+		t.Fatal("expected error for bad render.pdf-subprocess-pool-size value, got nil")
 	}
-	if !strings.Contains(err.Error(), "pdf-workers") {
-		t.Errorf("error %q should mention key %q", err.Error(), "pdf-workers")
+	if !strings.Contains(err.Error(), "render.pdf-subprocess-pool-size") {
+		t.Errorf("error %q should mention key %q", err.Error(), "render.pdf-subprocess-pool-size")
 	}
 }
 
 // TestParseFailureZeroKVTimeout verifies that setting timeout KV keys to "0"
 // (not a positive integer) causes Load() to return an error naming the key.
 func TestParseFailureZeroKVTimeout(t *testing.T) {
-	for _, tc := range []struct{ kvKey, name string }{
-		{"timeout-in-seconds", "storages timeout"},
-		{"docs-timeout-in-seconds", "docs timeout"},
+	for _, tc := range []struct{ kvPath, wantKey, name string }{
+		{"storage/fetch-timeout-seconds", "storage.fetch-timeout-seconds", "storages timeout"},
+		{"document/conversion-timeout-seconds", "document.conversion-timeout-seconds", "docs timeout"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			srv := buildKVServer(t, map[string]string{
-				tc.kvKey: "0",
+				tc.kvPath: "0",
 			})
 			pointConsulAt(t, srv)
 			err := Load()
 			if err == nil {
-				t.Fatalf("expected error for %s=0, got nil", tc.kvKey)
+				t.Fatalf("expected error for %s=0, got nil", tc.kvPath)
 			}
-			if !strings.Contains(err.Error(), tc.kvKey) {
-				t.Errorf("error %q should mention key %q", err.Error(), tc.kvKey)
+			if !strings.Contains(err.Error(), tc.wantKey) {
+				t.Errorf("error %q should mention key %q", err.Error(), tc.wantKey)
 			}
 		})
 	}
 }
 
-// TestParseFailureNegativeRenderConcurrency verifies that render-concurrency=-1 is rejected.
+// TestParseFailureNegativeRenderConcurrency verifies that
+// render.max-concurrent-operations=-1 is rejected.
 func TestParseFailureNegativeRenderConcurrency(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"render-concurrency": "-1"})
+	srv := buildKVServer(t, map[string]string{"render/max-concurrent-operations": "-1"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for render-concurrency=-1, got nil")
+		t.Fatal("expected error for render.max-concurrent-operations=-1, got nil")
 	}
-	if !strings.Contains(err.Error(), "render-concurrency") {
-		t.Errorf("error %q should mention key %q", err.Error(), "render-concurrency")
+	if !strings.Contains(err.Error(), "render.max-concurrent-operations") {
+		t.Errorf("error %q should mention key %q", err.Error(), "render.max-concurrent-operations")
 	}
 }
 
-// TestParseFailureZeroPDFWorkers verifies that pdf-workers=0 is rejected
-// (appPositiveInt requires >= 1).
+// TestParseFailureZeroPDFWorkers verifies that render.pdf-subprocess-pool-size=0
+// is rejected (appPositiveInt requires >= 1).
 func TestParseFailureZeroPDFWorkers(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"pdf-workers": "0"})
+	srv := buildKVServer(t, map[string]string{"render/pdf-subprocess-pool-size": "0"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for pdf-workers=0, got nil")
+		t.Fatal("expected error for render.pdf-subprocess-pool-size=0, got nil")
 	}
-	if !strings.Contains(err.Error(), "pdf-workers") {
-		t.Errorf("error %q should mention key %q", err.Error(), "pdf-workers")
+	if !strings.Contains(err.Error(), "render.pdf-subprocess-pool-size") {
+		t.Errorf("error %q should mention key %q", err.Error(), "render.pdf-subprocess-pool-size")
 	}
 }
 
-// TestParseFailureZeroVideoConcurrency verifies that video-concurrency=0 is rejected.
+// TestParseFailureZeroVideoConcurrency verifies that
+// video.max-concurrent-extractions=0 is rejected.
 func TestParseFailureZeroVideoConcurrency(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"video-concurrency": "0"})
+	srv := buildKVServer(t, map[string]string{"video/max-concurrent-extractions": "0"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for video-concurrency=0, got nil")
+		t.Fatal("expected error for video.max-concurrent-extractions=0, got nil")
 	}
-	if !strings.Contains(err.Error(), "video-concurrency") {
-		t.Errorf("error %q should mention key %q", err.Error(), "video-concurrency")
+	if !strings.Contains(err.Error(), "video.max-concurrent-extractions") {
+		t.Errorf("error %q should mention key %q", err.Error(), "video.max-concurrent-extractions")
 	}
 }
 
@@ -697,7 +700,7 @@ func TestCacheMaxMBDefault(t *testing.T) {
 }
 
 func TestCacheMaxMBKVOverride(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"cache-max-mb": "512"})
+	srv := buildKVServer(t, map[string]string{"render/cache-max-mb": "512"})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
@@ -708,7 +711,7 @@ func TestCacheMaxMBKVOverride(t *testing.T) {
 }
 
 func TestCacheMaxMBZeroDisables(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"cache-max-mb": "0"})
+	srv := buildKVServer(t, map[string]string{"render/cache-max-mb": "0"})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
 	}

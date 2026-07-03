@@ -72,14 +72,14 @@ func V1MigrateFromPythonIni() migrate.Migration {
 
 		// ── Application entries (INI section.key → Consul KV raw path) ───────────
 		ApplicationEntries: map[string]migrate.EntryFunc{
-			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/enable-document-preview"),
-			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/enable-document-thumbnail"),
+			"carbonio.preview.enable_document_preview":   rename("carbonio-preview/document/enable-preview"),
+			"carbonio.preview.enable_document_thumbnail": rename("carbonio-preview/document/enable-thumbnail"),
 			// Operator timeout overrides are carried into Consul KV so that an
 			// apt upgrade from the old Python preview preserves customised values.
 			// If the operator's value happens to equal the Go default it is still
 			// written (harmless: the registry default wins on any equal value).
-			"carbonio.preview.timeout_in_seconds": rename("carbonio-preview/timeout-in-seconds"),
-			"carbonio.preview.docs-timeout":       rename("carbonio-preview/docs-timeout-in-seconds"),
+			"carbonio.preview.timeout_in_seconds": rename("carbonio-preview/storage/fetch-timeout-seconds"),
+			"carbonio.preview.docs-timeout":       rename("carbonio-preview/document/conversion-timeout-seconds"),
 		},
 
 		// ── Drop-only entries (value discarded, no replacement) ──────────────────

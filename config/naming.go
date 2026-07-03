@@ -37,8 +37,8 @@ const (
 //	EnvName("networking-config.", "carbonio.service.host")
 //	  → "NETWORKING_CONFIG_CARBONIO_SERVICE_HOST"
 //
-//	EnvName("application-config.", "timeout-in-seconds")
-//	  → "APPLICATION_CONFIG_TIMEOUT_IN_SECONDS"
+//	EnvName("application-config.", "storage.fetch-timeout-seconds")
+//	  → "APPLICATION_CONFIG_STORAGE_FETCH_TIMEOUT_SECONDS"
 func EnvName(prefix, key string) string {
 	combined := prefix + key
 	combined = strings.ToUpper(combined)

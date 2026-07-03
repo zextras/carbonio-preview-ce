@@ -25,10 +25,10 @@ var (
 // A seekable temp file (not a pipe) is mandatory: moov-at-end MP4 requires
 // backward seeks ffmpeg cannot do over a pipe.
 //
-// Concurrency is NOT bounded here. The sole caller is the generate handler,
-// which bounds concurrency at exactly one point — the dedicated video-semaphore
-// middleware (capacity = video-concurrency, default runtime.NumCPU()). Bounding
-// again inside this function would double-bound the same work.
+// Concurrency is NOT bounded here. The caller is the background video worker,
+// which bounds concurrency at exactly one point — the dedicated video semaphore
+// (capacity = video.max-concurrent-extractions, default runtime.NumCPU()).
+// Bounding again inside this function would double-bound the same work.
 //
 // Single-clock design: ctx is the SOLE time budget for the entire operation.
 // It is the per-request context.WithTimeout set by the generate handler

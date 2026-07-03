@@ -23,9 +23,9 @@ package render
 
 import (
 	"bytes"
-	"encoding/binary"
 	"image"
 	"image/color"
+	_ "image/jpeg" // register the JPEG decoder for image.Decode (formerly transitive via single_threaded)
 	"image/png"
 	"testing"
 )
@@ -65,24 +65,6 @@ func isJPEG(data []byte) bool {
 // isPNG returns true when data starts with the PNG signature.
 func isPNG(data []byte) bool {
 	return len(data) >= 8 && bytes.Equal(data[:8], pngMagic)
-}
-
-// hasAlphaChannel returns true if the PNG contains an alpha channel.
-// It checks the colour type byte in the IHDR chunk.
-func hasAlphaChannel(data []byte) bool {
-	// PNG structure: 8-byte sig + 4-byte len + 4-byte "IHDR" + 13 bytes data
-	// colour type is at offset 8+4+4+8 = 25 (0-indexed from start of file)
-	if len(data) < 26 {
-		return false
-	}
-	// Verify IHDR chunk tag.
-	if string(data[12:16]) != "IHDR" {
-		return false
-	}
-	colourType := data[25]
-	// PNG colour type 4 = greyscale+alpha, 6 = RGBA.
-	_ = binary.BigEndian.Uint32 // keep import; used implicitly via bytes pkg
-	return colourType == 4 || colourType == 6
 }
 
 // TestMain initialises libvips once for the whole test binary.

@@ -172,7 +172,7 @@ func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	if puts == 0 {
-		t.Error("expected CE's V1 migration to PUT enable-document-preview to Consul KV; got 0 PUTs — migration set resolution is broken")
+		t.Error("expected CE's V1 migration to PUT document/enable-preview to Consul KV; got 0 PUTs — migration set resolution is broken")
 	}
 }
 
