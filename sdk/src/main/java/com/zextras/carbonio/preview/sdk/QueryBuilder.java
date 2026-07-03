@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
+import java.util.Locale;
+
 /**
  * Builder for {@link Query}.
  *
@@ -26,15 +28,23 @@ public final class QueryBuilder {
   public QueryBuilder fileId(String fileId) { this.fileId = fileId; return this; }
   public QueryBuilder version(int version) { this.version = version; return this; }
   public QueryBuilder area(String area) { this.area = area; return this; }
-  public QueryBuilder outputFormat(String outputFormat) { this.outputFormat = outputFormat; return this; }
-  public QueryBuilder quality(String quality) { this.quality = quality; return this; }
-  public QueryBuilder shape(String shape) { this.shape = shape; return this; }
-  public QueryBuilder serviceType(String serviceType) { this.serviceType = serviceType; return this; }
+  public QueryBuilder outputFormat(String outputFormat) { this.outputFormat = lower(outputFormat); return this; }
+  public QueryBuilder quality(String quality) { this.quality = lower(quality); return this; }
+  public QueryBuilder shape(String shape) { this.shape = lower(shape); return this; }
+  public QueryBuilder serviceType(String serviceType) { this.serviceType = lower(serviceType); return this; }
   public QueryBuilder ownerId(String ownerId) { this.ownerId = ownerId; return this; }
   public QueryBuilder crop(boolean crop) { this.crop = crop; return this; }
   public QueryBuilder firstPage(int firstPage) { this.firstPage = firstPage; return this; }
   public QueryBuilder lastPage(int lastPage) { this.lastPage = lastPage; return this; }
   public QueryBuilder langTag(String langTag) { this.langTag = langTag; return this; }
+
+  // Enum-valued params (quality, shape, output_format, service_type) are lowercased
+  // here so callers may pass any case (e.g. a Java enum's uppercase name() such as
+  // "HIGH"/"JPEG"/"RECTANGULAR"). The preview service validates these against a
+  // strict lowercase enum and 422s otherwise; the legacy SDK normalized the same way.
+  private static String lower(String v) {
+    return v == null ? null : v.toLowerCase(Locale.ROOT);
+  }
 
   public Query build() {
     return new Query(this);
