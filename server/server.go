@@ -222,10 +222,11 @@ func (s *Server) Handler() http.Handler {
 // All resource operations (image, health, pdf, document, video-generate) are
 // registered under huma (code-first OpenAPI).
 //
-// sem is the shared render-concurrency semaphore (image/PDF/document). The
-// dedicated video-generate semaphore is built here from cfg.VideoConcurrency
-// (APPLICATION key video-concurrency, default runtime.NumCPU()) so a flood of
-// generate calls can never starve image previews, and vice-versa.
+// sem is the shared render semaphore (image/PDF/document), sized by the
+// render.max-concurrent-operations key. The dedicated video semaphore is built
+// here from cfg.VideoConcurrency (APPLICATION key
+// video.max-concurrent-extractions, default runtime.NumCPU()) so a flood of
+// video jobs can never starve image previews, and vice-versa.
 func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
 

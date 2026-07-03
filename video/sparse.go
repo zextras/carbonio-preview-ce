@@ -17,7 +17,7 @@ import (
 //
 // The head is written straight to disk (free on RAM). The tail must be buffered
 // in RAM until EOF (the stream length is unknown up front), so tailWindow costs
-// roughly tailWindow x video-concurrency of RAM. Hence head >> tail.
+// roughly tailWindow x video.max-concurrent-extractions of RAM. Hence head >> tail.
 var (
 	headWindow = 64 << 20 // 64 MiB
 	tailWindow = 32 << 20 // 32 MiB

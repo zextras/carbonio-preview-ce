@@ -209,15 +209,15 @@ workers = 2
 		iniPath := writeFile(t, dir, "config.ini", ini)
 		propsPath := filepath.Join(dir, "config.properties")
 
-		// KV server returns 500 for "carbonio-preview/timeout-in-seconds" but
-		// 200 for everything else.
+		// KV server returns 500 for "carbonio-preview/storage/fetch-timeout-seconds"
+		// but 200 for everything else.
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path[len("/v1/kv/"):]
 			switch r.Method {
 			case http.MethodGet:
 				w.WriteHeader(http.StatusNotFound)
 			case http.MethodPut:
-				if path == "carbonio-preview/timeout-in-seconds" {
+				if path == "carbonio-preview/storage/fetch-timeout-seconds" {
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
@@ -236,7 +236,7 @@ workers = 2
 			Name:    "V1__ErrorIsolation",
 			ApplicationEntries: map[string]EntryFunc{
 				"carbonio.preview.timeout_in_seconds": func(_, v string, dest ConfigStore) error {
-					return dest.Set("carbonio-preview/timeout-in-seconds", v)
+					return dest.Set("carbonio-preview/storage/fetch-timeout-seconds", v)
 				},
 				"carbonio.preview.workers": func(_, v string, dest ConfigStore) error {
 					return dest.Set("carbonio-preview/workers", v)
@@ -420,7 +420,7 @@ func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
 			Name:    "V1__AppOnly",
 			ApplicationEntries: map[string]EntryFunc{
 				"carbonio.preview.timeout_in_seconds": func(_, v string, dest ConfigStore) error {
-					return dest.Set("carbonio-preview/timeout-in-seconds", v)
+					return dest.Set("carbonio-preview/storage/fetch-timeout-seconds", v)
 				},
 			},
 		})

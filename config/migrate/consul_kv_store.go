@@ -12,7 +12,7 @@ import (
 )
 
 // consulKvStore is a ConfigStore backed by the Consul KV HTTP API.
-// KV paths are raw slash paths, e.g. "carbonio-preview/timeout-in-seconds".
+// KV paths are raw slash paths, e.g. "carbonio-preview/storage/fetch-timeout-seconds".
 //
 // All requests carry the X-Consul-Token header.
 // Non-200 responses are returned as errors.

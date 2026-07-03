@@ -84,8 +84,8 @@ func PDFInitSingleThreadedForTests() {
 // Concurrency model:
 //   - semaphore (N_http / workers) gates handler-level processing; pass nil
 //     to skip gating (not recommended in production).
-//   - The PDFium subprocess pool (N_pdf / pdf-workers) is the second gate:
-//     GetInstance blocks until a subprocess worker is free or the timeout
+//   - The PDFium subprocess pool (N_pdf / render.pdf-subprocess-pool-size) is
+//     the second gate: GetInstance blocks until a subprocess worker is free or the timeout
 //     fires. The http gate sits in front so the pool is never flooded.
 //
 // outputFormat: "jpeg" or "png".
@@ -179,8 +179,8 @@ func PDFRasterize(
 // Concurrency model:
 //   - semaphore (N_http / workers) gates handler-level processing; pass nil
 //     to skip gating (not recommended in production).
-//   - The PDFium subprocess pool (N_pdf / pdf-workers) is the second gate.
-//     The http gate sits in front so the pool is never flooded.
+//   - The PDFium subprocess pool (N_pdf / render.pdf-subprocess-pool-size) is
+//     the second gate. The http gate sits in front so the pool is never flooded.
 //
 // Invalid PDFs: returns (nil, error). Callers should map this to HTTP 400.
 // Pool unavailability: returns (nil, ErrRenderUnavailable). Callers should

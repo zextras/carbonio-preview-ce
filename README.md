@@ -81,25 +81,33 @@ restarts.
 
 ## Runtime Tuning
 
-The following per-instance environment variables control performance characteristics.
-They are set via systemd drop-in (same mechanism as `PREVIEW_LOG_LEVEL`) and are **not**
-part of the Carbonio networking/application config chain.
+Performance-related knobs are **application-layer configuration keys**: they are
+resolved through the Carbonio config chain and can be set fleet-wide via **Consul KV**
+or overridden per-instance via the matching `APPLICATION_CONFIG_*` environment variable
+(the env override always wins over the KV value). See [`docs/configs.md`](docs/configs.md)
+for the authoritative list of keys and defaults.
+
+| Consul KV key | Env override | Default | Description |
+|---------------|--------------|---------|-------------|
+| `carbonio-preview/render/max-concurrent-operations` | `APPLICATION_CONFIG_RENDER_MAX_CONCURRENT_OPERATIONS` | *CPU count* | Max concurrent render operations (image, PDF, document); does not apply to video |
+| `carbonio-preview/render/pdf-subprocess-pool-size` | `APPLICATION_CONFIG_RENDER_PDF_SUBPROCESS_POOL_SIZE` | *CPU count* | Number of PDFium helper OS subprocesses |
+| `carbonio-preview/render/cache-max-mb` | `APPLICATION_CONFIG_RENDER_CACHE_MAX_MB` | `256` | Size budget (MiB) of the shared rendered-output cache; `0` disables it |
+| `carbonio-preview/video/max-concurrent-extractions` | `APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS` | *CPU count* | Max concurrent video first-frame extraction jobs |
+| `carbonio-preview/storage/fetch-timeout-seconds` | `APPLICATION_CONFIG_STORAGE_FETCH_TIMEOUT_SECONDS` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
+| `carbonio-preview/document/conversion-timeout-seconds` | `APPLICATION_CONFIG_DOCUMENT_CONVERSION_TIMEOUT_SECONDS` | `15` | Timeout (s) for carbonio-docs-editor (Collabora) conversion |
+
+Values must be positive integers >= 1 (`render/cache-max-mb` also accepts `0` to disable
+the cache). An invalid value causes the service to fail-fast at startup.
+
+A few knobs are true per-instance environment variables, set via systemd drop-in
+(same mechanism as `PREVIEW_LOG_LEVEL`) and **not** part of the config chain:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PREVIEW_RENDER_CONCURRENCY` | *CPU count* | Max concurrent image-render operations |
-| `PREVIEW_PDF_WORKERS` | *CPU count* | PDFium subprocess pool size |
-| `PREVIEW_VIPS_CONCURRENCY` | `1` | libvips threads per operation |
+| `PREVIEW_PDFIUM_WORKER_PATH` | *next to main binary* | Override path to the `carbonio-preview-pdfium-worker` binary |
 
-The two downstream timeouts are **Consul KV** keys (not env vars), configurable
-fleet-wide but intentionally omitted from the generated config docs:
-
-| Consul KV key | Default | Description |
-|---------------|---------|-------------|
-| `carbonio-preview/timeout-in-seconds` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
-| `carbonio-preview/docs-timeout-in-seconds` | `15` | Timeout (s) for carbonio-docs-editor (Collabora) conversion |
-
-Values must be positive integers >= 1. An invalid value causes the service to fail-fast at startup.
+The libvips internal-threads level is a fixed internal constant (`1`) — it has no env
+var or KV key.
 
 ## APIs Documentation 📚
 

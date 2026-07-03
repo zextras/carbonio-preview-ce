@@ -73,8 +73,8 @@ func TestResolverDefaultsWhenAllAbsent(t *testing.T) {
 	}
 
 	appChecks := []struct{ key, want string }{
-		{"enable-document-preview", "true"},
-		{"enable-document-thumbnail", "false"},
+		{"document.enable-preview", "true"},
+		{"document.enable-thumbnail", "false"},
 	}
 	for _, tc := range appChecks {
 		got, ok := r.Application.Get(tc.key)
@@ -121,30 +121,30 @@ func TestResolverFileBeatsDefault(t *testing.T) {
 
 // TestResolverEnvBeatsKV verifies ENV overrides Consul KV (application layer).
 func TestResolverEnvBeatsKV(t *testing.T) {
-	t.Setenv("APPLICATION_CONFIG_ENABLE_DOCUMENT_PREVIEW", "false")
-	srv := buildConsulServer(t, map[string]string{"enable-document-preview": "true"})
+	t.Setenv("APPLICATION_CONFIG_DOCUMENT_ENABLE_PREVIEW", "false")
+	srv := buildConsulServer(t, map[string]string{"document/enable-preview": "true"})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, _ := r.Application.Get("enable-document-preview")
+	got, _ := r.Application.Get("document.enable-preview")
 	if got != "false" {
-		t.Errorf("Application.Get(enable-document-preview) = %q, want false (env should beat KV)", got)
+		t.Errorf("Application.Get(document.enable-preview) = %q, want false (env should beat KV)", got)
 	}
 }
 
 // TestResolverKVBeatsDefault verifies Consul KV value overrides registry default (application layer).
 func TestResolverKVBeatsDefault(t *testing.T) {
-	srv := buildConsulServer(t, map[string]string{"enable-document-preview": "false"})
+	srv := buildConsulServer(t, map[string]string{"document/enable-preview": "false"})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, _ := r.Application.Get("enable-document-preview")
+	got, _ := r.Application.Get("document.enable-preview")
 	if got != "false" {
-		t.Errorf("Application.Get(enable-document-preview) = %q, want false (KV value must override default)", got)
+		t.Errorf("Application.Get(document.enable-preview) = %q, want false (KV value must override default)", got)
 	}
 }
 
@@ -362,15 +362,15 @@ func TestResolveServiceDiscoverCoord_FilePresent(t *testing.T) {
 // TestBlankKVValueFallsThroughToDefault verifies that a Consul KV entry whose
 // decoded value is empty string is treated as absent and the registry default wins.
 func TestBlankKVValueFallsThroughToDefault(t *testing.T) {
-	// "enable-document-preview" has default "true"; KV entry with empty value must not override it.
-	srv := buildConsulServer(t, map[string]string{"enable-document-preview": ""})
+	// "document.enable-preview" has default "true"; KV entry with empty value must not override it.
+	srv := buildConsulServer(t, map[string]string{"document/enable-preview": ""})
 	r, err := resolveWithConsulServer(t, "", srv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	got, ok := r.Application.Get("enable-document-preview")
+	got, ok := r.Application.Get("document.enable-preview")
 	if !ok || got != "true" {
-		t.Errorf("Application.Get(enable-document-preview) = (%q, %v), want (true, true); blank KV value must fall through to default", got, ok)
+		t.Errorf("Application.Get(document.enable-preview) = (%q, %v), want (true, true); blank KV value must fall through to default", got, ok)
 	}
 }

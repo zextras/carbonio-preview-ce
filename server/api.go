@@ -37,11 +37,12 @@ type Deps struct {
 	Cfg   *config.Config
 	Store storage.Client
 	Cache *cache.Cache
-	// Sem is the shared render-concurrency semaphore (image/PDF/document ops).
+	// Sem is the shared render semaphore (image/PDF/document ops), sized by the
+	// render.max-concurrent-operations key.
 	Sem chan struct{}
-	// VideoSem is the DEDICATED video-generate semaphore (capacity =
-	// video-concurrency, default NumCPU). Separate from Sem so a flood of
-	// generate calls cannot starve image previews. nil = unlimited (tests).
+	// VideoSem is the DEDICATED video semaphore (capacity =
+	// video.max-concurrent-extractions, default NumCPU). Separate from Sem so a
+	// flood of video jobs cannot starve image previews. nil = unlimited (tests).
 	VideoSem chan struct{}
 	// DB is the video_preview database store.  nil means the video DB layer is
 	// disabled (spec-only gendocs mode or unit tests that do not exercise video
@@ -73,8 +74,6 @@ type Deps struct {
 // blocks registration. Returns nil only in pure spec-only gendocs mode (no cfg).
 func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 	semMW := semaphoreMiddleware(api, deps.Sem)
-	vsemMW := videoSemaphoreMiddleware(api, deps.VideoSem)
-	_ = vsemMW // vsemMW is no longer used for the removed generate endpoint
 
 	apispec.RegisterImageOps(api,
 		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
@@ -199,38 +198,6 @@ func semaphoreMiddleware(api huma.API, sem chan struct{}) func(huma.Context, fun
 		case <-timer.C:
 			// All slots busy and none freed in time — fail fast, never acquired.
 			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
-		}
-	}
-}
-
-// videoRetryAfterSeconds is the Retry-After header value (seconds) returned with
-// a 429 when the dedicated video semaphore is full.
-const videoRetryAfterSeconds = "1"
-
-// videoSemaphoreMiddleware bounds generate to cfg.VideoConcurrency (APPLICATION
-// key video-concurrency, default NumCPU) using a DEDICATED semaphore — NOT the
-// shared render semMW — so a flood of generate calls can never starve image
-// previews. Try-acquire immediately; on a full semaphore return HTTP 429 with a
-// Retry-After header (no waiting).
-//
-// 429 (not 503): 4xx = expected backpressure, so it does not inflate preview's
-// 5xx error metrics or trip outage alerts; it clearly signals "retryable, back
-// off". 503 is reserved for "preview genuinely down" and is retained only on the
-// existing semMW (image/render). Pass vsem=nil for unlimited concurrency
-// (tests / gendocs).
-func videoSemaphoreMiddleware(api huma.API, vsem chan struct{}) func(huma.Context, func(huma.Context)) {
-	return func(hctx huma.Context, next func(huma.Context)) {
-		if vsem == nil {
-			next(hctx)
-			return
-		}
-		select {
-		case vsem <- struct{}{}:
-			defer func() { <-vsem }()
-			next(hctx)
-		default:
-			hctx.SetHeader("Retry-After", videoRetryAfterSeconds)
-			_ = huma.WriteErr(api, hctx, http.StatusTooManyRequests, "server busy, retry")
 		}
 	}
 }

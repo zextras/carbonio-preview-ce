@@ -51,13 +51,13 @@ func TestRegisteredCENetworkingKeys(t *testing.T) {
 func TestRegisteredCEApplicationKeys(t *testing.T) {
 	keys := registeredKeys(NamespaceApplication)
 	required := []string{
-		"enable-document-preview",
-		"enable-document-thumbnail",
-		"timeout-in-seconds",
-		"docs-timeout-in-seconds",
-		"render-concurrency",
-		"pdf-workers",
-		"video-concurrency",
+		"document.enable-preview",
+		"document.enable-thumbnail",
+		"storage.fetch-timeout-seconds",
+		"document.conversion-timeout-seconds",
+		"render.max-concurrent-operations",
+		"render.pdf-subprocess-pool-size",
+		"video.max-concurrent-extractions",
 	}
 
 	idx := make(map[string]KeyEntry, len(keys))
@@ -73,15 +73,15 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 
 	// Verify HiddenFromDocs is set correctly.
 	hiddenExpected := map[string]bool{
-		"enable-document-preview":   false,
-		"enable-document-thumbnail": false,
+		"document.enable-preview":   false,
+		"document.enable-thumbnail": false,
 		// Documented (not hidden): an operator's customized timeout is migrated
 		// into these KV keys on upgrade, so they must be discoverable in docs.
-		"timeout-in-seconds":      false,
-		"docs-timeout-in-seconds": false,
-		"render-concurrency":      false,
-		"pdf-workers":             false,
-		"video-concurrency":       false,
+		"storage.fetch-timeout-seconds":       false,
+		"document.conversion-timeout-seconds": false,
+		"render.max-concurrent-operations":    false,
+		"render.pdf-subprocess-pool-size":     false,
+		"video.max-concurrent-extractions":    false,
 	}
 	for k, wantHidden := range hiddenExpected {
 		e, ok := idx[k]
@@ -131,13 +131,13 @@ func TestKeyDefaults(t *testing.T) {
 	}
 
 	appChecks := []struct{ key, dflt, ifNotPresent string }{
-		{"enable-document-preview", "true", ""},
-		{"enable-document-thumbnail", "false", ""},
-		{"timeout-in-seconds", "30", ""},
-		{"docs-timeout-in-seconds", "15", ""},
-		{"render-concurrency", "", "Defaults to the number of CPUs"},
-		{"pdf-workers", "", "Defaults to the number of CPUs"},
-		{"video-concurrency", "", "Defaults to the number of CPUs"},
+		{"document.enable-preview", "true", ""},
+		{"document.enable-thumbnail", "false", ""},
+		{"storage.fetch-timeout-seconds", "30", ""},
+		{"document.conversion-timeout-seconds", "15", ""},
+		{"render.max-concurrent-operations", "", "Defaults to the number of CPUs"},
+		{"render.pdf-subprocess-pool-size", "", "Defaults to the number of CPUs"},
+		{"video.max-concurrent-extractions", "", "Defaults to the number of CPUs"},
 	}
 	for _, tc := range appChecks {
 		e, ok := appIdx[tc.key]
@@ -282,23 +282,23 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	// Spot-check: known application keys that must appear in alphabetical order.
 	// The list includes all registered application keys (db-pool-*, video-*, etc.).
 	appExpected := []string{
-		"cache-max-mb",
 		"database.credentials.db-name",
 		"database.credentials.db-password",
 		"database.credentials.db-username",
-		"db-conn-max-lifetime-seconds",
-		"db-pool-max-conns",
-		"db-pool-min-conns",
-		"docs-timeout-in-seconds",
-		"enable-document-preview",
-		"enable-document-thumbnail",
-		"pdf-workers",
-		"render-concurrency",
-		"timeout-in-seconds",
-		"video-concurrency",
-		"video-max-attempts",
-		"video-stale-ttl-seconds",
-		"video-sweep-interval-seconds",
+		"database.pool.connection-max-lifetime-seconds",
+		"database.pool.max-connections",
+		"database.pool.min-connections",
+		"document.conversion-timeout-seconds",
+		"document.enable-preview",
+		"document.enable-thumbnail",
+		"render.cache-max-mb",
+		"render.max-concurrent-operations",
+		"render.pdf-subprocess-pool-size",
+		"storage.fetch-timeout-seconds",
+		"video.max-attempts",
+		"video.max-concurrent-extractions",
+		"video.poll-interval-seconds",
+		"video.stuck-generation-timeout-seconds",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {
@@ -315,14 +315,14 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 
 func TestCacheMaxMBRegistered(t *testing.T) {
 	m := registeredKeyMap(NamespaceApplication)
-	e, ok := m["cache-max-mb"]
+	e, ok := m["render.cache-max-mb"]
 	if !ok {
-		t.Fatal("application key \"cache-max-mb\" not registered")
+		t.Fatal("application key \"render.cache-max-mb\" not registered")
 	}
 	if e.Default != "256" {
-		t.Errorf("cache-max-mb default = %q, want \"256\"", e.Default)
+		t.Errorf("render.cache-max-mb default = %q, want \"256\"", e.Default)
 	}
 	if e.HiddenFromDocs {
-		t.Error("cache-max-mb must be visible in docs (HiddenFromDocs=false)")
+		t.Error("render.cache-max-mb must be visible in docs (HiddenFromDocs=false)")
 	}
 }

@@ -228,55 +228,55 @@ func registerCEKeys() {
 
 	application := []KeyEntry{
 		{
-			Key:         "enable-document-preview",
+			Key:         "document.enable-preview",
 			Namespace:   NamespaceApplication,
 			Default:     "true",
 			Description: "Whether full-page document preview is enabled.",
 		},
 		{
-			Key:         "enable-document-thumbnail",
+			Key:         "document.enable-thumbnail",
 			Namespace:   NamespaceApplication,
 			Default:     "false",
 			Description: "Whether document thumbnail generation is enabled.",
 		},
 		{
-			Key:         "timeout-in-seconds",
+			Key:         "storage.fetch-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "30",
-			Description: "Timeout (s) for fetching the source blob from storages.",
+			Description: "Timeout (seconds) for fetching the source blob from carbonio-storages.",
 		},
 		{
-			Key:         "docs-timeout-in-seconds",
+			Key:         "document.conversion-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "15",
-			Description: "Timeout (s) for docs-editor (Collabora) conversion.",
+			Description: "Timeout (seconds) for the docs-editor (Collabora) conversion call.",
 		},
 		{
-			Key:         "cache-max-mb",
+			Key:         "render.cache-max-mb",
 			Namespace:   NamespaceApplication,
 			Default:     "256",
-			Description: "Maximum size (MiB) of the in-process rendered-output cache. 0 disables the cache.",
+			Description: "Size budget (MiB) of the shared image/PDF/document rendered-output cache; 0 disables it.",
 		},
 		{
-			Key:          "render-concurrency",
+			Key:          "render.max-concurrent-operations",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum number of concurrent image-render operations. Defaults to the number of CPUs.",
+			Description:  "Maximum render operations (image, PDF, document) processed concurrently; does not apply to video. Default: CPU count.",
 		},
 		{
-			Key:          "pdf-workers",
+			Key:          "render.pdf-subprocess-pool-size",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Size of the PDFium subprocess worker pool. Defaults to the number of CPUs.",
+			Description:  "Number of PDFium helper OS subprocesses used for PDF/document rendering; a render acquires one after passing render/max-concurrent-operations. Default: CPU count.",
 		},
 		{
-			Key:          "video-concurrency",
+			Key:          "video.max-concurrent-extractions",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum number of concurrent video first-frame generate operations. Defaults to the number of CPUs.",
+			Description:  "Maximum video first-frame extraction jobs run concurrently (each spawns an ffmpeg subprocess). Default: CPU count.",
 		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via
@@ -308,45 +308,45 @@ func registerCEKeys() {
 		},
 		// ── Database connection-pool tuning ──────────────────────────────────
 		{
-			Key:         "db-pool-max-conns",
+			Key:         "database.pool.max-connections",
 			Namespace:   NamespaceApplication,
 			Default:     "10",
-			Description: "Maximum number of connections in the PostgreSQL connection pool.",
+			Description: "Maximum connections in the PostgreSQL (pgx) pool.",
 		},
 		{
-			Key:         "db-pool-min-conns",
+			Key:         "database.pool.min-connections",
 			Namespace:   NamespaceApplication,
 			Default:     "2",
-			Description: "Minimum number of idle connections in the PostgreSQL connection pool.",
+			Description: "Minimum connections in the PostgreSQL (pgx) pool.",
 		},
 		{
-			Key:         "db-conn-max-lifetime-seconds",
+			Key:         "database.pool.connection-max-lifetime-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "600",
-			Description: "Maximum lifetime (seconds) of a single PostgreSQL connection before it is recycled.",
+			Description: "Maximum age (seconds) before a pooled PostgreSQL connection is recycled.",
 		},
 		// ── Video worker tuning ───────────────────────────────────────────────
-		// NOTE: video-worker-concurrency is intentionally absent. Total ffmpeg
-		// concurrency is governed by video-concurrency (VideoSem), which is shared
-		// between the background worker and on-request generation attempts. A separate
-		// worker-only concurrency bound was parsed but never used and has been removed.
+		// NOTE: a separate worker-only concurrency bound is intentionally absent.
+		// Total ffmpeg concurrency is governed by video.max-concurrent-extractions
+		// (VideoSem), used by the background worker. A separate worker-only
+		// concurrency bound was parsed but never used and has been removed.
 		{
-			Key:         "video-sweep-interval-seconds",
+			Key:         "video.poll-interval-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "15",
-			Description: "Interval (seconds) between video-preview worker sweep ticks.",
+			Description: "Interval (seconds) at which the background video worker sweeps for pending jobs.",
 		},
 		{
-			Key:         "video-stale-ttl-seconds",
+			Key:         "video.stuck-generation-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "900",
-			Description: "Duration (seconds) after which a GENERATING row is considered stale and reclaimed by the worker (crash-recovery).",
+			Description: "A generation left in GENERATING state longer than this (seconds) is treated as crashed and reclaimed.",
 		},
 		{
-			Key:         "video-max-attempts",
+			Key:         "video.max-attempts",
 			Namespace:   NamespaceApplication,
 			Default:     "3",
-			Description: "Maximum total generation attempts (default 3) before a video-preview job is marked terminal FAILED.",
+			Description: "Maximum generation attempts before a video job is marked FAILED.",
 		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly

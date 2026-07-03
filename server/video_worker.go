@@ -115,16 +115,16 @@ const (
 	// Matches WSC's MAX_IN_FLIGHT = 64.
 	maxInFlight = 64
 
-	// defaultSweepIntervalSeconds is the KV default for video-sweep-interval-seconds.
+	// defaultSweepIntervalSeconds is the KV default for video.poll-interval-seconds.
 	// Matches WSC's SWEEP_INTERVAL = 15s.
 	defaultSweepIntervalSeconds = 15
 
-	// defaultStaleTTLSeconds is the KV default for video-stale-ttl-seconds.
+	// defaultStaleTTLSeconds is the KV default for video.stuck-generation-timeout-seconds.
 	// Matches WSC's STALE_TTL = 15 minutes (900s). Note: the spec said 3600 but
 	// the Java source uses 15 minutes; we follow the Java to keep identical semantics.
 	defaultStaleTTLSeconds = 900
 
-	// defaultMaxAttempts is the KV default for video-max-attempts.
+	// defaultMaxAttempts is the KV default for video.max-attempts.
 	// 3 total attempts before a job is marked terminal FAILED (corruption / ffmpeg failure path).
 	defaultMaxAttempts = 3
 )
