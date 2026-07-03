@@ -13,7 +13,6 @@ import (
 	pdfium "github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/multi_threaded"
 	"github.com/klippa-app/go-pdfium/requests"
-	"github.com/klippa-app/go-pdfium/single_threaded"
 )
 
 // ErrRenderUnavailable is returned when the PDFium subprocess pool cannot
@@ -35,8 +34,8 @@ var ErrRenderUnavailable = errors.New("PDF rendering temporarily unavailable")
 // the encoded results are near-identical.)
 const pdfRasterDPI = 72
 
-// globalPdfPool is the PDFium instance pool. Initialised by PDFInit or
-// PDFInitSingleThreadedForTests. Must not be used before initialisation.
+// globalPdfPool is the PDFium instance pool. Initialised by PDFInit.
+// Must not be used before initialisation.
 var globalPdfPool pdfium.Pool
 
 // PDFInit initialises the multi_threaded PDFium subprocess pool.
@@ -63,13 +62,6 @@ func PDFClose() {
 	if globalPdfPool != nil {
 		globalPdfPool.Close() //nolint:errcheck
 	}
-}
-
-// PDFInitSingleThreadedForTests initialises the in-process single_threaded PDFium
-// backend. For use in unit tests only — do NOT call in production code.
-// Uses the CGO backend (links against libpdfium.so).
-func PDFInitSingleThreadedForTests() {
-	globalPdfPool = single_threaded.Init(single_threaded.Config{})
 }
 
 // PDFRasterize renders page `page` (0-indexed) of a PDF document to an encoded

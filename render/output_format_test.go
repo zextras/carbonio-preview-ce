@@ -25,6 +25,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	_ "image/jpeg" // register the JPEG decoder for image.Decode (formerly transitive via single_threaded)
 	"image/png"
 	"testing"
 )

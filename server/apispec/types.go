@@ -389,26 +389,3 @@ type VideoCopyOutput struct {
 		PreviewID string `json:"preview_id" doc:"Storage node id of the copied preview frame"`
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Input/output structs — Video generate (POST)
-// ---------------------------------------------------------------------------
-
-// GenerateVideoInput holds the path + query params + owner header for the
-// POST /preview/video/generate endpoint. The caller (WSC) supplies BOTH the
-// source coordinates (id/version/service_type/owner) AND the target node id
-// (a UUID it minted) under which the extracted first frame is stored.
-type GenerateVideoInput struct {
-	ID          string      `path:"id"            format:"uuid"   doc:"UUID of the SOURCE video node"`
-	Version     int         `path:"version"       minimum:"0"     doc:"Source version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
-	Target      string      `query:"target"       format:"uuid" required:"true" doc:"Caller-minted UUID for the stored frame"`
-	FileOwnerID string      `header:"fileownerid"                doc:"File owner ID (PowerStore routing)" required:"false"`
-}
-
-// GenerateVideoOutput echoes the stored node id of the generated frame.
-type GenerateVideoOutput struct {
-	Body struct {
-		PreviewID string `json:"preview_id" doc:"Storage node id of the stored first-frame image (echoes target)"`
-	}
-}
