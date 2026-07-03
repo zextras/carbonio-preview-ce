@@ -857,37 +857,6 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 // first frame. Internal constant — not a config layer, not env-overridable.
 const JPEGQuality = 90
 
-// generateFirstFrameJPEG streams the source video, extracts the first frame
-// (PNG via the existing extractor), re-encodes it to JPEG q90 at full resolution
-// (no resize), and stores it under the CALLER-SUPPLIED target node id (a UUID
-// minted by WSC). Returns that id (echoed). Errors are returned raw for the
-// caller to classify.
-func generateFirstFrameJPEG(
-	ctx context.Context,
-	store storage.Client,
-	sourceNode string,
-	version int,
-	serviceType string,
-	ownerID string,
-	targetNodeID string,
-) (string, error) {
-	rc, err := store.RetrieveDataStreaming(ctx, sourceNode, version, serviceType, ownerID)
-	if err != nil {
-		return "", err
-	}
-	defer rc.Close()
-
-	// AV1/corrupt → video.ErrExtractFailed; deadline → video.ErrExtractTimeout.
-	// No internal semaphore (removed): concurrency is bounded at the handler
-	// middleware (the single video semaphore).
-	pngBytes, err := videoFirstFrameFunc(ctx, rc)
-	if err != nil {
-		return "", err
-	}
-
-	return encodePNGToJPEGAndStore(ctx, store, pngBytes, version, serviceType, ownerID, targetNodeID)
-}
-
 // encodePNGToJPEGAndStore re-encodes pngBytes to JPEG and stores them.
 // Extracted so that attempt() can reuse it after a probe-first download.
 func encodePNGToJPEGAndStore(

@@ -125,10 +125,3 @@ func orderedSet(setName string) []Migration {
 	})
 	return out
 }
-
-// resetSets clears every registered set — used only in tests.
-func resetSets() {
-	setsMu.Lock()
-	defer setsMu.Unlock()
-	sets = map[string][]Migration{}
-}

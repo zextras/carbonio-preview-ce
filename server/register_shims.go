@@ -43,17 +43,3 @@ func registerDocumentOps(api huma.API, deps Deps) {
 		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps),
 		semMW)
 }
-
-func registerVideoOps(api huma.API, deps Deps) {
-	// Build a worker for the handlers; nil if no DB (tests).
-	var w *VideoWorker
-	if deps.DB != nil {
-		w = NewVideoWorker(deps)
-	}
-	apispec.RegisterVideoOps(api,
-		buildGetVideoPreview(deps, w),
-		buildGetVideoThumbnail(deps, w),
-		buildDeleteVideoPreview(deps),
-		buildCopyVideoPreview(deps),
-	)
-}
