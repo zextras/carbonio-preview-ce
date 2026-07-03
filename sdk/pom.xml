@@ -20,7 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-only
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <openapi-generator.version>7.9.0</openapi-generator.version>
+    <openapi-generator.version>7.23.0</openapi-generator.version>
   </properties>
 
   <repositories>
