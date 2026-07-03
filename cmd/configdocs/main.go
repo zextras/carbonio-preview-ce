@@ -18,8 +18,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zextras/carbonio-preview-ce/v2/config"
-	"github.com/zextras/carbonio-preview-ce/v2/configdocs"
+	"github.com/zextras/carbonio-preview-ce/v3/config"
+	"github.com/zextras/carbonio-preview-ce/v3/configdocs"
 )
 
 func main() {

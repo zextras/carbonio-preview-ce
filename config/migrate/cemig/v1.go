@@ -11,7 +11,7 @@
 // the framework but does NOT import this package — never inherits CE's V1.
 package cemig
 
-import "github.com/zextras/carbonio-preview-ce/v2/config/migrate"
+import "github.com/zextras/carbonio-preview-ce/v3/config/migrate"
 
 func init() {
 	if err := migrate.RegisterInSet("ce", V1MigrateFromPythonIni()); err != nil {

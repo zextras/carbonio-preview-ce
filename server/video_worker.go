@@ -34,9 +34,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/zextras/carbonio-preview-ce/v2/db"
-	"github.com/zextras/carbonio-preview-ce/v2/storage"
-	"github.com/zextras/carbonio-preview-ce/v2/video"
+	"github.com/zextras/carbonio-preview-ce/v3/db"
+	"github.com/zextras/carbonio-preview-ce/v3/storage"
+	"github.com/zextras/carbonio-preview-ce/v3/video"
 )
 
 // readIdleTimeout is the maximum silence between successive bytes on the source

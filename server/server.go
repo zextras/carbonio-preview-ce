@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v2/cache"
-	"github.com/zextras/carbonio-preview-ce/v2/config"
-	"github.com/zextras/carbonio-preview-ce/v2/db"
-	"github.com/zextras/carbonio-preview-ce/v2/render"
-	"github.com/zextras/carbonio-preview-ce/v2/storage"
+	"github.com/zextras/carbonio-preview-ce/v3/cache"
+	"github.com/zextras/carbonio-preview-ce/v3/config"
+	"github.com/zextras/carbonio-preview-ce/v3/db"
+	"github.com/zextras/carbonio-preview-ce/v3/render"
+	"github.com/zextras/carbonio-preview-ce/v3/storage"
 )
 
 // Server is the top-level HTTP server. Create it with New and start it with Run.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v2/config"
+	"github.com/zextras/carbonio-preview-ce/v3/config"
 )
 
 // buildHealthMux creates a huma-routed mux for health operations (test helper).

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-module github.com/zextras/carbonio-preview-ce/v2
+module github.com/zextras/carbonio-preview-ce/v3
 
 go 1.25.0
 

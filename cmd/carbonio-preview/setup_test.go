@@ -13,13 +13,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v2/config/migrate"
-	"github.com/zextras/carbonio-preview-ce/v2/docs"
+	"github.com/zextras/carbonio-preview-ce/v3/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/v3/docs"
 
 	// Blank-imported for the same reason main.go does: this test package
 	// exercises the --setup path end-to-end and must see CE's "ce" migration
 	// set registered, exactly like the production binary.
-	_ "github.com/zextras/carbonio-preview-ce/v2/config/migrate/cemig"
+	_ "github.com/zextras/carbonio-preview-ce/v3/config/migrate/cemig"
 )
 
 // TestFindArg verifies the pure --setup flag locator.

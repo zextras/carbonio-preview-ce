@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v2/cache"
-	"github.com/zextras/carbonio-preview-ce/v2/config"
-	"github.com/zextras/carbonio-preview-ce/v2/storage"
+	"github.com/zextras/carbonio-preview-ce/v3/cache"
+	"github.com/zextras/carbonio-preview-ce/v3/config"
+	"github.com/zextras/carbonio-preview-ce/v3/storage"
 )
 
 // slotTestStore returns canned bytes so the handler reaches the render step.

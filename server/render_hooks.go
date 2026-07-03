@@ -18,8 +18,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v2/render"
-	"github.com/zextras/carbonio-preview-ce/v2/video"
+	"github.com/zextras/carbonio-preview-ce/v3/render"
+	"github.com/zextras/carbonio-preview-ce/v3/video"
 )
 
 // imageThumbnailFunc is the seam for render.ImageThumbnail.

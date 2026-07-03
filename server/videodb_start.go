@@ -23,8 +23,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v2/config"
-	"github.com/zextras/carbonio-preview-ce/v2/db"
+	"github.com/zextras/carbonio-preview-ce/v3/config"
+	"github.com/zextras/carbonio-preview-ce/v3/db"
 )
 
 const (

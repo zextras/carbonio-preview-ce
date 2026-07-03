@@ -18,8 +18,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v2/db"
-	"github.com/zextras/carbonio-preview-ce/v2/video"
+	"github.com/zextras/carbonio-preview-ce/v3/db"
+	"github.com/zextras/carbonio-preview-ce/v3/video"
 )
 
 // ---------------------------------------------------------------------------
