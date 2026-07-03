@@ -91,6 +91,42 @@ class PreviewClientTest {
   }
 
   @Test
+  void enumValues_areLowercasedOnWire() throws IOException {
+    // Callers may pass a Java enum's uppercase name() (HIGH/RECTANGULAR/JPEG/FILES);
+    // the SDK must normalize to the lowercase the preview service's strict enum expects.
+    stubFor(get(urlPathEqualTo("/preview/image/case-uuid/1/50x50/thumbnail/"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", MIME_JPEG)
+            .withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder()
+        .fileId("case-uuid")
+        .version(1)
+        .area("50x50")
+        .serviceType("FILES")
+        .quality("HIGH")
+        .shape("RECTANGULAR")
+        .outputFormat("JPEG")
+        .build();
+
+    assertEquals("high", q.getQuality());
+    assertEquals("rectangular", q.getShape());
+    assertEquals("jpeg", q.getOutputFormat());
+    assertEquals("files", q.getServiceType());
+
+    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
+      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    }
+
+    verify(getRequestedFor(urlPathEqualTo("/preview/image/case-uuid/1/50x50/thumbnail/"))
+        .withQueryParam("quality", equalTo("high"))
+        .withQueryParam("shape", equalTo("rectangular"))
+        .withQueryParam("output_format", equalTo("jpeg"))
+        .withQueryParam("service_type", equalTo("files")));
+  }
+
+  @Test
   void getPreviewOfPdf_routesToCorrectPath() throws IOException {
     byte[] pdfBytes = "%PDF-fake".getBytes(StandardCharsets.UTF_8);
     stubFor(get(urlPathEqualTo("/preview/pdf/pdf-uuid/3/"))
