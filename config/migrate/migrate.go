@@ -2,35 +2,44 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package migrate provides a one-shot config migration framework that mirrors
-// the carbonio-quarkus-extensions package-scoped ConfigMigration /
-// ConfigMigrationRunner semantics.
+// Package migrate provides a config migration framework that mirrors the
+// carbonio-quarkus-extensions package-scoped ConfigMigration /
+// ConfigMigrationRunner semantics, split into two distinct phases:
+//
+//   - A one-time Bootstrap: the legacy Python config.ini → Go config import.
+//     At most one Bootstrap may be registered per set (RegisterBootstrap).
+//     It holds the ini-sourced entry tables (networking, application,
+//     drop-in-env, drop-only) and has no version — there is only ever one
+//     bootstrap per edition, run once per --setup before any KV→KV migration.
+//
+//   - A versioned KV→KV series: each Migration renames existing Consul KV
+//     keys (ApplicationKVMoves), with an optional value transform,
+//     independently of the legacy ini.  This is the recurring engine for
+//     every future KV rename.
 //
 // Design overview:
 //
-//   - A Migration describes a versioned migration: a unique integer version
-//     (unique within its own set), a name matching V<n>__<desc>, and two entry
-//     tables (networking and application).  Each entry is an old-source key
-//     mapped to a function that writes new entries via the injected
-//     ConfigStore.  A Migration may additionally declare KV-to-KV moves
-//     (ApplicationKVMoves) that rename existing Consul KV keys — with an
-//     optional value transform — independently of the legacy ini.
+//   - A Migration describes one entry in the KV→KV series: a unique integer
+//     version (unique within its own set), a name matching V<n>__<desc>, and
+//     a non-empty list of ApplicationKVMoves.
 //
-//   - This package is FRAMEWORK ONLY: it holds no migrations of its own.
-//     Migrations are registered into NAMED SETS via RegisterInSet, so that
-//     each edition (e.g. CE, Advanced) owns its own independent set and never
-//     inherits another edition's migrations merely by importing this package.
-//     Different sets MAY reuse the same version number — a CE V1 and an
-//     Advanced V1 are unrelated and do not collide.
+//   - This package is FRAMEWORK ONLY: it holds no bootstrap or migrations of
+//     its own.  Both are registered into NAMED SETS via RegisterBootstrap /
+//     RegisterInSet, so that each edition (e.g. CE, Advanced) owns its own
+//     independent set and never inherits another edition's bootstrap or
+//     migrations merely by importing this package.  Different sets MAY reuse
+//     the same version number — a CE V1 and an Advanced V1 are unrelated and
+//     do not collide.
 //
 //   - orderedSet returns a given set's migrations in ascending version order;
-//     an unknown/absent set name returns nil.
+//     bootstrapFor returns a given set's registered Bootstrap, if any.  An
+//     unknown/absent set name returns nil / not-found respectively.
 //
 //   - NewRunner builds a Runner wired to the stores (legacy INI source,
 //     networking properties file, Consul KV) and to the selected set name.
 //
-//   - Runner.Run executes the selected set's migrations in ascending version
-//     order.
+//   - Runner.Run executes the selected set's Bootstrap (if registered) first,
+//     then the Migration series in ascending version order.
 package migrate
 
 import (
@@ -71,13 +80,13 @@ type KVMove struct {
 	Transform func(oldValue string) (string, error)
 }
 
-// Migration describes one versioned config migration.
-// The Name field must match ^V(\d+)__\w+$ (validated at registration).
-type Migration struct {
-	// Version determines execution order.  Must be unique across all registered migrations.
-	Version int
-
-	// Name must match ^V(\d+)__\w+$ (e.g. "V1__MigrateFromPythonIni").
+// Bootstrap describes the one-time legacy Python config.ini → Go config
+// import for a set.  Unlike Migration it has no Version: there is exactly one
+// Bootstrap per set, run once (per --setup invocation) before the set's
+// Migration series.
+type Bootstrap struct {
+	// Name identifies the bootstrap in the setup log line (e.g.
+	// "V1__MigrateFromPythonIni"). Must be non-empty.
 	Name string
 
 	// NetworkingEntries maps old source (INI) key → function that writes to the
@@ -106,20 +115,57 @@ type Migration struct {
 	// the drop-in absent and the successful keys still pending in the ini for
 	// retry.
 	DropInEnvEntries map[string]string
+}
+
+// Migration describes one entry in a set's versioned KV→KV series.
+// The Name field must match ^V(\d+)__\w+$ (validated at registration).
+type Migration struct {
+	// Version determines execution order.  Must be unique across all registered migrations.
+	Version int
+
+	// Name must match ^V(\d+)__\w+$ (e.g. "V1__MoveDBPoolKeys").
+	Name string
 
 	// ApplicationKVMoves lists Consul KV → Consul KV key renames (with optional
-	// value transform) executed in declaration order.  Unlike the entry tables
-	// above, moves read from Consul KV itself, NOT from the legacy ini, and run
-	// even when the ini is absent.  A migration with a non-empty move list
-	// always counts as application work (SETUP_CONSUL_TOKEN required).
-	// Moves are intrinsically idempotent: once the old key is gone, re-runs skip.
+	// value transform) executed in declaration order.  Moves read from Consul
+	// KV itself, NOT from the legacy ini, and run even when the ini is absent.
+	// A Migration must declare at least one move (validated at registration);
+	// its mere registration always counts as application work (SETUP_CONSUL_TOKEN
+	// required). Moves are intrinsically idempotent: once the old key is gone,
+	// re-runs skip.
 	ApplicationKVMoves []KVMove
 }
 
 var (
-	setsMu sync.Mutex
-	sets   = map[string][]Migration{}
+	setsMu     sync.Mutex
+	sets       = map[string][]Migration{}
+	bootstraps = map[string]Bootstrap{}
 )
+
+// RegisterBootstrap registers b as the named set's one-time ini→KV bootstrap.
+// It returns an error if:
+//   - b.Name is empty.
+//   - a bootstrap is already registered for setName.
+func RegisterBootstrap(setName string, b Bootstrap) error {
+	if strings.TrimSpace(b.Name) == "" {
+		return fmt.Errorf("migrate: bootstrap for set %q: Name must be non-empty", setName)
+	}
+	setsMu.Lock()
+	defer setsMu.Unlock()
+	if existing, ok := bootstraps[setName]; ok {
+		return fmt.Errorf("migrate: a bootstrap is already registered in set %q (existing: %q)", setName, existing.Name)
+	}
+	bootstraps[setName] = b
+	return nil
+}
+
+// bootstrapFor returns the named set's registered Bootstrap, if any.
+func bootstrapFor(setName string) (Bootstrap, bool) {
+	setsMu.Lock()
+	defer setsMu.Unlock()
+	b, ok := bootstraps[setName]
+	return b, ok
+}
 
 // RegisterInSet adds m to the named migration set setName.
 // It returns an error if:
@@ -127,6 +173,8 @@ var (
 //   - m.Version is already registered WITHIN THE SAME SET (a different set
 //     may reuse the same version number — e.g. CE's V1 and Advanced's V1 are
 //     unrelated and do not collide).
+//   - m.ApplicationKVMoves is empty (a Vn migration with no moves does
+//     nothing and is therefore a programming error, not a valid registration).
 //   - any ApplicationKVMoves entry has an empty OldPath or NewPath, a path
 //     without a "/" (KV paths are full slash paths, e.g. "<service>/<key>" —
 //     a bare dotted config key here would silently never match), or
@@ -134,6 +182,9 @@ var (
 func RegisterInSet(setName string, m Migration) error {
 	if !migrationNameRE.MatchString(m.Name) {
 		return fmt.Errorf("migrate: name %q does not match V<n>__<desc> pattern", m.Name)
+	}
+	if len(m.ApplicationKVMoves) == 0 {
+		return fmt.Errorf("migrate: %s: ApplicationKVMoves must be non-empty (a Vn migration with no moves does nothing)", m.Name)
 	}
 	for _, mv := range m.ApplicationKVMoves {
 		if mv.OldPath == "" || mv.NewPath == "" {

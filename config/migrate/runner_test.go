@@ -26,15 +26,14 @@ import (
 // non-root way to make those specific syscalls fail without faking the
 // filesystem. The MkdirAll, CreateTemp, and rename arms ARE covered below.
 
-// genericDropInMigration returns a literal, framework-only fixture equivalent
-// in shape to a real drop-in migration (log.level → PREVIEW_LOG_LEVEL), used
+// genericDropInBootstrap returns a literal, framework-only fixture equivalent
+// in shape to a real drop-in bootstrap (log.level → PREVIEW_LOG_LEVEL), used
 // so these framework-mechanics tests don't need to import a concrete
-// migration set (that would defeat the point of moving CE's V1 out of this
-// package into config/migrate/cemig).
-func genericDropInMigration() Migration {
-	return Migration{
-		Version: 1,
-		Name:    "V1__GenericDropIn",
+// migration set (that would defeat the point of moving CE's bootstrap out of
+// this package into config/migrate/cemig).
+func genericDropInBootstrap() Bootstrap {
+	return Bootstrap{
+		Name: "V1__GenericDropIn",
 		DropInEnvEntries: map[string]string{
 			"log.level": "PREVIEW_LOG_LEVEL",
 		},
@@ -55,7 +54,7 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
 
-		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
+		if err := RegisterBootstrap("ce", genericDropInBootstrap()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
@@ -71,7 +70,7 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 		// runOne via runDropInEnvEntries must hit the MkdirAll error arm and
 		// return 0 migrated for the drop-in; the log.level key must therefore
 		// survive in the ini (retryable on next run).
-		n := runner.runDropInEnvEntries(genericDropInMigration())
+		n := runner.runDropInEnvEntries(genericDropInBootstrap())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on MkdirAll failure", n)
 		}
@@ -99,7 +98,7 @@ func TestRunDropInEnvEntries_CreateTempFails(t *testing.T) {
 
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
-		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
+		if err := RegisterBootstrap("ce", genericDropInBootstrap()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
@@ -112,7 +111,7 @@ func TestRunDropInEnvEntries_CreateTempFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
-		n := runner.runDropInEnvEntries(genericDropInMigration())
+		n := runner.runDropInEnvEntries(genericDropInBootstrap())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on CreateTemp failure", n)
 		}
@@ -138,7 +137,7 @@ func TestRunDropInEnvEntries_RenameFails(t *testing.T) {
 
 		iniPath := writeFile(t, dir, "config.ini", "[log]\nlevel = debug\n")
 		srv := newOKConsul(t)
-		if err := RegisterInSet("ce", genericDropInMigration()); err != nil {
+		if err := RegisterBootstrap("ce", genericDropInBootstrap()); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		runner, err := NewRunner(Paths{
@@ -151,7 +150,7 @@ func TestRunDropInEnvEntries_RenameFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
-		n := runner.runDropInEnvEntries(genericDropInMigration())
+		n := runner.runDropInEnvEntries(genericDropInBootstrap())
 		if n != 0 {
 			t.Errorf("runDropInEnvEntries=%d, want 0 on rename failure", n)
 		}
@@ -192,9 +191,8 @@ func TestRun_PropertiesSaveError(t *testing.T) {
 			"[myservice]\nfoo = bar\n")
 		srv := newOKConsul(t)
 
-		if err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__NetOnly",
+		if err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__NetOnly",
 			NetworkingEntries: map[string]EntryFunc{
 				"myservice.foo": func(_, v string, dest ConfigStore) error {
 					return dest.Set("new.foo", v)
@@ -238,9 +236,8 @@ func TestRun_IniSaveError(t *testing.T) {
 		srv := newOKConsul(t)
 
 		// Migrate the only key so the ini becomes empty → save() renames.
-		if err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__AllMigrate",
+		if err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__AllMigrate",
 			NetworkingEntries: map[string]EntryFunc{
 				"myservice.foo": func(_, v string, dest ConfigStore) error {
 					return dest.Set("new.foo", v)
@@ -286,9 +283,8 @@ func TestRun_IniSaveToError(t *testing.T) {
 			"[myservice]\nfoo = bar\nadvanced_key = keep\n")
 		srv := newOKConsul(t)
 
-		if err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__PartialKeep",
+		if err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__PartialKeep",
 			NetworkingEntries: map[string]EntryFunc{
 				"myservice.foo": func(_, v string, dest ConfigStore) error {
 					return dest.Set("new.foo", v)

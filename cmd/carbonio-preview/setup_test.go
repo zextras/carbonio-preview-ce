@@ -72,12 +72,12 @@ func TestRunSetupIfRequested_MissingURL(t *testing.T) {
 // TestRunSetupIfRequested_Success verifies the success dispatch: --setup with a
 // URL runs the migration and returns handled=true, code=0. It relies on the
 // production ini path being absent (the default on a developer/CI machine),
-// so V1 has no application work. However cemig's V2MoveDBPoolKeys declares
-// ApplicationKVMoves, which always count as application work regardless of
-// the ini (they talk to Consul KV directly) — so SETUP_CONSUL_TOKEN is
-// required and a reachable Consul stub is needed even in this "absent ini"
-// case. If the production ini happens to exist, the test skips rather than
-// touch it.
+// so the bootstrap has no application work. However cemig's V1MoveDBPoolKeys
+// declares ApplicationKVMoves, which always count as application work
+// regardless of the ini (they talk to Consul KV directly) — so
+// SETUP_CONSUL_TOKEN is required and a reachable Consul stub is needed even
+// in this "absent ini" case. If the production ini happens to exist, the test
+// skips rather than touch it.
 func TestRunSetupIfRequested_Success(t *testing.T) {
 	if _, err := os.Stat("/etc/carbonio/preview/config.ini"); err == nil {
 		t.Skip("production config.ini present; skipping to avoid touching real config")
@@ -85,7 +85,7 @@ func TestRunSetupIfRequested_Success(t *testing.T) {
 	t.Setenv("SETUP_CONSUL_TOKEN", "tok")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound) // no pool.* keys pre-seeded: V2 finds nothing to move
+		w.WriteHeader(http.StatusNotFound) // no pool.* keys pre-seeded: V1MoveDBPoolKeys finds nothing to move
 	}))
 	defer srv.Close()
 
@@ -94,7 +94,7 @@ func TestRunSetupIfRequested_Success(t *testing.T) {
 		t.Fatal("handled = false, want true for --setup with URL")
 	}
 	if code != 0 {
-		t.Errorf("code = %d, want 0 on successful setup (absent ini, V2 finds nothing to move)", code)
+		t.Errorf("code = %d, want 0 on successful setup (absent ini, V1MoveDBPoolKeys finds nothing to move)", code)
 	}
 }
 
@@ -149,10 +149,10 @@ func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 
 // TestSetupEndToEnd_RunsOnlyCEMigrations proves the fix end-to-end at the
 // cmd/carbonio-preview level: migrate.RunSetup, driven with the SAME hardcoded
-// MigrationSet main.go passes ("ce"), executes CE's V1 migration (an application
+// MigrationSet main.go passes ("ce"), executes CE's bootstrap (an application
 // key gets PUT to Consul) — the whole point being that this binary only ever
-// runs its OWN "ce" set, never inherits any other edition's migrations just
-// because config/migrate is imported.
+// runs its OWN "ce" set, never inherits any other edition's bootstrap or
+// migrations just because config/migrate is imported.
 func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "config.ini")
@@ -183,7 +183,7 @@ func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	if puts == 0 {
-		t.Error("expected CE's V1 migration to PUT document/enable-preview to Consul KV; got 0 PUTs — migration set resolution is broken")
+		t.Error("expected CE's bootstrap to PUT document/enable-preview to Consul KV; got 0 PUTs — migration set resolution is broken")
 	}
 }
 

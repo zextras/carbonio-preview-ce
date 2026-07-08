@@ -91,8 +91,9 @@ convert_api = cool/convert-to
 // ── init() self-registration ──────────────────────────────────────────────────
 
 // TestInit_RegistersIntoCESet verifies the whole point of this package: simply
-// importing it (which init() does automatically) registers V1 into the "ce"
-// migration set, and ONLY the "ce" set — nothing lands anywhere else.
+// importing it (which init() does automatically) registers both the CE
+// bootstrap and V1MoveDBPoolKeys into the "ce" migration set, and ONLY the
+// "ce" set — nothing lands anywhere else.
 func TestInit_RegistersIntoCESet(t *testing.T) {
 	dir := t.TempDir()
 	iniPath := writeFile(t, dir, "config.ini",
@@ -122,10 +123,11 @@ func TestInit_RegistersIntoCESet(t *testing.T) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	if !runner.HasApplicationWork() {
-		t.Error("HasApplicationWork must be true: V1 must be registered in the \"ce\" set by this package's init()")
+		t.Error("HasApplicationWork must be true: the CE bootstrap and V1MoveDBPoolKeys must be registered in the \"ce\" set by this package's init()")
 	}
 
-	// Running an unrelated set name must NOT see V1 (no accidental global leak).
+	// Running an unrelated set name must NOT see CE's bootstrap or V1MoveDBPoolKeys
+	// (no accidental global leak).
 	runnerOther, err := migrate.NewRunner(migrate.Paths{
 		IniPath:      iniPath,
 		PropsPath:    propsPath,
@@ -137,13 +139,13 @@ func TestInit_RegistersIntoCESet(t *testing.T) {
 		t.Fatalf("NewRunner (other set): %v", err)
 	}
 	if runnerOther.HasApplicationWork() {
-		t.Error("an unrelated migration set must not see CE's V1 migration")
+		t.Error("an unrelated migration set must not see CE's bootstrap or migrations")
 	}
 }
 
-// ── V1MigrateFromPythonIni content tests ──────────────────────────────────────
+// ── CEBootstrap content tests ─────────────────────────────────────────────────
 
-// TestRunner_FullMigration_IdempotencyAndRename runs the real CE V1 migration
+// TestRunner_FullMigration_IdempotencyAndRename runs the real CE bootstrap
 // end-to-end against a full legacy config.ini and verifies both networking and
 // application entries land correctly, then verifies a second run is a no-op.
 func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
@@ -263,7 +265,7 @@ func TestRunner_FullMigration_IdempotencyAndRename(t *testing.T) {
 }
 
 // TestRunner_AbsentIni_AllSkipped verifies that an absent ini results in zero
-// Consul writes and no properties file, using the real CE V1 migration.
+// Consul writes and no properties file, using the real CE bootstrap.
 func TestRunner_AbsentIni_AllSkipped(t *testing.T) {
 	dir := t.TempDir()
 	propsPath := filepath.Join(dir, "config.properties")
@@ -323,15 +325,16 @@ func TestHasApplicationWork_TokenRequired(t *testing.T) {
 	}
 }
 
-// TestHasApplicationWork_TrueWhenAbsentDueToV2Moves used to assert the
-// opposite (false) before V2MoveDBPoolKeys existed: with only V1 registered,
-// an absent ini meant no application-layer work at all. Since V2's
-// ApplicationKVMoves talk to Consul KV directly and their mere registration
-// in a set always counts as application work regardless of the ini (see the
-// Migration.ApplicationKVMoves doc comment in config/migrate/migrate.go),
-// HasApplicationWork is now unconditionally true for the "ce" set — even with
-// an absent ini — so SETUP_CONSUL_TOKEN is always required.
-func TestHasApplicationWork_TrueWhenAbsentDueToV2Moves(t *testing.T) {
+// TestHasApplicationWork_TrueWhenAbsentDueToV1Moves used to assert the
+// opposite (false) before V1MoveDBPoolKeys existed: with only the bootstrap
+// (ini import) registered, an absent ini meant no application-layer work at
+// all. Since V1MoveDBPoolKeys' ApplicationKVMoves talk to Consul KV directly
+// and their mere registration in a set always counts as application work
+// regardless of the ini (see the Migration.ApplicationKVMoves doc comment in
+// config/migrate/migrate.go), HasApplicationWork is now unconditionally true
+// for the "ce" set — even with an absent ini — so SETUP_CONSUL_TOKEN is
+// always required.
+func TestHasApplicationWork_TrueWhenAbsentDueToV1Moves(t *testing.T) {
 	dir := t.TempDir()
 	propsPath := filepath.Join(dir, "config.properties")
 
@@ -347,21 +350,21 @@ func TestHasApplicationWork_TrueWhenAbsentDueToV2Moves(t *testing.T) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	if !runner.HasApplicationWork() {
-		t.Error("HasApplicationWork must be true: V2's ApplicationKVMoves always count as application work, even with an absent ini")
+		t.Error("HasApplicationWork must be true: V1MoveDBPoolKeys' ApplicationKVMoves always count as application work, even with an absent ini")
 	}
 }
 
-// TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV2Moves used to assert
-// the opposite (false) before V2MoveDBPoolKeys existed: an ini containing
-// ONLY V1 drop-only keys did not require SETUP_CONSUL_TOKEN, because V1's
-// application-layer work is driven entirely by the ini. Now that V2's
-// ApplicationKVMoves are registered in the same "ce" set, they always talk to
-// Consul KV regardless of what the ini contains, so HasApplicationWork is
-// true and a full run does touch Consul (one Get(OldPath) probe per V2 move,
-// finding nothing to move).
-func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV2Moves(t *testing.T) {
+// TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves used to assert
+// the opposite (false) before V1MoveDBPoolKeys existed: an ini containing
+// ONLY the bootstrap's drop-only keys did not require SETUP_CONSUL_TOKEN,
+// because the bootstrap's application-layer work is driven entirely by the
+// ini. Now that V1MoveDBPoolKeys' ApplicationKVMoves are registered in the
+// same "ce" set, they always talk to Consul KV regardless of what the ini
+// contains, so HasApplicationWork is true and a full run does touch Consul
+// (one Get(OldPath) probe per move, finding nothing to move).
+func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves(t *testing.T) {
 	dir := t.TempDir()
-	// ini with ONLY drop-only keys — no V1 application KV entries.
+	// ini with ONLY drop-only keys — no bootstrap application KV entries.
 	iniContent := "[log]\nlevel = info\n\n[carbonio.preview]\nname = preview\n"
 	iniPath := writeFile(t, dir, "config.ini", iniContent)
 	propsPath := filepath.Join(dir, "config.properties")
@@ -378,13 +381,13 @@ func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV2Moves(t *testing.T) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	if !runner.HasApplicationWork() {
-		t.Error("HasApplicationWork must be true: V2's ApplicationKVMoves always count as application work, regardless of the ini's content")
+		t.Error("HasApplicationWork must be true: V1MoveDBPoolKeys' ApplicationKVMoves always count as application work, regardless of the ini's content")
 	}
 
 	// A full run against a reachable Consul stub (no pool.* keys pre-seeded,
-	// so every GET is a clean 404) must still complete cleanly: V1's drop-only
-	// keys are consumed from the ini, and V2's moves are no-ops (old paths
-	// absent).
+	// so every GET is a clean 404) must still complete cleanly: the
+	// bootstrap's drop-only keys are consumed from the ini, and
+	// V1MoveDBPoolKeys' moves are no-ops (old paths absent).
 	consulHits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		consulHits++
@@ -405,12 +408,12 @@ func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV2Moves(t *testing.T) {
 	}
 	runner2.Run()
 
-	// V2 issues exactly one Get(OldPath) per declared move (3 moves); none of
-	// them exist, so no Get(NewPath), Put, or Delete follows.
+	// V1MoveDBPoolKeys issues exactly one Get(OldPath) per declared move (3
+	// moves); none of them exist, so no Get(NewPath), Put, or Delete follows.
 	if consulHits != 3 {
-		t.Errorf("expected 3 Consul GETs (one OldPath probe per V2 move), got %d", consulHits)
+		t.Errorf("expected 3 Consul GETs (one OldPath probe per move), got %d", consulHits)
 	}
-	// ini must have been renamed (all V1 keys consumed).
+	// ini must have been renamed (all bootstrap keys consumed).
 	if _, err := os.Stat(iniPath); !os.IsNotExist(err) {
 		t.Error("expected config.ini to be renamed to .migrated")
 	}
@@ -472,10 +475,11 @@ func TestV1_TimeoutKeysMigrateToConsulKV(t *testing.T) {
 	mustKvPut(t, kvPuts, "carbonio-preview/document/conversion-timeout-seconds", "45")
 }
 
-// ── V1 log.level → systemd drop-in migration tests ────────────────────────────
+// ── CE bootstrap log.level → systemd drop-in tests ────────────────────────────
 
-// TestV1LogLevel_WriteDropIn verifies that V1 with [log] level=debug in the ini
-// writes a correctly-formatted drop-in file to Paths.DropInPath.
+// TestV1LogLevel_WriteDropIn verifies that the CE bootstrap with [log]
+// level=debug in the ini writes a correctly-formatted drop-in file to
+// Paths.DropInPath.
 func TestV1LogLevel_WriteDropIn(t *testing.T) {
 	dir := t.TempDir()
 	dropInPath := filepath.Join(dir, "log-level.conf")
@@ -714,14 +718,15 @@ func TestRunSetup_SuccessWithToken(t *testing.T) {
 	}
 }
 
-// TestRunSetup_TokenRequiredWhenIniAbsentDueToV2Moves covers the token-gate
-// arm introduced by V2MoveDBPoolKeys: even with an absent ini (so V1 has
-// nothing to do), V2's ApplicationKVMoves always count as application work —
-// they talk to Consul KV directly, independently of the ini — so
-// SETUP_CONSUL_TOKEN is still required. Before V2 existed, an absent ini made
-// RunSetup succeed with no token (see TestRunSetup_SuccessAbsentIni below for
-// the corresponding success arm now that a token is supplied).
-func TestRunSetup_TokenRequiredWhenIniAbsentDueToV2Moves(t *testing.T) {
+// TestRunSetup_TokenRequiredWhenIniAbsentDueToV1Moves covers the token-gate
+// arm introduced by V1MoveDBPoolKeys: even with an absent ini (so the
+// bootstrap has nothing to do), V1MoveDBPoolKeys' ApplicationKVMoves always
+// count as application work — they talk to Consul KV directly, independently
+// of the ini — so SETUP_CONSUL_TOKEN is still required. Before this
+// migration existed, an absent ini made RunSetup succeed with no token (see
+// TestRunSetup_SuccessAbsentIni below for the corresponding success arm now
+// that a token is supplied).
+func TestRunSetup_TokenRequiredWhenIniAbsentDueToV1Moves(t *testing.T) {
 	t.Setenv("SETUP_CONSUL_TOKEN", "")
 	dir := t.TempDir()
 
@@ -740,7 +745,7 @@ func TestRunSetup_TokenRequiredWhenIniAbsentDueToV2Moves(t *testing.T) {
 	}
 	err := migrate.RunSetup(srv.URL, paths, "DOCS-TXT")
 	if err == nil {
-		t.Fatal("want SETUP_CONSUL_TOKEN error (V2's moves need Consul even with an absent ini), got nil")
+		t.Fatal("want SETUP_CONSUL_TOKEN error (V1MoveDBPoolKeys needs Consul even with an absent ini), got nil")
 	}
 	if !strings.Contains(err.Error(), "SETUP_CONSUL_TOKEN") {
 		t.Errorf("error = %v, want it to mention SETUP_CONSUL_TOKEN", err)
@@ -751,9 +756,9 @@ func TestRunSetup_TokenRequiredWhenIniAbsentDueToV2Moves(t *testing.T) {
 }
 
 // TestRunSetup_SuccessAbsentIni covers the success arm with an absent ini and
-// a token present: V1 has nothing to migrate (ini missing), and V2's moves
-// find none of the old pool.* keys (stub has nothing pre-seeded), so the run
-// completes cleanly.
+// a token present: the bootstrap has nothing to migrate (ini missing), and
+// V1MoveDBPoolKeys finds none of the old pool.* keys (stub has nothing
+// pre-seeded), so the run completes cleanly.
 func TestRunSetup_SuccessAbsentIni(t *testing.T) {
 	t.Setenv("SETUP_CONSUL_TOKEN", "tok123")
 	dir := t.TempDir()
@@ -770,11 +775,11 @@ func TestRunSetup_SuccessAbsentIni(t *testing.T) {
 		MigrationSet: "ce",
 	}
 	if err := migrate.RunSetup(srv.URL, paths, "DOCS-TXT"); err != nil {
-		t.Fatalf("RunSetup with absent ini and V2's moves finding nothing should not fail: %v", err)
+		t.Fatalf("RunSetup with absent ini and V1MoveDBPoolKeys finding nothing should not fail: %v", err)
 	}
 }
 
-// ── V2MoveDBPoolKeys (ApplicationKVMoves) end-to-end tests ───────────────────
+// ── V1MoveDBPoolKeys (ApplicationKVMoves) end-to-end tests ───────────────────
 
 // newStatefulConsulKV returns a Consul KV stub backed by the given in-memory
 // data map: GET /v1/kv/<path>?raw serves the map (404 when absent), PUT
@@ -808,10 +813,10 @@ func newStatefulConsulKV(t *testing.T, data map[string]string) *httptest.Server 
 	return srv
 }
 
-// newV2Runner builds a runner against the "ce" set with an ABSENT legacy ini
-// (V2's ApplicationKVMoves talk to Consul KV directly and must run regardless
-// of the ini's presence), pointed at consulURL.
-func newV2Runner(t *testing.T, consulURL string) *migrate.Runner {
+// newV1Runner builds a runner against the "ce" set with an ABSENT legacy ini
+// (V1MoveDBPoolKeys' ApplicationKVMoves talk to Consul KV directly and must
+// run regardless of the ini's presence), pointed at consulURL.
+func newV1Runner(t *testing.T, consulURL string) *migrate.Runner {
 	t.Helper()
 	dir := t.TempDir()
 	runner, err := migrate.NewRunner(migrate.Paths{
@@ -828,18 +833,18 @@ func newV2Runner(t *testing.T, consulURL string) *migrate.Runner {
 	return runner
 }
 
-// TestV2_MovesOldPoolKeysToNewDBPoolKeys runs the real "ce" set end to end
+// TestV1_MovesOldPoolKeysToNewDBPoolKeys runs the real "ce" set end to end
 // (absent ini) against a Consul KV stub pre-seeded with the three pre-8d14b8c
 // database-pool keys. It verifies the values land at the new db-pool-* paths,
 // the old keys are deleted, and the lifetime value is converted seconds->ms.
-func TestV2_MovesOldPoolKeysToNewDBPoolKeys(t *testing.T) {
+func TestV1_MovesOldPoolKeysToNewDBPoolKeys(t *testing.T) {
 	data := map[string]string{
 		"carbonio-preview/database/pool/max-connections":                 "15",
 		"carbonio-preview/database/pool/min-connections":                 "3",
 		"carbonio-preview/database/pool/connection-max-lifetime-seconds": "900",
 	}
 	srv := newStatefulConsulKV(t, data)
-	runner := newV2Runner(t, srv.URL)
+	runner := newV1Runner(t, srv.URL)
 
 	runner.Run()
 
@@ -863,17 +868,17 @@ func TestV2_MovesOldPoolKeysToNewDBPoolKeys(t *testing.T) {
 	}
 }
 
-// TestV2_NewKeyAlreadyPresent_NoClobber verifies the never-clobber arm: when
+// TestV1_NewKeyAlreadyPresent_NoClobber verifies the never-clobber arm: when
 // an operator (or an earlier partial run) has already set a new-style
-// db-pool-* value, V2 must leave it untouched and must not delete the old key
-// either (the move is skipped entirely for that pair).
-func TestV2_NewKeyAlreadyPresent_NoClobber(t *testing.T) {
+// db-pool-* value, V1MoveDBPoolKeys must leave it untouched and must not
+// delete the old key either (the move is skipped entirely for that pair).
+func TestV1_NewKeyAlreadyPresent_NoClobber(t *testing.T) {
 	data := map[string]string{
 		"carbonio-preview/database/pool/max-connections": "15",
 		"carbonio-preview/database/db-pool-max-size":     "42", // operator-set new-style value
 	}
 	srv := newStatefulConsulKV(t, data)
-	runner := newV2Runner(t, srv.URL)
+	runner := newV1Runner(t, srv.URL)
 
 	runner.Run()
 
@@ -885,13 +890,13 @@ func TestV2_NewKeyAlreadyPresent_NoClobber(t *testing.T) {
 	}
 }
 
-// TestV2_OldKeyAbsent_NoOp verifies that when none of the old pool.* keys
-// exist (a fresh install, or one that never had them), V2 makes no writes and
-// no deletes at all.
-func TestV2_OldKeyAbsent_NoOp(t *testing.T) {
+// TestV1_OldKeyAbsent_NoOp verifies that when none of the old pool.* keys
+// exist (a fresh install, or one that never had them), V1MoveDBPoolKeys makes
+// no writes and no deletes at all.
+func TestV1_OldKeyAbsent_NoOp(t *testing.T) {
 	data := map[string]string{}
 	srv := newStatefulConsulKV(t, data)
-	runner := newV2Runner(t, srv.URL)
+	runner := newV1Runner(t, srv.URL)
 
 	runner.Run()
 
@@ -900,16 +905,16 @@ func TestV2_OldKeyAbsent_NoOp(t *testing.T) {
 	}
 }
 
-// TestV2_NonNumericLifetime_WarnAndSkip verifies the Transform-error arm: a
+// TestV1_NonNumericLifetime_WarnAndSkip verifies the Transform-error arm: a
 // non-numeric lifetime value must NOT be written to the new path, must NOT be
 // deleted from the old path (retryable), and must not stop the run or the
 // setup (warn-and-skip, per Runner.runApplicationKVMoves).
-func TestV2_NonNumericLifetime_WarnAndSkip(t *testing.T) {
+func TestV1_NonNumericLifetime_WarnAndSkip(t *testing.T) {
 	data := map[string]string{
 		"carbonio-preview/database/pool/connection-max-lifetime-seconds": "not-a-number",
 	}
 	srv := newStatefulConsulKV(t, data)
-	runner := newV2Runner(t, srv.URL)
+	runner := newV1Runner(t, srv.URL)
 
 	runner.Run()
 
