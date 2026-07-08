@@ -34,9 +34,9 @@ Overridable by Consul KV
 | `carbonio-preview/database/credentials/db-name` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/database/credentials/db-password` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/database/credentials/db-username` | *(not set)* | Crashes; but always set by database bootstrap |
-| `carbonio-preview/database/pool/connection-max-lifetime-seconds` | `600` |  |
-| `carbonio-preview/database/pool/max-connections` | `10` |  |
-| `carbonio-preview/database/pool/min-connections` | `2` |  |
+| `carbonio-preview/database/db-pool-max-lifetime` | `600000` |  |
+| `carbonio-preview/database/db-pool-max-size` | `10` |  |
+| `carbonio-preview/database/db-pool-min-size` | `2` |  |
 | `carbonio-preview/document/conversion-timeout-seconds` | `15` |  |
 | `carbonio-preview/document/enable-preview` | `true` |  |
 | `carbonio-preview/document/enable-thumbnail` | `false` |  |

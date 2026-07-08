@@ -121,7 +121,7 @@ func openAndMigrateVideoDB(ctx context.Context, cfg *config.Config) (*db.Store, 
 	store, err := db.New(attemptCtx, cfg.DBDSN, db.PoolConfig{
 		MaxConns:        cfg.DBPoolMaxConns,
 		MinConns:        cfg.DBPoolMinConns,
-		MaxConnLifetime: time.Duration(cfg.DBConnMaxLifetime) * time.Second,
+		MaxConnLifetime: time.Duration(cfg.DBConnMaxLifetimeMs) * time.Millisecond,
 	})
 	if err != nil {
 		return nil, err

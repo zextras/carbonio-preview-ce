@@ -308,22 +308,22 @@ func registerCEKeys() {
 		},
 		// ── Database connection-pool tuning ──────────────────────────────────
 		{
-			Key:         "database.pool.max-connections",
+			Key:         "database.db-pool-max-size",
 			Namespace:   NamespaceApplication,
 			Default:     "10",
-			Description: "Maximum connections in the PostgreSQL (pgx) pool.",
+			Description: "Maximum size of the PostgreSQL (pgx) connection pool.",
 		},
 		{
-			Key:         "database.pool.min-connections",
+			Key:         "database.db-pool-min-size",
 			Namespace:   NamespaceApplication,
 			Default:     "2",
-			Description: "Minimum connections in the PostgreSQL (pgx) pool.",
+			Description: "Minimum size of the PostgreSQL (pgx) connection pool.",
 		},
 		{
-			Key:         "database.pool.connection-max-lifetime-seconds",
+			Key:         "database.db-pool-max-lifetime",
 			Namespace:   NamespaceApplication,
-			Default:     "600",
-			Description: "Maximum age (seconds) before a pooled PostgreSQL connection is recycled.",
+			Default:     "600000",
+			Description: "Maximum lifetime (milliseconds) before a pooled PostgreSQL connection is recycled.",
 		},
 		// ── Video worker tuning ───────────────────────────────────────────────
 		// NOTE: a separate worker-only concurrency bound is intentionally absent.

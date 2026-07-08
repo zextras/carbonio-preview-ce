@@ -135,6 +135,12 @@ func TestKeyDefaults(t *testing.T) {
 		{"document.enable-thumbnail", "false", ""},
 		{"storage.fetch-timeout-seconds", "30", ""},
 		{"document.conversion-timeout-seconds", "15", ""},
+		// DB pool: the lifetime default is MILLISECONDS (600000 = 10 min).
+		// Do NOT "fix" it back to 600 — that would reintroduce the 1000x
+		// ms-vs-seconds bug class this flat db-pool-* contract guards against.
+		{"database.db-pool-max-lifetime", "600000", ""},
+		{"database.db-pool-max-size", "10", ""},
+		{"database.db-pool-min-size", "2", ""},
 		{"render.max-concurrent-operations", "", "Defaults to the number of CPUs"},
 		{"render.pdf-subprocess-pool-size", "", "Defaults to the number of CPUs"},
 		{"video.max-concurrent-extractions", "", "Defaults to the number of CPUs"},
@@ -285,9 +291,9 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"database.credentials.db-name",
 		"database.credentials.db-password",
 		"database.credentials.db-username",
-		"database.pool.connection-max-lifetime-seconds",
-		"database.pool.max-connections",
-		"database.pool.min-connections",
+		"database.db-pool-max-lifetime",
+		"database.db-pool-max-size",
+		"database.db-pool-min-size",
 		"document.conversion-timeout-seconds",
 		"document.enable-preview",
 		"document.enable-thumbnail",

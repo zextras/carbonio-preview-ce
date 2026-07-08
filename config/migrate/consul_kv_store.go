@@ -6,6 +6,7 @@ package migrate
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -47,6 +48,57 @@ func (c *consulKvStore) Set(key, value string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("consul: PUT %s/v1/kv/%s returned HTTP %d", c.baseURL, key, resp.StatusCode)
+	}
+	return nil
+}
+
+// Get reads the raw value of key.  GET /v1/kv/<key>?raw.
+// An HTTP 404 means the key does not exist and is NOT an error: ("", false, nil).
+// An HTTP 200 returns the body as the value: (body, true, nil).
+// Any other status (or transport failure) is an error.
+func (c *consulKvStore) Get(key string) (string, bool, error) {
+	url := c.baseURL + "/v1/kv/" + key + "?raw"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("consul: build GET %s/v1/kv/%s: %w", c.baseURL, key, err)
+	}
+	req.Header.Set("X-Consul-Token", c.token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", false, fmt.Errorf("consul: GET %s/v1/kv/%s: %w", c.baseURL, key, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return "", false, nil
+	case http.StatusOK:
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", false, fmt.Errorf("consul: read GET %s/v1/kv/%s body: %w", c.baseURL, key, err)
+		}
+		return string(body), true, nil
+	default:
+		return "", false, fmt.Errorf("consul: GET %s/v1/kv/%s returned HTTP %d", c.baseURL, key, resp.StatusCode)
+	}
+}
+
+// Delete removes key.  DELETE /v1/kv/<key>.
+func (c *consulKvStore) Delete(key string) error {
+	url := c.baseURL + "/v1/kv/" + key
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("consul: build DELETE %s/v1/kv/%s: %w", c.baseURL, key, err)
+	}
+	req.Header.Set("X-Consul-Token", c.token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("consul: DELETE %s/v1/kv/%s: %w", c.baseURL, key, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("consul: DELETE %s/v1/kv/%s returned HTTP %d", c.baseURL, key, resp.StatusCode)
 	}
 	return nil
 }

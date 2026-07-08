@@ -10,14 +10,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// withCleanRegistry runs f with every migration set cleared and restores the
-// original sets afterwards.  NOT safe for parallel sub-tests.
+// withCleanRegistry runs f with every migration set AND every registered
+// bootstrap cleared, and restores the originals afterwards.  NOT safe for
+// parallel sub-tests.
 func withCleanRegistry(t *testing.T, f func()) {
 	t.Helper()
 	// save
@@ -28,7 +29,12 @@ func withCleanRegistry(t *testing.T, f func()) {
 		copy(cp, v)
 		saved[k] = cp
 	}
+	savedBootstraps := make(map[string]Bootstrap, len(bootstraps))
+	for k, v := range bootstraps {
+		savedBootstraps[k] = v
+	}
 	sets = map[string][]Migration{}
+	bootstraps = map[string]Bootstrap{}
 	setsMu.Unlock()
 
 	f()
@@ -36,6 +42,7 @@ func withCleanRegistry(t *testing.T, f func()) {
 	// restore
 	setsMu.Lock()
 	sets = saved
+	bootstraps = savedBootstraps
 	setsMu.Unlock()
 }
 
@@ -62,11 +69,11 @@ func TestRegisterInSet_BadName(t *testing.T) {
 
 func TestRegisterInSet_DuplicateVersionWithinSameSet(t *testing.T) {
 	withCleanRegistry(t, func() {
-		m := Migration{Version: 1, Name: "V1__Alpha"}
+		m := Migration{Version: 1, Name: "V1__Alpha", ApplicationKVMoves: []KVMove{{OldPath: "svc/alpha-old", NewPath: "svc/alpha-new"}}}
 		if err := RegisterInSet("ce", m); err != nil {
 			t.Fatalf("first register: %v", err)
 		}
-		err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__Beta"})
+		err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__Beta", ApplicationKVMoves: []KVMove{{OldPath: "svc/beta-old", NewPath: "svc/beta-new"}}})
 		if err == nil {
 			t.Fatal("expected error for duplicate version within the same set, got nil")
 		}
@@ -78,37 +85,146 @@ func TestRegisterInSet_DuplicateVersionWithinSameSet(t *testing.T) {
 // must NOT collide just because they share a version number.
 func TestRegisterInSet_SameVersionAcrossDifferentSetsAllowed(t *testing.T) {
 	withCleanRegistry(t, func() {
-		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE"}); err != nil {
+		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE", ApplicationKVMoves: []KVMove{{OldPath: "ce/old", NewPath: "ce/new"}}}); err != nil {
 			t.Fatalf("register ce V1: %v", err)
 		}
-		if err := RegisterInSet("advanced", Migration{Version: 1, Name: "V1__Advanced"}); err != nil {
+		if err := RegisterInSet("advanced", Migration{Version: 1, Name: "V1__Advanced", ApplicationKVMoves: []KVMove{{OldPath: "advanced/old", NewPath: "advanced/new"}}}); err != nil {
 			t.Fatalf("register advanced V1 (same version, different set): %v", err)
+		}
+	})
+}
+
+// TestRegisterInSet_RejectsMoveLessMigration verifies that a Vn migration
+// with an empty ApplicationKVMoves list is rejected at registration time: it
+// would do nothing at all, which is now a programming error rather than a
+// (formerly valid) ini-only migration.
+func TestRegisterInSet_RejectsMoveLessMigration(t *testing.T) {
+	withCleanRegistry(t, func() {
+		err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__NoMoves"})
+		if err == nil {
+			t.Fatal("expected error for a migration with no ApplicationKVMoves, got nil")
+		}
+		if !strings.Contains(err.Error(), "ApplicationKVMoves") {
+			t.Errorf("error = %v, want it to mention ApplicationKVMoves", err)
+		}
+	})
+}
+
+// TestRegisterInSet_KVMoveValidation verifies that malformed ApplicationKVMoves
+// are rejected at registration time: empty paths and old==new renames are
+// programming errors, not runtime conditions.
+func TestRegisterInSet_KVMoveValidation(t *testing.T) {
+	withCleanRegistry(t, func() {
+		cases := []struct {
+			name string
+			mv   KVMove
+		}{
+			{"empty old path", KVMove{OldPath: "", NewPath: "svc/new"}},
+			{"empty new path", KVMove{OldPath: "svc/old", NewPath: ""}},
+			{"no slash in old path (bare dotted key)", KVMove{OldPath: "database.pool.max", NewPath: "svc/new"}},
+			{"no slash in new path (bare dotted key)", KVMove{OldPath: "svc/old", NewPath: "database.db-pool-max-size"}},
+			{"identical paths", KVMove{OldPath: "svc/same", NewPath: "svc/same"}},
+		}
+		for _, tc := range cases {
+			err := RegisterInSet("ce", Migration{
+				Version:            1,
+				Name:               "V1__BadMove",
+				ApplicationKVMoves: []KVMove{tc.mv},
+			})
+			if err == nil {
+				t.Errorf("%s: want registration error, got nil", tc.name)
+			}
+		}
+	})
+}
+
+// ── Bootstrap registration tests ─────────────────────────────────────────────
+
+// TestRegisterBootstrap_Success verifies the basic happy path: a well-formed
+// Bootstrap registers cleanly and bootstrapFor can find it back.
+func TestRegisterBootstrap_Success(t *testing.T) {
+	withCleanRegistry(t, func() {
+		b := Bootstrap{Name: "Bootstrap__MigrateFromPythonIni"}
+		if err := RegisterBootstrap("ce", b); err != nil {
+			t.Fatalf("RegisterBootstrap: %v", err)
+		}
+		got, ok := bootstrapFor("ce")
+		if !ok {
+			t.Fatal("bootstrapFor(\"ce\") ok=false, want true after registration")
+		}
+		if got.Name != b.Name {
+			t.Errorf("bootstrapFor(\"ce\").Name = %q, want %q", got.Name, b.Name)
+		}
+	})
+}
+
+// TestRegisterBootstrap_EmptyNameRejected verifies that a Bootstrap with an
+// empty (or all-whitespace) Name is rejected at registration time.
+func TestRegisterBootstrap_EmptyNameRejected(t *testing.T) {
+	withCleanRegistry(t, func() {
+		if err := RegisterBootstrap("ce", Bootstrap{Name: ""}); err == nil {
+			t.Error("expected error for empty bootstrap name, got nil")
+		}
+		if err := RegisterBootstrap("ce", Bootstrap{Name: "   "}); err == nil {
+			t.Error("expected error for whitespace-only bootstrap name, got nil")
+		}
+	})
+}
+
+// TestRegisterBootstrap_DuplicateInSameSetRejected verifies that only one
+// Bootstrap may be registered per set: a one-time ini→KV import only ever
+// happens once per edition.
+func TestRegisterBootstrap_DuplicateInSameSetRejected(t *testing.T) {
+	withCleanRegistry(t, func() {
+		if err := RegisterBootstrap("ce", Bootstrap{Name: "V1__First"}); err != nil {
+			t.Fatalf("first RegisterBootstrap: %v", err)
+		}
+		err := RegisterBootstrap("ce", Bootstrap{Name: "V1__Second"})
+		if err == nil {
+			t.Fatal("expected error registering a second bootstrap into the same set, got nil")
+		}
+	})
+}
+
+// TestRegisterBootstrap_DifferentSetsAllowed verifies that each set may have
+// its own independent bootstrap — e.g. CE and Advanced each register their
+// own one-time ini→KV import without colliding.
+func TestRegisterBootstrap_DifferentSetsAllowed(t *testing.T) {
+	withCleanRegistry(t, func() {
+		if err := RegisterBootstrap("ce", Bootstrap{Name: "V1__CE"}); err != nil {
+			t.Fatalf("register ce bootstrap: %v", err)
+		}
+		if err := RegisterBootstrap("advanced", Bootstrap{Name: "V1__Advanced"}); err != nil {
+			t.Fatalf("register advanced bootstrap (different set): %v", err)
+		}
+	})
+}
+
+// TestBootstrapFor_UnknownSetNotFound verifies that an unregistered set name
+// reports ok=false rather than a zero-value Bootstrap being mistaken for a
+// real registration.
+func TestBootstrapFor_UnknownSetNotFound(t *testing.T) {
+	withCleanRegistry(t, func() {
+		_, ok := bootstrapFor("does-not-exist")
+		if ok {
+			t.Error("bootstrapFor(unknown set) ok=true, want false")
 		}
 	})
 }
 
 func TestOrderedSet_VersionAscending(t *testing.T) {
 	withCleanRegistry(t, func() {
-		var order []int
-		var mu sync.Mutex
-
 		for _, v := range []int{3, 1, 2} {
-			vv := v
-			name := fmt.Sprintf("V%d__Test", vv)
+			name := fmt.Sprintf("V%d__Test", v)
 			err := RegisterInSet("ce", Migration{
-				Version: vv,
+				Version: v,
 				Name:    name,
-				NetworkingEntries: map[string]EntryFunc{
-					fmt.Sprintf("dummy.key%d", vv): func(_, _ string, _ ConfigStore) error {
-						mu.Lock()
-						order = append(order, vv)
-						mu.Unlock()
-						return nil
-					},
+				ApplicationKVMoves: []KVMove{
+					{OldPath: fmt.Sprintf("svc/v%d/old", v), NewPath: fmt.Sprintf("svc/v%d/new", v)},
 				},
 			})
 			if err != nil {
-				t.Fatalf("register V%d: %v", vv, err)
+				t.Fatalf("register V%d: %v", v, err)
 			}
 		}
 
@@ -126,7 +242,7 @@ func TestOrderedSet_VersionAscending(t *testing.T) {
 // returns nil/empty rather than panicking or returning another set's data.
 func TestOrderedSet_UnknownSetIsEmpty(t *testing.T) {
 	withCleanRegistry(t, func() {
-		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE"}); err != nil {
+		if err := RegisterInSet("ce", Migration{Version: 1, Name: "V1__CE", ApplicationKVMoves: []KVMove{{OldPath: "ce/old", NewPath: "ce/new"}}}); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		got := orderedSet("does-not-exist")
@@ -142,42 +258,30 @@ func TestOrderedSet_UnknownSetIsEmpty(t *testing.T) {
 // same process/registry.
 func TestOrderedSet_Isolation(t *testing.T) {
 	withCleanRegistry(t, func() {
-		var ceRan, otherRan bool
-
 		if err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__CE",
-			NetworkingEntries: map[string]EntryFunc{
-				"ceonly.key": func(_, _ string, _ ConfigStore) error {
-					ceRan = true
-					return nil
-				},
-			},
+			Version:            1,
+			Name:               "V1__CE",
+			ApplicationKVMoves: []KVMove{{OldPath: "ceonly/old", NewPath: "ceonly/new"}},
 		}); err != nil {
 			t.Fatalf("register ce: %v", err)
 		}
 		if err := RegisterInSet("other", Migration{
-			Version: 1,
-			Name:    "V1__Other",
-			NetworkingEntries: map[string]EntryFunc{
-				"otheronly.key": func(_, _ string, _ ConfigStore) error {
-					otherRan = true
-					return nil
-				},
-			},
+			Version:            1,
+			Name:               "V1__Other",
+			ApplicationKVMoves: []KVMove{{OldPath: "otheronly/old", NewPath: "otheronly/new"}},
 		}); err != nil {
 			t.Fatalf("register other: %v", err)
 		}
 
-		dir := t.TempDir()
-		iniPath := writeFile(t, dir, "config.ini",
-			"[ceonly]\nkey = x\n\n[otheronly]\nkey = y\n")
-		srv := newOKConsul(t)
+		data := map[string]string{"ceonly/old": "x", "otheronly/old": "y"}
+		srv := newStatefulConsul(t, data, nil, nil)
 
+		dir := t.TempDir()
 		runner, err := NewRunner(Paths{
-			IniPath:      iniPath,
+			IniPath:      filepath.Join(dir, "no.ini"),
 			PropsPath:    filepath.Join(dir, "config.properties"),
 			ConsulURL:    srv.URL,
+			ConsulToken:  "tok",
 			DropInPath:   filepath.Join(dir, "log-level.conf"),
 			MigrationSet: "ce",
 		})
@@ -186,10 +290,10 @@ func TestOrderedSet_Isolation(t *testing.T) {
 		}
 		runner.Run()
 
-		if !ceRan {
+		if _, ok := data["ceonly/new"]; !ok {
 			t.Error("running set \"ce\" must execute ce's own migration")
 		}
-		if otherRan {
+		if _, ok := data["otheronly/new"]; ok {
 			t.Error("running set \"ce\" must NOT execute the \"other\" set's migration — no inheritance")
 		}
 	})
@@ -230,10 +334,9 @@ workers = 2
 		}))
 		defer srv.Close()
 
-		// Register a migration with two application entries.
-		err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__ErrorIsolation",
+		// Register a bootstrap with two application entries.
+		err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__ErrorIsolation",
 			ApplicationEntries: map[string]EntryFunc{
 				"carbonio.preview.timeout_in_seconds": func(_, v string, dest ConfigStore) error {
 					return dest.Set("carbonio-preview/storage/fetch-timeout-seconds", v)
@@ -299,9 +402,8 @@ func TestRunner_IniRename_WhenAllKeysMigrated(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__Rename",
+		err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__Rename",
 			NetworkingEntries: map[string]EntryFunc{
 				"myservice.foo": func(_, v string, dest ConfigStore) error {
 					return dest.Set("new.foo", v)
@@ -353,10 +455,9 @@ func TestRunner_IniSaved_WhenAdvancedKeysRemain(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		// Only register migration for "myservice.foo", not for "myservice.advanced_key".
-		err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__PartialMigration",
+		// Only register a bootstrap entry for "myservice.foo", not for "myservice.advanced_key".
+		err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__PartialMigration",
 			NetworkingEntries: map[string]EntryFunc{
 				"myservice.foo": func(_, v string, dest ConfigStore) error {
 					return dest.Set("new.foo", v)
@@ -415,9 +516,8 @@ func TestRunner_AppOnly_NoPropertiesFile(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		err := RegisterInSet("ce", Migration{
-			Version: 1,
-			Name:    "V1__AppOnly",
+		err := RegisterBootstrap("ce", Bootstrap{
+			Name: "V1__AppOnly",
 			ApplicationEntries: map[string]EntryFunc{
 				"carbonio.preview.timeout_in_seconds": func(_, v string, dest ConfigStore) error {
 					return dest.Set("carbonio-preview/storage/fetch-timeout-seconds", v)

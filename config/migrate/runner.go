@@ -14,7 +14,8 @@ import (
 // It is wired to three stores:
 //   - ini: legacy source (config.ini) — read-only source, deleted/renamed after run
 //   - net: networking destination (config.properties) — written if any net entry migrated
-//   - kv:  application destination (Consul KV) — written per-entry
+//   - kv:  application destination (Consul KV) — written per-entry; also read
+//     and deleted per-move for ApplicationKVMoves
 type Runner struct {
 	ini        *iniStore
 	net        *propertiesStore
@@ -23,20 +24,25 @@ type Runner struct {
 	setName    string // selected migration set (e.g. "ce", "advanced")
 }
 
-// HasApplicationWork returns true if at least one migration in the runner's
-// selected set has an application entry whose old key is present in the
-// legacy ini.  This is used by --setup to decide whether SETUP_CONSUL_TOKEN is
-// required before any modification is made.
+// HasApplicationWork returns true if the runner's selected set has any Vn
+// migration registered (every Migration carries at least one ApplicationKVMove
+// — validated at RegisterInSet time — so their mere registration always means
+// Consul work, regardless of the ini), OR the set's Bootstrap (if any) has an
+// application entry whose old key is present in the legacy ini.  This is used
+// by --setup to decide whether SETUP_CONSUL_TOKEN is required before any
+// modification is made.
 // It must be consulted BEFORE Run() — the token gate is enforced only by call ordering in RunSetup.
 func (r *Runner) HasApplicationWork() bool {
-	if r.ini.isAbsent() {
+	if len(orderedSet(r.setName)) > 0 {
+		return true
+	}
+	b, ok := bootstrapFor(r.setName)
+	if !ok || r.ini.isAbsent() {
 		return false
 	}
-	for _, m := range orderedSet(r.setName) {
-		for oldKey := range m.ApplicationEntries {
-			if _, ok := r.ini.get(oldKey); ok {
-				return true
-			}
+	for oldKey := range b.ApplicationEntries {
+		if _, ok := r.ini.get(oldKey); ok {
+			return true
 		}
 	}
 	return false
@@ -82,7 +88,8 @@ func NewRunner(p Paths) (*Runner, error) {
 	return &Runner{ini: ini, net: net, kv: kv, dropInPath: p.effectiveDropInPath(), setName: p.MigrationSet}, nil
 }
 
-// Run executes the runner's selected migration set in version-ascending order.
+// Run executes the runner's selected set: first the set's Bootstrap (if
+// registered), then the Migration series in version-ascending order.
 //
 // Output mirrors ConfigMigrationRunner:
 //
@@ -95,19 +102,32 @@ func NewRunner(p Paths) (*Runner, error) {
 // entry migrated.  The ini store is always saved (or renamed) at the end if
 // the ini was not absent.
 func (r *Runner) Run() {
+	bootstrap, hasBootstrap := bootstrapFor(r.setName)
 	migrations := orderedSet(r.setName)
-	if len(migrations) == 0 {
+
+	total := len(migrations)
+	if hasBootstrap {
+		total++
+	}
+	if total == 0 {
 		fmt.Println("Config migration: no migrations found.")
 		return
 	}
-	fmt.Printf("Config migration: %d migration(s) found.\n", len(migrations))
+	fmt.Printf("Config migration: %d migration(s) found.\n", total)
+
+	if hasBootstrap {
+		netMigrated, appMigrated := r.runBootstrap(bootstrap)
+		totalNet := len(bootstrap.NetworkingEntries) + len(bootstrap.DropInEnvEntries)
+		totalApp := len(bootstrap.ApplicationEntries) + len(bootstrap.DropEntries)
+		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
+			bootstrap.Name, netMigrated, totalNet, appMigrated, totalApp)
+	}
 
 	for _, m := range migrations {
-		netMigrated, appMigrated := r.runOne(m)
-		totalNet := len(m.NetworkingEntries) + len(m.DropInEnvEntries)
-		totalApp := len(m.ApplicationEntries) + len(m.DropEntries)
+		appMigrated := r.runApplicationKVMoves(m)
+		totalApp := len(m.ApplicationKVMoves)
 		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
-			m.Name, netMigrated, totalNet, appMigrated, totalApp)
+			m.Name, 0, 0, appMigrated, totalApp)
 	}
 
 	// Save config.properties only if at least one networking entry actually
@@ -126,29 +146,29 @@ func (r *Runner) Run() {
 	}
 }
 
-// runOne runs a single migration's networking, application, drop, and drop-in
-// entries.  It returns (netMigrated, appMigrated).
+// runBootstrap runs the set's one-time ini→KV bootstrap: networking, drop-in-env,
+// application, and drop entries. It returns (netMigrated, appMigrated).
 // Per-entry errors are logged as warnings; the entry's old key is NOT deleted.
-func (r *Runner) runOne(m Migration) (int, int) {
-	netMigrated := r.runNetworkingEntries(m)
-	netMigrated += r.runDropInEnvEntries(m)
-	appMigrated := r.runApplicationEntries(m)
-	appMigrated += r.runDropEntries(m)
+func (r *Runner) runBootstrap(b Bootstrap) (int, int) {
+	netMigrated := r.runNetworkingEntries(b)
+	netMigrated += r.runDropInEnvEntries(b)
+	appMigrated := r.runApplicationEntries(b)
+	appMigrated += r.runDropEntries(b)
 	return netMigrated, appMigrated
 }
 
-func (r *Runner) runNetworkingEntries(m Migration) int {
+func (r *Runner) runNetworkingEntries(b Bootstrap) int {
 	if r.ini.isAbsent() {
 		return 0
 	}
 	migrated := 0
-	for oldKey, fn := range m.NetworkingEntries {
+	for oldKey, fn := range b.NetworkingEntries {
 		val, ok := r.ini.get(oldKey)
 		if !ok {
 			continue
 		}
 		if err := fn(oldKey, val, r.net); err != nil {
-			fmt.Fprintf(os.Stderr, "  WARNING: %s networking %q: %v\n", m.Name, oldKey, err)
+			fmt.Fprintf(os.Stderr, "  WARNING: %s networking %q: %v\n", b.Name, oldKey, err)
 			continue
 		}
 		r.ini.remove(oldKey)
@@ -157,18 +177,18 @@ func (r *Runner) runNetworkingEntries(m Migration) int {
 	return migrated
 }
 
-func (r *Runner) runApplicationEntries(m Migration) int {
+func (r *Runner) runApplicationEntries(b Bootstrap) int {
 	if r.ini.isAbsent() {
 		return 0
 	}
 	migrated := 0
-	for oldKey, fn := range m.ApplicationEntries {
+	for oldKey, fn := range b.ApplicationEntries {
 		val, ok := r.ini.get(oldKey)
 		if !ok {
 			continue
 		}
 		if err := fn(oldKey, val, r.kv); err != nil {
-			fmt.Fprintf(os.Stderr, "  WARNING: %s application %q: %v\n", m.Name, oldKey, err)
+			fmt.Fprintf(os.Stderr, "  WARNING: %s application %q: %v\n", b.Name, oldKey, err)
 			continue
 		}
 		r.ini.remove(oldKey)
@@ -177,7 +197,64 @@ func (r *Runner) runApplicationEntries(m Migration) int {
 	return migrated
 }
 
-// runDropInEnvEntries processes Migration.DropInEnvEntries.
+// runApplicationKVMoves processes Migration.ApplicationKVMoves in declaration
+// order.  Moves read from Consul KV itself (NOT from the legacy ini), so they
+// run even when the ini is absent.
+//
+// Per move:
+//   - Get(OldPath) absent → skip (nothing to migrate; makes moves idempotent).
+//   - Get(NewPath) present → skip ENTIRELY (never clobber an operator's
+//     new-style value; the old key is left untouched as a harmless leftover).
+//   - Transform error (nil Transform = identity) → WARNING with path and
+//     reason, skip, continue — a bad operator value never fails the setup.
+//   - Get/Set errors → WARNING, skip, continue; the old key is NOT deleted so
+//     a re-run can retry (same semantics as application entry failures).
+//   - Set succeeds but Delete(OldPath) fails → WARNING (stale old key left
+//     behind, harmless); the move still counts as migrated — no rollback.
+func (r *Runner) runApplicationKVMoves(m Migration) int {
+	migrated := 0
+	for _, mv := range m.ApplicationKVMoves {
+		oldValue, oldExists, err := r.kv.Get(mv.OldPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.OldPath, err)
+			continue
+		}
+		if !oldExists {
+			continue
+		}
+		_, newExists, err := r.kv.Get(mv.NewPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.NewPath, err)
+			continue
+		}
+		if newExists {
+			continue
+		}
+		newValue := oldValue
+		if mv.Transform != nil {
+			newValue, err = mv.Transform(oldValue)
+			if err != nil {
+				// Deliberately do NOT echo the value: this is a generic facility
+				// and setup stderr lands in logs — a Transform on a sensitive key
+				// must not leak it.
+				fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: transform: %v\n", m.Name, mv.OldPath, err)
+				continue
+			}
+		}
+		if err := r.kv.Set(mv.NewPath, newValue); err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.NewPath, err)
+			continue
+		}
+		if err := r.kv.Delete(mv.OldPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: delete old key: %v (stale old key left behind)\n",
+				m.Name, mv.OldPath, err)
+		}
+		migrated++
+	}
+	return migrated
+}
+
+// runDropInEnvEntries processes Bootstrap.DropInEnvEntries.
 //
 // For each old ini key present in the store, it collects the (envVar, value)
 // pairs and writes them all into a single systemd drop-in file atomically
@@ -187,8 +264,8 @@ func (r *Runner) runApplicationEntries(m Migration) int {
 //
 // If the file write fails, no ini keys are removed (retryable on next run).
 // If no entries are present, the function is a no-op.
-func (r *Runner) runDropInEnvEntries(m Migration) int {
-	if r.ini.isAbsent() || len(m.DropInEnvEntries) == 0 {
+func (r *Runner) runDropInEnvEntries(b Bootstrap) int {
+	if r.ini.isAbsent() || len(b.DropInEnvEntries) == 0 {
 		return 0
 	}
 
@@ -199,7 +276,7 @@ func (r *Runner) runDropInEnvEntries(m Migration) int {
 		value  string
 	}
 	var found []pair
-	for oldKey, envVar := range m.DropInEnvEntries {
+	for oldKey, envVar := range b.DropInEnvEntries {
 		val, ok := r.ini.get(oldKey)
 		if !ok {
 			continue
@@ -220,14 +297,14 @@ func (r *Runner) runDropInEnvEntries(m Migration) int {
 
 	// Ensure parent directory exists.
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create dir %s: %v\n", m.Name, filepath.Dir(dest), err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create dir %s: %v\n", b.Name, filepath.Dir(dest), err)
 		return 0
 	}
 
 	// Write atomically via temp file + rename.
 	tmp, err := os.CreateTemp(filepath.Dir(dest), "drop-in-*.conf.tmp")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create temp: %v\n", m.Name, err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: create temp: %v\n", b.Name, err)
 		return 0
 	}
 	tmpName := tmp.Name()
@@ -235,22 +312,22 @@ func (r *Runner) runDropInEnvEntries(m Migration) int {
 	if _, err := fmt.Fprint(tmp, content); err != nil {
 		tmp.Close()        //nolint:errcheck
 		os.Remove(tmpName) //nolint:errcheck
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: write temp: %v\n", m.Name, err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: write temp: %v\n", b.Name, err)
 		return 0
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName) //nolint:errcheck
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: close temp: %v\n", m.Name, err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: close temp: %v\n", b.Name, err)
 		return 0
 	}
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		os.Remove(tmpName) //nolint:errcheck
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: chmod temp: %v\n", m.Name, err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: chmod temp: %v\n", b.Name, err)
 		return 0
 	}
 	if err := os.Rename(tmpName, dest); err != nil {
 		os.Remove(tmpName) //nolint:errcheck
-		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: rename to %s: %v\n", m.Name, dest, err)
+		fmt.Fprintf(os.Stderr, "  WARNING: %s drop-in: rename to %s: %v\n", b.Name, dest, err)
 		return 0
 	}
 
@@ -261,12 +338,12 @@ func (r *Runner) runDropInEnvEntries(m Migration) int {
 	return len(found)
 }
 
-func (r *Runner) runDropEntries(m Migration) int {
+func (r *Runner) runDropEntries(b Bootstrap) int {
 	if r.ini.isAbsent() {
 		return 0
 	}
 	dropped := 0
-	for _, oldKey := range m.DropEntries {
+	for _, oldKey := range b.DropEntries {
 		if _, ok := r.ini.get(oldKey); !ok {
 			continue
 		}

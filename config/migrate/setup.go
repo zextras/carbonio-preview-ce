@@ -10,18 +10,19 @@ import (
 	"strings"
 )
 
-// RunSetup executes the config migrations belonging to paths.MigrationSet and
-// prints config documentation.
+// RunSetup executes the init-bootstrap + KV-move series belonging to
+// paths.MigrationSet and prints config documentation.
 //
 // It mirrors SetupAwareMain from carbonio-quarkus-extensions' package-scoped
 // migrations:
 //   - Reads SETUP_CONSUL_TOKEN from the environment.
 //   - Gates the token check: SETUP_CONSUL_TOKEN is required only when application
-//     entries will actually run (ini present and contains at least one application
-//     key belonging to the SELECTED SET).
-//   - Runs only the migrations registered under paths.MigrationSet (e.g. "ce"),
-//     never another edition's set, then always prints configsMd (a blank line
-//     followed by the embedded configs.md Markdown content).
+//     work will actually run (the set's Bootstrap, if any, has an ini present
+//     containing at least one application key, OR the set has any Vn migration
+//     registered — those talk to Consul KV regardless of the ini).
+//   - Runs only the bootstrap/migrations registered under paths.MigrationSet
+//     (e.g. "ce"), never another edition's set, then always prints configsMd
+//     (a blank line followed by the embedded configs.md Markdown content).
 //   - Returns a non-nil error on any failure; the caller is responsible for
 //     exiting with a non-zero code.
 //
