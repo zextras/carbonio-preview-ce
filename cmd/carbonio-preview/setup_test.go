@@ -71,19 +71,30 @@ func TestRunSetupIfRequested_MissingURL(t *testing.T) {
 
 // TestRunSetupIfRequested_Success verifies the success dispatch: --setup with a
 // URL runs the migration and returns handled=true, code=0. It relies on the
-// production ini path being absent (the default on a developer/CI machine), so
-// there is no application work, no token is needed, and no Consul call is made.
-// If the production ini happens to exist, the test skips rather than touch it.
+// production ini path being absent (the default on a developer/CI machine),
+// so V1 has no application work. However cemig's V2MoveDBPoolKeys declares
+// ApplicationKVMoves, which always count as application work regardless of
+// the ini (they talk to Consul KV directly) — so SETUP_CONSUL_TOKEN is
+// required and a reachable Consul stub is needed even in this "absent ini"
+// case. If the production ini happens to exist, the test skips rather than
+// touch it.
 func TestRunSetupIfRequested_Success(t *testing.T) {
 	if _, err := os.Stat("/etc/carbonio/preview/config.ini"); err == nil {
 		t.Skip("production config.ini present; skipping to avoid touching real config")
 	}
-	handled, code := runSetupIfRequested([]string{"--setup", "http://127.0.0.1:8500"})
+	t.Setenv("SETUP_CONSUL_TOKEN", "tok")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound) // no pool.* keys pre-seeded: V2 finds nothing to move
+	}))
+	defer srv.Close()
+
+	handled, code := runSetupIfRequested([]string{"--setup", srv.URL})
 	if !handled {
 		t.Fatal("handled = false, want true for --setup with URL")
 	}
 	if code != 0 {
-		t.Errorf("code = %d, want 0 on successful setup (absent ini → no-op)", code)
+		t.Errorf("code = %d, want 0 on successful setup (absent ini, V2 finds nothing to move)", code)
 	}
 }
 
