@@ -12,7 +12,9 @@
 //     (unique within its own set), a name matching V<n>__<desc>, and two entry
 //     tables (networking and application).  Each entry is an old-source key
 //     mapped to a function that writes new entries via the injected
-//     ConfigStore.
+//     ConfigStore.  A Migration may additionally declare KV-to-KV moves
+//     (ApplicationKVMoves) that rename existing Consul KV keys — with an
+//     optional value transform — independently of the legacy ini.
 //
 //   - This package is FRAMEWORK ONLY: it holds no migrations of its own.
 //     Migrations are registered into NAMED SETS via RegisterInSet, so that
@@ -35,6 +37,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -45,6 +48,28 @@ var migrationNameRE = regexp.MustCompile(`^V(\d+)__\w+$`)
 // It receives the old source key and its current value, and must write new
 // entries via the injected ConfigStore.
 type EntryFunc func(oldKey, oldValue string, dest ConfigStore) error
+
+// KVMove describes one Consul KV → Consul KV key rename with an optional
+// value transform.  Paths are raw slash KV paths (same convention as
+// application entry destinations), e.g. "carbonio-preview/database/db-pool-max-size".
+//
+// Runner semantics (see Runner.runApplicationKVMoves):
+//   - OldPath absent in KV → skip (nothing to migrate).
+//   - NewPath already present → skip entirely (never clobber an operator's
+//     new-style value; the old key is left untouched as a harmless leftover).
+//   - Transform error → WARNING, skip, continue (never fails the setup).
+//   - Otherwise Set(NewPath, transformed) then Delete(OldPath).
+type KVMove struct {
+	// OldPath is the full KV path of the key to move.
+	OldPath string
+
+	// NewPath is the full KV path the value is moved to.
+	NewPath string
+
+	// Transform converts the old value into the new one.  nil means identity
+	// (the value is copied verbatim).
+	Transform func(oldValue string) (string, error)
+}
 
 // Migration describes one versioned config migration.
 // The Name field must match ^V(\d+)__\w+$ (validated at registration).
@@ -81,6 +106,14 @@ type Migration struct {
 	// the drop-in absent and the successful keys still pending in the ini for
 	// retry.
 	DropInEnvEntries map[string]string
+
+	// ApplicationKVMoves lists Consul KV → Consul KV key renames (with optional
+	// value transform) executed in declaration order.  Unlike the entry tables
+	// above, moves read from Consul KV itself, NOT from the legacy ini, and run
+	// even when the ini is absent.  A migration with a non-empty move list
+	// always counts as application work (SETUP_CONSUL_TOKEN required).
+	// Moves are intrinsically idempotent: once the old key is gone, re-runs skip.
+	ApplicationKVMoves []KVMove
 }
 
 var (
@@ -94,9 +127,24 @@ var (
 //   - m.Version is already registered WITHIN THE SAME SET (a different set
 //     may reuse the same version number — e.g. CE's V1 and Advanced's V1 are
 //     unrelated and do not collide).
+//   - any ApplicationKVMoves entry has an empty OldPath or NewPath, a path
+//     without a "/" (KV paths are full slash paths, e.g. "<service>/<key>" —
+//     a bare dotted config key here would silently never match), or
+//     OldPath == NewPath.
 func RegisterInSet(setName string, m Migration) error {
 	if !migrationNameRE.MatchString(m.Name) {
 		return fmt.Errorf("migrate: name %q does not match V<n>__<desc> pattern", m.Name)
+	}
+	for _, mv := range m.ApplicationKVMoves {
+		if mv.OldPath == "" || mv.NewPath == "" {
+			return fmt.Errorf("migrate: %s: KV move paths must be non-empty (old=%q, new=%q)", m.Name, mv.OldPath, mv.NewPath)
+		}
+		if !strings.Contains(mv.OldPath, "/") || !strings.Contains(mv.NewPath, "/") {
+			return fmt.Errorf("migrate: %s: KV move paths must be full slash KV paths (old=%q, new=%q)", m.Name, mv.OldPath, mv.NewPath)
+		}
+		if mv.OldPath == mv.NewPath {
+			return fmt.Errorf("migrate: %s: KV move old and new path are identical (%q)", m.Name, mv.OldPath)
+		}
 	}
 	setsMu.Lock()
 	defer setsMu.Unlock()

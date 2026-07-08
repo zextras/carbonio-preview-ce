@@ -14,7 +14,8 @@ import (
 // It is wired to three stores:
 //   - ini: legacy source (config.ini) — read-only source, deleted/renamed after run
 //   - net: networking destination (config.properties) — written if any net entry migrated
-//   - kv:  application destination (Consul KV) — written per-entry
+//   - kv:  application destination (Consul KV) — written per-entry; also read
+//     and deleted per-move for ApplicationKVMoves
 type Runner struct {
 	ini        *iniStore
 	net        *propertiesStore
@@ -25,14 +26,19 @@ type Runner struct {
 
 // HasApplicationWork returns true if at least one migration in the runner's
 // selected set has an application entry whose old key is present in the
-// legacy ini.  This is used by --setup to decide whether SETUP_CONSUL_TOKEN is
-// required before any modification is made.
+// legacy ini, OR declares any ApplicationKVMoves (moves talk to Consul KV
+// regardless of the ini, so their mere presence means Consul work).  This is
+// used by --setup to decide whether SETUP_CONSUL_TOKEN is required before any
+// modification is made.
 // It must be consulted BEFORE Run() — the token gate is enforced only by call ordering in RunSetup.
 func (r *Runner) HasApplicationWork() bool {
-	if r.ini.isAbsent() {
-		return false
-	}
 	for _, m := range orderedSet(r.setName) {
+		if len(m.ApplicationKVMoves) > 0 {
+			return true
+		}
+		if r.ini.isAbsent() {
+			continue
+		}
 		for oldKey := range m.ApplicationEntries {
 			if _, ok := r.ini.get(oldKey); ok {
 				return true
@@ -105,7 +111,7 @@ func (r *Runner) Run() {
 	for _, m := range migrations {
 		netMigrated, appMigrated := r.runOne(m)
 		totalNet := len(m.NetworkingEntries) + len(m.DropInEnvEntries)
-		totalApp := len(m.ApplicationEntries) + len(m.DropEntries)
+		totalApp := len(m.ApplicationEntries) + len(m.DropEntries) + len(m.ApplicationKVMoves)
 		fmt.Printf("  %s: networking %d/%d, application %d/%d migrated\n",
 			m.Name, netMigrated, totalNet, appMigrated, totalApp)
 	}
@@ -126,13 +132,14 @@ func (r *Runner) Run() {
 	}
 }
 
-// runOne runs a single migration's networking, application, drop, and drop-in
-// entries.  It returns (netMigrated, appMigrated).
+// runOne runs a single migration's networking, application, KV-move, drop,
+// and drop-in entries.  It returns (netMigrated, appMigrated).
 // Per-entry errors are logged as warnings; the entry's old key is NOT deleted.
 func (r *Runner) runOne(m Migration) (int, int) {
 	netMigrated := r.runNetworkingEntries(m)
 	netMigrated += r.runDropInEnvEntries(m)
 	appMigrated := r.runApplicationEntries(m)
+	appMigrated += r.runApplicationKVMoves(m)
 	appMigrated += r.runDropEntries(m)
 	return netMigrated, appMigrated
 }
@@ -172,6 +179,63 @@ func (r *Runner) runApplicationEntries(m Migration) int {
 			continue
 		}
 		r.ini.remove(oldKey)
+		migrated++
+	}
+	return migrated
+}
+
+// runApplicationKVMoves processes Migration.ApplicationKVMoves in declaration
+// order.  Moves read from Consul KV itself (NOT from the legacy ini), so they
+// run even when the ini is absent.
+//
+// Per move:
+//   - Get(OldPath) absent → skip (nothing to migrate; makes moves idempotent).
+//   - Get(NewPath) present → skip ENTIRELY (never clobber an operator's
+//     new-style value; the old key is left untouched as a harmless leftover).
+//   - Transform error (nil Transform = identity) → WARNING with path and
+//     reason, skip, continue — a bad operator value never fails the setup.
+//   - Get/Set errors → WARNING, skip, continue; the old key is NOT deleted so
+//     a re-run can retry (same semantics as application entry failures).
+//   - Set succeeds but Delete(OldPath) fails → WARNING (stale old key left
+//     behind, harmless); the move still counts as migrated — no rollback.
+func (r *Runner) runApplicationKVMoves(m Migration) int {
+	migrated := 0
+	for _, mv := range m.ApplicationKVMoves {
+		oldValue, oldExists, err := r.kv.Get(mv.OldPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.OldPath, err)
+			continue
+		}
+		if !oldExists {
+			continue
+		}
+		_, newExists, err := r.kv.Get(mv.NewPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.NewPath, err)
+			continue
+		}
+		if newExists {
+			continue
+		}
+		newValue := oldValue
+		if mv.Transform != nil {
+			newValue, err = mv.Transform(oldValue)
+			if err != nil {
+				// Deliberately do NOT echo the value: this is a generic facility
+				// and setup stderr lands in logs — a Transform on a sensitive key
+				// must not leak it.
+				fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: transform: %v\n", m.Name, mv.OldPath, err)
+				continue
+			}
+		}
+		if err := r.kv.Set(mv.NewPath, newValue); err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: %v\n", m.Name, mv.NewPath, err)
+			continue
+		}
+		if err := r.kv.Delete(mv.OldPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  WARNING: %s kv-move %q: delete old key: %v (stale old key left behind)\n",
+				m.Name, mv.OldPath, err)
+		}
 		migrated++
 	}
 	return migrated

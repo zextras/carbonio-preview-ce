@@ -17,8 +17,9 @@ import (
 // migrations:
 //   - Reads SETUP_CONSUL_TOKEN from the environment.
 //   - Gates the token check: SETUP_CONSUL_TOKEN is required only when application
-//     entries will actually run (ini present and contains at least one application
-//     key belonging to the SELECTED SET).
+//     work will actually run (ini present and contains at least one application
+//     key belonging to the SELECTED SET, or any migration in the set declares
+//     ApplicationKVMoves — those talk to Consul KV regardless of the ini).
 //   - Runs only the migrations registered under paths.MigrationSet (e.g. "ce"),
 //     never another edition's set, then always prints configsMd (a blank line
 //     followed by the embedded configs.md Markdown content).

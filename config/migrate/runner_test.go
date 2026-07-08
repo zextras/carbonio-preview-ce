@@ -5,11 +5,15 @@
 package migrate
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -377,6 +381,136 @@ func TestConsulKvStore_Set_TransportError(t *testing.T) {
 	}
 }
 
+// ── consulKvStore.Get / Delete direct arms ────────────────────────────────────
+
+// TestConsulKvStore_Get_PresentAndAbsent covers the 200 (value, true, nil) and
+// 404 ("", false, nil) arms of Get, and verifies the token header is sent and
+// the ?raw query is on the wire (without it Consul would return a JSON
+// metadata array, not the bare value).
+func TestConsulKvStore_Get_PresentAndAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Consul-Token") != "tok" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.RawQuery != "raw" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/v1/kv/carbonio-preview/present" {
+			fmt.Fprint(w, "the-value")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	store := newConsulKvStore(srv.URL, "tok")
+	v, ok, err := store.Get("carbonio-preview/present")
+	if err != nil || !ok || v != "the-value" {
+		t.Errorf("Get(present) = (%q, %v, %v), want (\"the-value\", true, nil)", v, ok, err)
+	}
+	v, ok, err = store.Get("carbonio-preview/missing")
+	if err != nil || ok || v != "" {
+		t.Errorf("Get(missing) = (%q, %v, %v), want (\"\", false, nil) — 404 is not an error", v, ok, err)
+	}
+}
+
+// TestConsulKvStore_Get_Non200 covers the non-200/non-404 status arm of Get.
+func TestConsulKvStore_Get_Non200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	store := newConsulKvStore(srv.URL, "tok")
+	_, _, err := store.Get("carbonio-preview/key")
+	if err == nil {
+		t.Fatal("want error on non-200/non-404 Consul response")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("error = %v, want it to mention HTTP 500", err)
+	}
+}
+
+// TestConsulKvStore_Get_BodyReadError covers the io.ReadAll error arm: the
+// server promises more bytes (Content-Length) than it writes, so the client's
+// body read fails with an unexpected EOF.
+func TestConsulKvStore_Get_BodyReadError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		fmt.Fprint(w, "short")
+	}))
+	defer srv.Close()
+
+	store := newConsulKvStore(srv.URL, "tok")
+	_, _, err := store.Get("carbonio-preview/key")
+	if err == nil {
+		t.Fatal("want body-read error when server truncates the response")
+	}
+}
+
+// TestConsulKvStore_Get_RequestBuildError covers the http.NewRequest build-error
+// arm of Get (control byte in the key makes the URL unparseable).
+func TestConsulKvStore_Get_RequestBuildError(t *testing.T) {
+	store := newConsulKvStore("http://127.0.0.1:8500", "tok")
+	_, _, err := store.Get("bad\x7fkey")
+	if err == nil {
+		t.Fatal("want build error for URL with control character")
+	}
+	if !strings.Contains(err.Error(), "build GET") {
+		t.Errorf("error = %v, want it to wrap the build-request message", err)
+	}
+}
+
+// TestConsulKvStore_Get_TransportError covers the client.Do error arm of Get.
+func TestConsulKvStore_Get_TransportError(t *testing.T) {
+	store := newConsulKvStore("http://127.0.0.1:1", "tok")
+	_, _, err := store.Get("carbonio-preview/key")
+	if err == nil {
+		t.Fatal("want transport error when Consul is unreachable")
+	}
+}
+
+// TestConsulKvStore_Delete_Non200 covers the non-200 status arm of Delete.
+func TestConsulKvStore_Delete_Non200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	store := newConsulKvStore(srv.URL, "tok")
+	err := store.Delete("carbonio-preview/key")
+	if err == nil {
+		t.Fatal("want error on non-200 Consul response")
+	}
+	if !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("error = %v, want it to mention HTTP 500", err)
+	}
+}
+
+// TestConsulKvStore_Delete_RequestBuildError covers the http.NewRequest
+// build-error arm of Delete.
+func TestConsulKvStore_Delete_RequestBuildError(t *testing.T) {
+	store := newConsulKvStore("http://127.0.0.1:8500", "tok")
+	err := store.Delete("bad\x7fkey")
+	if err == nil {
+		t.Fatal("want build error for URL with control character")
+	}
+	if !strings.Contains(err.Error(), "build DELETE") {
+		t.Errorf("error = %v, want it to wrap the build-request message", err)
+	}
+}
+
+// TestConsulKvStore_Delete_TransportError covers the client.Do error arm of Delete.
+func TestConsulKvStore_Delete_TransportError(t *testing.T) {
+	store := newConsulKvStore("http://127.0.0.1:1", "tok")
+	err := store.Delete("carbonio-preview/key")
+	if err == nil {
+		t.Fatal("want transport error when Consul is unreachable")
+	}
+}
+
 // ── propertiesStore.Save FS-error arm ─────────────────────────────────────────
 
 // TestPropertiesStore_Save_MkdirError covers the MkdirAll-error arm of Save by
@@ -430,6 +564,329 @@ func TestPropertiesStore_Save_CreateError(t *testing.T) {
 	if err := store.Save(); err == nil {
 		t.Fatal("want os.Create error when parent directory is read-only")
 	}
+}
+
+// ── Application KV-move tests ─────────────────────────────────────────────────
+
+// newStatefulConsul returns a Consul KV stub backed by the given in-memory data
+// map: GET /v1/kv/<path>?raw serves the map (404 when absent; 500 when the
+// ?raw query is missing — a real Consul would answer a JSON metadata array,
+// not the bare value), PUT writes into it, DELETE removes from it.  Paths
+// listed in failPut / failDelete return HTTP 500 for that method instead, to
+// simulate per-key Consul failures.
+// The test may inspect the data map after the runner has finished.
+func newStatefulConsul(t *testing.T, data map[string]string, failPut, failDelete map[string]bool) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/v1/kv/")
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			if r.URL.RawQuery != "raw" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if v, ok := data[path]; ok {
+				fmt.Fprint(w, v)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodPut:
+			if failPut[path] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			body, _ := io.ReadAll(r.Body)
+			data[path] = string(body)
+			fmt.Fprint(w, "true")
+		case http.MethodDelete:
+			if failDelete[path] {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			delete(data, path)
+			fmt.Fprint(w, "true")
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// newMoveRunner builds a runner with an ABSENT legacy ini — KV moves read from
+// Consul KV itself and must run regardless of the ini — pointed at consulURL.
+func newMoveRunner(t *testing.T, consulURL string) *Runner {
+	t.Helper()
+	dir := t.TempDir()
+	runner, err := NewRunner(Paths{
+		IniPath:      filepath.Join(dir, "no.ini"),
+		PropsPath:    filepath.Join(dir, "config.properties"),
+		ConsulURL:    consulURL,
+		ConsulToken:  "tok",
+		DropInPath:   filepath.Join(dir, "log-level.conf"),
+		MigrationSet: "ce",
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+	return runner
+}
+
+// TestRunApplicationKVMoves_IdentityMove runs a moves-only migration through the
+// full Run() path (registered set, absent ini): the old key's value must be
+// copied verbatim to the new path and the old key deleted.
+func TestRunApplicationKVMoves_IdentityMove(t *testing.T) {
+	withCleanRegistry(t, func() {
+		data := map[string]string{"svc/pool/max-connections": "7"}
+		srv := newStatefulConsul(t, data, nil, nil)
+
+		if err := RegisterInSet("ce", Migration{
+			Version: 2,
+			Name:    "V2__MoveOnly",
+			ApplicationKVMoves: []KVMove{
+				{OldPath: "svc/pool/max-connections", NewPath: "svc/db-pool-max-size"},
+			},
+		}); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+
+		runner := newMoveRunner(t, srv.URL)
+		runner.Run()
+
+		if got := data["svc/db-pool-max-size"]; got != "7" {
+			t.Errorf("new key = %q, want value copied verbatim (%q)", got, "7")
+		}
+		if _, ok := data["svc/pool/max-connections"]; ok {
+			t.Error("old key must be deleted after a successful move")
+		}
+	})
+}
+
+// TestRunApplicationKVMoves_Transform verifies a value transform (seconds →
+// milliseconds style, ×1000) is applied before the write.
+func TestRunApplicationKVMoves_Transform(t *testing.T) {
+	data := map[string]string{"svc/pool/lifetime-seconds": "1800"}
+	srv := newStatefulConsul(t, data, nil, nil)
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version: 2,
+		Name:    "V2__MoveTransform",
+		ApplicationKVMoves: []KVMove{{
+			OldPath: "svc/pool/lifetime-seconds",
+			NewPath: "svc/db-pool-max-lifetime",
+			Transform: func(old string) (string, error) {
+				n, err := strconv.Atoi(old)
+				if err != nil {
+					return "", err
+				}
+				return strconv.Itoa(n * 1000), nil
+			},
+		}},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 1 {
+		t.Errorf("runApplicationKVMoves = %d, want 1", n)
+	}
+	if got := data["svc/db-pool-max-lifetime"]; got != "1800000" {
+		t.Errorf("new key = %q, want transformed value %q", got, "1800000")
+	}
+	if _, ok := data["svc/pool/lifetime-seconds"]; ok {
+		t.Error("old key must be deleted after a successful transformed move")
+	}
+}
+
+// TestRunApplicationKVMoves_OldAbsent verifies the nothing-to-migrate arm: no
+// writes and no deletes happen when the old key does not exist.
+func TestRunApplicationKVMoves_OldAbsent(t *testing.T) {
+	data := map[string]string{}
+	srv := newStatefulConsul(t, data, nil, nil)
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version:            2,
+		Name:               "V2__MoveAbsent",
+		ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 0 {
+		t.Errorf("runApplicationKVMoves = %d, want 0 when old key is absent", n)
+	}
+	if len(data) != 0 {
+		t.Errorf("no KV writes must happen when the old key is absent, got %v", data)
+	}
+}
+
+// TestRunApplicationKVMoves_NewAlreadyPresent verifies the never-clobber arm:
+// when the new path already holds an operator value, the move is skipped
+// entirely — the new value is untouched and the old key survives (harmless
+// leftover).
+func TestRunApplicationKVMoves_NewAlreadyPresent(t *testing.T) {
+	data := map[string]string{
+		"svc/old": "operator-old",
+		"svc/new": "operator-new",
+	}
+	srv := newStatefulConsul(t, data, nil, nil)
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version:            2,
+		Name:               "V2__MoveNoClobber",
+		ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 0 {
+		t.Errorf("runApplicationKVMoves = %d, want 0 when new key already exists", n)
+	}
+	if got := data["svc/new"]; got != "operator-new" {
+		t.Errorf("new key = %q, must never be clobbered (want %q)", got, "operator-new")
+	}
+	if got := data["svc/old"]; got != "operator-old" {
+		t.Errorf("old key = %q, must survive untouched when the move is skipped (want %q)", got, "operator-old")
+	}
+}
+
+// TestRunApplicationKVMoves_TransformErrorContinues verifies the warn-and-
+// continue arm: a Transform error (e.g. a non-numeric operator value) must not
+// write, not delete, and not stop the remaining moves.
+func TestRunApplicationKVMoves_TransformErrorContinues(t *testing.T) {
+	data := map[string]string{
+		"svc/bad-old":  "not-a-number",
+		"svc/good-old": "5",
+	}
+	srv := newStatefulConsul(t, data, nil, nil)
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version: 2,
+		Name:    "V2__MoveTransformError",
+		ApplicationKVMoves: []KVMove{
+			{
+				OldPath: "svc/bad-old",
+				NewPath: "svc/bad-new",
+				Transform: func(old string) (string, error) {
+					n, err := strconv.Atoi(old)
+					if err != nil {
+						return "", err
+					}
+					return strconv.Itoa(n * 1000), nil
+				},
+			},
+			{OldPath: "svc/good-old", NewPath: "svc/good-new"},
+		},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 1 {
+		t.Errorf("runApplicationKVMoves = %d, want 1 (bad move skipped, good move done)", n)
+	}
+	if got := data["svc/bad-old"]; got != "not-a-number" {
+		t.Errorf("bad old key = %q, must survive when transform fails (want %q)", got, "not-a-number")
+	}
+	if _, ok := data["svc/bad-new"]; ok {
+		t.Error("bad new key must NOT be written when transform fails")
+	}
+	if got := data["svc/good-new"]; got != "5" {
+		t.Errorf("good new key = %q, the run must continue to the next move (want %q)", got, "5")
+	}
+	if _, ok := data["svc/good-old"]; ok {
+		t.Error("good old key must be deleted (subsequent move completed normally)")
+	}
+}
+
+// TestRunApplicationKVMoves_SetFails verifies the retryable arm: when the PUT
+// to the new path fails, the old key is untouched (retry on next run) and the
+// move does not count as migrated.
+func TestRunApplicationKVMoves_SetFails(t *testing.T) {
+	data := map[string]string{"svc/old": "42"}
+	srv := newStatefulConsul(t, data, map[string]bool{"svc/new": true}, nil)
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version:            2,
+		Name:               "V2__MoveSetFails",
+		ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 0 {
+		t.Errorf("runApplicationKVMoves = %d, want 0 when Set fails", n)
+	}
+	if got := data["svc/old"]; got != "42" {
+		t.Errorf("old key = %q, must survive when Set fails (retryable, want %q)", got, "42")
+	}
+	if _, ok := data["svc/new"]; ok {
+		t.Error("new key must be absent when Set failed")
+	}
+}
+
+// TestRunApplicationKVMoves_DeleteFails verifies the no-rollback arm: when Set
+// succeeds but the DELETE of the old key fails, the new value stays in place,
+// the stale old key is left behind (warned), and no failure propagates.
+func TestRunApplicationKVMoves_DeleteFails(t *testing.T) {
+	data := map[string]string{"svc/old": "42"}
+	srv := newStatefulConsul(t, data, nil, map[string]bool{"svc/old": true})
+	runner := newMoveRunner(t, srv.URL)
+
+	m := Migration{
+		Version:            2,
+		Name:               "V2__MoveDeleteFails",
+		ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+	}
+	if n := runner.runApplicationKVMoves(m); n != 1 {
+		t.Errorf("runApplicationKVMoves = %d, want 1 (move done, delete warned)", n)
+	}
+	if got := data["svc/new"]; got != "42" {
+		t.Errorf("new key = %q, must be in place even when the old-key delete fails (want %q)", got, "42")
+	}
+	if got := data["svc/old"]; got != "42" {
+		t.Errorf("old key = %q, expected the stale leftover to survive the failed delete (want %q)", got, "42")
+	}
+}
+
+// TestHasApplicationWork_TrueWithOnlyKVMoves verifies the token gate: a
+// migration whose only content is ApplicationKVMoves counts as application
+// work even when the legacy ini is absent (moves talk to Consul KV directly).
+func TestHasApplicationWork_TrueWithOnlyKVMoves(t *testing.T) {
+	withCleanRegistry(t, func() {
+		if err := RegisterInSet("ce", Migration{
+			Version:            2,
+			Name:               "V2__MovesOnly",
+			ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+		}); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		// No Consul contact happens in HasApplicationWork — a dead URL is fine.
+		runner := newMoveRunner(t, "http://127.0.0.1:1")
+		if !runner.HasApplicationWork() {
+			t.Error("a migration with only KV moves must count as application work even with an absent ini")
+		}
+	})
+}
+
+// TestRunSetup_KVMovesRequireToken verifies the RunSetup token gate end to end:
+// with a moves-only migration and no SETUP_CONSUL_TOKEN, setup must fail before
+// touching Consul.
+func TestRunSetup_KVMovesRequireToken(t *testing.T) {
+	withCleanRegistry(t, func() {
+		t.Setenv("SETUP_CONSUL_TOKEN", "")
+		if err := RegisterInSet("ce", Migration{
+			Version:            2,
+			Name:               "V2__MovesOnly",
+			ApplicationKVMoves: []KVMove{{OldPath: "svc/old", NewPath: "svc/new"}},
+		}); err != nil {
+			t.Fatalf("register: %v", err)
+		}
+		dir := t.TempDir()
+		paths := Paths{
+			IniPath:      filepath.Join(dir, "no.ini"),
+			PropsPath:    filepath.Join(dir, "config.properties"),
+			DropInPath:   filepath.Join(dir, "log-level.conf"),
+			MigrationSet: "ce",
+		}
+		// The gate must trip before any Consul contact — a dead URL is fine.
+		err := RunSetup("http://127.0.0.1:1", paths, "DOCS-TXT")
+		if err == nil {
+			t.Fatal("want SETUP_CONSUL_TOKEN error for a moves-only migration, got nil")
+		}
+		if !strings.Contains(err.Error(), "SETUP_CONSUL_TOKEN") {
+			t.Errorf("error = %v, want it to mention SETUP_CONSUL_TOKEN", err)
+		}
+	})
 }
 
 // newOKConsul returns a Consul stub that accepts PUT/DELETE with 200 and returns

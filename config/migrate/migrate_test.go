@@ -87,6 +87,34 @@ func TestRegisterInSet_SameVersionAcrossDifferentSetsAllowed(t *testing.T) {
 	})
 }
 
+// TestRegisterInSet_KVMoveValidation verifies that malformed ApplicationKVMoves
+// are rejected at registration time: empty paths and old==new renames are
+// programming errors, not runtime conditions.
+func TestRegisterInSet_KVMoveValidation(t *testing.T) {
+	withCleanRegistry(t, func() {
+		cases := []struct {
+			name string
+			mv   KVMove
+		}{
+			{"empty old path", KVMove{OldPath: "", NewPath: "svc/new"}},
+			{"empty new path", KVMove{OldPath: "svc/old", NewPath: ""}},
+			{"no slash in old path (bare dotted key)", KVMove{OldPath: "database.pool.max", NewPath: "svc/new"}},
+			{"no slash in new path (bare dotted key)", KVMove{OldPath: "svc/old", NewPath: "database.db-pool-max-size"}},
+			{"identical paths", KVMove{OldPath: "svc/same", NewPath: "svc/same"}},
+		}
+		for _, tc := range cases {
+			err := RegisterInSet("ce", Migration{
+				Version:            1,
+				Name:               "V1__BadMove",
+				ApplicationKVMoves: []KVMove{tc.mv},
+			})
+			if err == nil {
+				t.Errorf("%s: want registration error, got nil", tc.name)
+			}
+		}
+	})
+}
+
 func TestOrderedSet_VersionAscending(t *testing.T) {
 	withCleanRegistry(t, func() {
 		var order []int
