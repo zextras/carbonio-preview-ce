@@ -49,7 +49,7 @@ func CEBootstrap() migrate.Bootstrap {
 	}
 
 	return migrate.Bootstrap{
-		Name: "V1__MigrateFromPythonIni",
+		Name: "Bootstrap__MigrateFromPythonIni",
 
 		// ── Networking entries (INI section.key → config.properties key) ──────────
 		NetworkingEntries: map[string]migrate.EntryFunc{

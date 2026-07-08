@@ -86,7 +86,7 @@ type KVMove struct {
 // Migration series.
 type Bootstrap struct {
 	// Name identifies the bootstrap in the setup log line (e.g.
-	// "V1__MigrateFromPythonIni"). Must be non-empty.
+	// "Bootstrap__MigrateFromPythonIni"). Must be non-empty.
 	Name string
 
 	// NetworkingEntries maps old source (INI) key → function that writes to the

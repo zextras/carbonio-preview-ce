@@ -67,7 +67,7 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRunner: %v", err)
 		}
-		// runOne via runDropInEnvEntries must hit the MkdirAll error arm and
+		// runBootstrap via runDropInEnvEntries must hit the MkdirAll error arm and
 		// return 0 migrated for the drop-in; the log.level key must therefore
 		// survive in the ini (retryable on next run).
 		n := runner.runDropInEnvEntries(genericDropInBootstrap())

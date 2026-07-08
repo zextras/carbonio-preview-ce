@@ -144,7 +144,7 @@ func TestRegisterInSet_KVMoveValidation(t *testing.T) {
 // Bootstrap registers cleanly and bootstrapFor can find it back.
 func TestRegisterBootstrap_Success(t *testing.T) {
 	withCleanRegistry(t, func() {
-		b := Bootstrap{Name: "V1__MigrateFromPythonIni"}
+		b := Bootstrap{Name: "Bootstrap__MigrateFromPythonIni"}
 		if err := RegisterBootstrap("ce", b); err != nil {
 			t.Fatalf("RegisterBootstrap: %v", err)
 		}
