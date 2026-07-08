@@ -111,10 +111,10 @@ type Config struct {
 	// DSN and PoolConfig are derived once in Load() for use by cmd/.../main.go.
 	// If credentials are absent the DSN is empty and the DB layer will fail-fast
 	// at pool-open time (not at config parse time, so unit tests without a DB pass).
-	DBDSN             string
-	DBPoolMaxConns    int32
-	DBPoolMinConns    int32
-	DBConnMaxLifetime int
+	DBDSN               string
+	DBPoolMaxConns      int32
+	DBPoolMinConns      int32
+	DBConnMaxLifetimeMs int
 
 	// ── Video worker ─────────────────────────────────────────────────────────
 	// Application-layer keys video.poll-interval-seconds /
@@ -232,10 +232,10 @@ func Load() error {
 	c.PDFWorkers, parseErr = appPositiveInt(r, "render.pdf-subprocess-pool-size", parseErr)
 	c.VideoConcurrency, parseErr = appPositiveInt(r, "video.max-concurrent-extractions", parseErr)
 
-	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetime int
-	dbPoolMaxConns, parseErr = appPositiveInt(r, "database.pool.max-connections", parseErr)
-	dbPoolMinConns, parseErr = appPositiveInt(r, "database.pool.min-connections", parseErr)
-	dbConnMaxLifetime, parseErr = appPositiveInt(r, "database.pool.connection-max-lifetime-seconds", parseErr)
+	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetimeMs int
+	dbPoolMaxConns, parseErr = appPositiveInt(r, "database.db-pool-max-size", parseErr)
+	dbPoolMinConns, parseErr = appPositiveInt(r, "database.db-pool-min-size", parseErr)
+	dbConnMaxLifetimeMs, parseErr = appPositiveInt(r, "database.db-pool-max-lifetime", parseErr)
 
 	var videoSweepInterval, videoStaleTTL, videoMaxAttempts int
 	videoSweepInterval, parseErr = appPositiveInt(r, "video.poll-interval-seconds", parseErr)
@@ -271,10 +271,10 @@ func Load() error {
 	} else {
 		c.DBPoolMinConns = 2
 	}
-	if dbConnMaxLifetime > 0 {
-		c.DBConnMaxLifetime = dbConnMaxLifetime
+	if dbConnMaxLifetimeMs > 0 {
+		c.DBConnMaxLifetimeMs = dbConnMaxLifetimeMs
 	} else {
-		c.DBConnMaxLifetime = 600
+		c.DBConnMaxLifetimeMs = 600000
 	}
 
 	// ── Video worker tuning ───────────────────────────────────────────────────

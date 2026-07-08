@@ -91,6 +91,10 @@ func TestDefaults(t *testing.T) {
 		// application (KV) — timeouts (HiddenFromDocs, but still KV-configurable)
 		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
 		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
+		// application (KV) — DB pool; lifetime is MILLISECONDS (600000 = 10 min)
+		{"DBPoolMaxConns", App.DBPoolMaxConns, int32(10)},
+		{"DBPoolMinConns", App.DBPoolMinConns, int32(2)},
+		{"DBConnMaxLifetimeMs", App.DBConnMaxLifetimeMs, 600000},
 		// env knobs (default values)
 		{"RenderConcurrency", App.RenderConcurrency, runtime.NumCPU()},
 		{"PDFWorkers", App.PDFWorkers, runtime.NumCPU()},
