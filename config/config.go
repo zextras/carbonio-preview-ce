@@ -58,16 +58,16 @@ type Config struct {
 
 	// RenderConcurrency is the maximum number of concurrent render operations
 	// (image, PDF, document; does not apply to video).
-	// Application-layer key "render.max-concurrent-operations" (Consul KV
-	// carbonio-preview/render/max-concurrent-operations / env
-	// APPLICATION_CONFIG_RENDER_MAX_CONCURRENT_OPERATIONS). Defaults to
+	// Application-layer key "image-document.max-concurrent-operations" (Consul KV
+	// carbonio-preview/image-document/max-concurrent-operations / env
+	// APPLICATION_CONFIG_IMAGE_DOCUMENT_MAX_CONCURRENT_OPERATIONS). Defaults to
 	// runtime.NumCPU() when absent.
 	RenderConcurrency int
 
 	// PDFWorkers is the size of the PDFium subprocess worker pool.
-	// Application-layer key "render.pdf-subprocess-pool-size" (Consul KV
-	// carbonio-preview/render/pdf-subprocess-pool-size / env
-	// APPLICATION_CONFIG_RENDER_PDF_SUBPROCESS_POOL_SIZE). Defaults to
+	// Application-layer key "document.subprocess-pool-size" (Consul KV
+	// carbonio-preview/document/subprocess-pool-size / env
+	// APPLICATION_CONFIG_DOCUMENT_SUBPROCESS_POOL_SIZE). Defaults to
 	// runtime.NumCPU() when absent.
 	PDFWorkers int
 
@@ -84,9 +84,9 @@ type Config struct {
 	VIPSConcurrency int
 
 	// CacheMaxBytes is the byte budget of the in-process rendered-output cache,
-	// derived from the "render.cache-max-mb" application key (MiB → bytes). 0
+	// derived from the "cache-max-mb" application key (MiB → bytes). 0
 	// disables the cache. Application key ⇒ env override
-	// APPLICATION_CONFIG_RENDER_CACHE_MAX_MB is accepted automatically by the
+	// APPLICATION_CONFIG_CACHE_MAX_MB is accepted automatically by the
 	// resolver chain.
 	CacheMaxBytes int64
 
@@ -219,17 +219,17 @@ func Load() error {
 
 	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "document.enable-preview", parseErr)
 	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "document.enable-thumbnail", parseErr)
-	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "storage.fetch-timeout-seconds", parseErr)
+	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "image-document.fetch-timeout-seconds", parseErr)
 	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "document.conversion-timeout-seconds", parseErr)
 
 	var cacheMaxMB int
-	cacheMaxMB, parseErr = appNonNegativeInt(r, "render.cache-max-mb", parseErr)
+	cacheMaxMB, parseErr = appNonNegativeInt(r, "cache-max-mb", parseErr)
 
 	// Concurrency knobs (APPLICATION layer). Absent → 0 here → runtime.NumCPU()
 	// fallback below. A present-but-invalid value (non-integer or < 1) fails fast
 	// via appPositiveInt.
-	c.RenderConcurrency, parseErr = appPositiveInt(r, "render.max-concurrent-operations", parseErr)
-	c.PDFWorkers, parseErr = appPositiveInt(r, "render.pdf-subprocess-pool-size", parseErr)
+	c.RenderConcurrency, parseErr = appPositiveInt(r, "image-document.max-concurrent-operations", parseErr)
+	c.PDFWorkers, parseErr = appPositiveInt(r, "document.subprocess-pool-size", parseErr)
 	c.VideoConcurrency, parseErr = appPositiveInt(r, "video.max-concurrent-extractions", parseErr)
 
 	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetimeMs int

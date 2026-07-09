@@ -31,6 +31,7 @@ Overridable by Consul KV
 
 | Key | Default | If not set |
 | --- | ------- | ---------- |
+| `carbonio-preview/cache-max-mb` | `256` |  |
 | `carbonio-preview/database/credentials/db-name` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/database/credentials/db-password` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/database/credentials/db-username` | *(not set)* | Crashes; but always set by database bootstrap |
@@ -40,10 +41,9 @@ Overridable by Consul KV
 | `carbonio-preview/document/conversion-timeout-seconds` | `15` |  |
 | `carbonio-preview/document/enable-preview` | `true` |  |
 | `carbonio-preview/document/enable-thumbnail` | `false` |  |
-| `carbonio-preview/render/cache-max-mb` | `256` |  |
-| `carbonio-preview/render/max-concurrent-operations` | *(not set)* | Defaults to the number of CPUs |
-| `carbonio-preview/render/pdf-subprocess-pool-size` | *(not set)* | Defaults to the number of CPUs |
-| `carbonio-preview/storage/fetch-timeout-seconds` | `30` |  |
+| `carbonio-preview/document/subprocess-pool-size` | *(not set)* | Defaults to the number of CPUs |
+| `carbonio-preview/image-document/fetch-timeout-seconds` | `30` |  |
+| `carbonio-preview/image-document/max-concurrent-operations` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/video/max-attempts` | `3` |  |
 | `carbonio-preview/video/max-concurrent-extractions` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/video/poll-interval-seconds` | `15` |  |

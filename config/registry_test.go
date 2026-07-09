@@ -53,10 +53,10 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 	required := []string{
 		"document.enable-preview",
 		"document.enable-thumbnail",
-		"storage.fetch-timeout-seconds",
+		"image-document.fetch-timeout-seconds",
 		"document.conversion-timeout-seconds",
-		"render.max-concurrent-operations",
-		"render.pdf-subprocess-pool-size",
+		"image-document.max-concurrent-operations",
+		"document.subprocess-pool-size",
 		"video.max-concurrent-extractions",
 	}
 
@@ -77,11 +77,11 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 		"document.enable-thumbnail": false,
 		// Documented (not hidden): an operator's customized timeout is migrated
 		// into these KV keys on upgrade, so they must be discoverable in docs.
-		"storage.fetch-timeout-seconds":       false,
-		"document.conversion-timeout-seconds": false,
-		"render.max-concurrent-operations":    false,
-		"render.pdf-subprocess-pool-size":     false,
-		"video.max-concurrent-extractions":    false,
+		"image-document.fetch-timeout-seconds":     false,
+		"document.conversion-timeout-seconds":      false,
+		"image-document.max-concurrent-operations": false,
+		"document.subprocess-pool-size":            false,
+		"video.max-concurrent-extractions":         false,
 	}
 	for k, wantHidden := range hiddenExpected {
 		e, ok := idx[k]
@@ -133,7 +133,7 @@ func TestKeyDefaults(t *testing.T) {
 	appChecks := []struct{ key, dflt, ifNotPresent string }{
 		{"document.enable-preview", "true", ""},
 		{"document.enable-thumbnail", "false", ""},
-		{"storage.fetch-timeout-seconds", "30", ""},
+		{"image-document.fetch-timeout-seconds", "30", ""},
 		{"document.conversion-timeout-seconds", "15", ""},
 		// DB pool: the lifetime default is MILLISECONDS (600000 = 10 min).
 		// Do NOT "fix" it back to 600 — that would reintroduce the 1000x
@@ -141,8 +141,8 @@ func TestKeyDefaults(t *testing.T) {
 		{"database.db-pool-max-lifetime", "600000", ""},
 		{"database.db-pool-max-size", "10", ""},
 		{"database.db-pool-min-size", "2", ""},
-		{"render.max-concurrent-operations", "", "Defaults to the number of CPUs"},
-		{"render.pdf-subprocess-pool-size", "", "Defaults to the number of CPUs"},
+		{"image-document.max-concurrent-operations", "", "Defaults to the number of CPUs"},
+		{"document.subprocess-pool-size", "", "Defaults to the number of CPUs"},
 		{"video.max-concurrent-extractions", "", "Defaults to the number of CPUs"},
 	}
 	for _, tc := range appChecks {
@@ -288,6 +288,7 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	// Spot-check: known application keys that must appear in alphabetical order.
 	// The list includes all registered application keys (db-pool-*, video-*, etc.).
 	appExpected := []string{
+		"cache-max-mb",
 		"database.credentials.db-name",
 		"database.credentials.db-password",
 		"database.credentials.db-username",
@@ -297,10 +298,9 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"document.conversion-timeout-seconds",
 		"document.enable-preview",
 		"document.enable-thumbnail",
-		"render.cache-max-mb",
-		"render.max-concurrent-operations",
-		"render.pdf-subprocess-pool-size",
-		"storage.fetch-timeout-seconds",
+		"document.subprocess-pool-size",
+		"image-document.fetch-timeout-seconds",
+		"image-document.max-concurrent-operations",
 		"video.max-attempts",
 		"video.max-concurrent-extractions",
 		"video.poll-interval-seconds",
@@ -318,17 +318,16 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 }
 
-
 func TestCacheMaxMBRegistered(t *testing.T) {
 	m := registeredKeyMap(NamespaceApplication)
-	e, ok := m["render.cache-max-mb"]
+	e, ok := m["cache-max-mb"]
 	if !ok {
-		t.Fatal("application key \"render.cache-max-mb\" not registered")
+		t.Fatal("application key \"cache-max-mb\" not registered")
 	}
 	if e.Default != "256" {
-		t.Errorf("render.cache-max-mb default = %q, want \"256\"", e.Default)
+		t.Errorf("cache-max-mb default = %q, want \"256\"", e.Default)
 	}
 	if e.HiddenFromDocs {
-		t.Error("render.cache-max-mb must be visible in docs (HiddenFromDocs=false)")
+		t.Error("cache-max-mb must be visible in docs (HiddenFromDocs=false)")
 	}
 }

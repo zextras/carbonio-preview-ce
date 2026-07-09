@@ -24,8 +24,8 @@ func TestEnvName(t *testing.T) {
 		},
 		{
 			prefix: ApplicationPrefix,
-			key:    "storage.fetch-timeout-seconds",
-			want:   "APPLICATION_CONFIG_STORAGE_FETCH_TIMEOUT_SECONDS",
+			key:    "image-document.fetch-timeout-seconds",
+			want:   "APPLICATION_CONFIG_IMAGE_DOCUMENT_FETCH_TIMEOUT_SECONDS",
 		},
 		{
 			prefix: ApplicationPrefix,
@@ -48,7 +48,7 @@ func TestKvPath(t *testing.T) {
 		want string
 	}{
 		{"storages.download-api", "carbonio-preview/storages/download-api"},
-		{"storage.fetch-timeout-seconds", "carbonio-preview/storage/fetch-timeout-seconds"},
+		{"image-document.fetch-timeout-seconds", "carbonio-preview/image-document/fetch-timeout-seconds"},
 		{"docs-editor.service-endpoint", "carbonio-preview/docs-editor/service-endpoint"},
 	}
 
@@ -64,7 +64,7 @@ func TestKvPathRoundTrip(t *testing.T) {
 	// Verify that the suffix of the KV path, with / → . reverts to the original key.
 	keys := []string{
 		"storages.download-api",
-		"storage.fetch-timeout-seconds",
+		"image-document.fetch-timeout-seconds",
 		"docs-editor.service-endpoint",
 		"workers",
 	}

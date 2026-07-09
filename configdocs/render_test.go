@@ -209,7 +209,7 @@ func TestConditionalThirdColumn_PerSection(t *testing.T) {
 	docs := configdocs.BuildDocs("carbonio-preview", "preview", []configdocs.RawKey{
 		{Key: "carbonio.service.host", Namespace: "networking", Default: "127.0.0.1"},
 		{Key: "workers", Namespace: "application", Default: "2"},
-		{Key: "render.pdf-subprocess-pool-size", Namespace: "application", Default: "", IfNotPresent: "Defaults to CPUs"},
+		{Key: "document.subprocess-pool-size", Namespace: "application", Default: "", IfNotPresent: "Defaults to CPUs"},
 	})
 	md := configdocs.RenderMd(docs)
 
@@ -234,14 +234,14 @@ func TestConditionalThirdColumn_PerSection(t *testing.T) {
 func TestKvPathDisplay(t *testing.T) {
 	docs := configdocs.BuildDocs("carbonio-preview", "preview", []configdocs.RawKey{
 		{Key: "storages.download-api", Namespace: "application", Default: "download"},
-		{Key: "storage.fetch-timeout-seconds", Namespace: "application", Default: "30"},
+		{Key: "image-document.fetch-timeout-seconds", Namespace: "application", Default: "30"},
 	})
 	md := configdocs.RenderMd(docs)
 	if !strings.Contains(md, "carbonio-preview/storages/download-api") {
 		t.Errorf("expected KV path 'carbonio-preview/storages/download-api'; got:\n%s", md)
 	}
-	if !strings.Contains(md, "carbonio-preview/storage/fetch-timeout-seconds") {
-		t.Errorf("expected KV path 'carbonio-preview/storage/fetch-timeout-seconds'; got:\n%s", md)
+	if !strings.Contains(md, "carbonio-preview/image-document/fetch-timeout-seconds") {
+		t.Errorf("expected KV path 'carbonio-preview/image-document/fetch-timeout-seconds'; got:\n%s", md)
 	}
 	// Networking keys should appear as raw dot-notation.
 	docs2 := configdocs.BuildDocs("carbonio-preview", "preview", []configdocs.RawKey{
@@ -271,7 +271,7 @@ func TestHiddenFromDocs_Filtered(t *testing.T) {
 }
 
 // TestTimeoutKeysPresentInGeneratedDocs verifies that the live registry's
-// timeout keys ("storage/fetch-timeout-seconds", "document/conversion-timeout-seconds")
+// timeout keys ("image-document/fetch-timeout-seconds", "document/conversion-timeout-seconds")
 // ARE present in the rendered md output. They are documented (not hidden) because
 // the V1 upgrade migration carries an operator's customized timeout into these
 // Consul KV keys, so operators must be able to discover them.
@@ -280,7 +280,7 @@ func TestTimeoutKeysPresentInGeneratedDocs(t *testing.T) {
 	md := configdocs.RenderMd(docs)
 
 	for _, key := range []string{
-		"carbonio-preview/storage/fetch-timeout-seconds",
+		"carbonio-preview/image-document/fetch-timeout-seconds",
 		"carbonio-preview/document/conversion-timeout-seconds",
 	} {
 		if !strings.Contains(md, key) {

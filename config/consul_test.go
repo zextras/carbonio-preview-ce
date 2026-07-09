@@ -26,7 +26,7 @@ func TestConsulClientRecurseAndDecode(t *testing.T) {
 	const kvPrefix = "carbonio-preview/"
 	entries := []kvEntry{
 		// Real entries.
-		{Key: kvPrefix + "storage/fetch-timeout-seconds", Value: ptr(encodeB64("60"))},
+		{Key: kvPrefix + "image-document/fetch-timeout-seconds", Value: ptr(encodeB64("60"))},
 		{Key: kvPrefix + "storages/download-api", Value: ptr(encodeB64("get"))},
 		// Null Value — must be filtered out.
 		{Key: kvPrefix + "workers", Value: nil},
@@ -67,8 +67,8 @@ func TestConsulClientRecurseAndDecode(t *testing.T) {
 	}
 
 	// Real entries: slash→dot conversion applied.
-	if m["storage.fetch-timeout-seconds"] != "60" {
-		t.Errorf("storage.fetch-timeout-seconds = %q, want %q", m["storage.fetch-timeout-seconds"], "60")
+	if m["image-document.fetch-timeout-seconds"] != "60" {
+		t.Errorf("image-document.fetch-timeout-seconds = %q, want %q", m["image-document.fetch-timeout-seconds"], "60")
 	}
 	if m["storages.download-api"] != "get" {
 		t.Errorf("storages.download-api = %q, want %q", m["storages.download-api"], "get")
