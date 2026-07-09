@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -36,7 +35,16 @@ type DirectClient struct {
 	downloadURL string // pre-built base URL including the API path, e.g. "http://127.78.0.6:20000/download"
 	uploadURL   string // e.g. "http://127.78.0.6:20000/upload"
 	deleteURL   string // e.g. "http://127.78.0.6:20000/delete"
-	http        *http.Client
+	// httpClient is used for the buffered operations: RetrieveData, StoreData,
+	// and Delete. It carries fetchTimeout as a hard wall-clock cap covering the
+	// full request lifecycle (connect + TLS + write + read-entire-body).
+	httpClient *http.Client
+	// streamClient is used exclusively by RetrieveDataStreaming. It has
+	// Timeout:0 so the overall response-body read is never capped by a
+	// wall-clock timer — a large video download is not aborted mid-stream.
+	// The caller's ctx (and, in the video worker, the idle-read watchdog) is
+	// the actual stall protection for streaming downloads.
+	streamClient *http.Client
 }
 
 // NewDirectClient constructs a DirectClient.
@@ -45,24 +53,33 @@ type DirectClient struct {
 //   - downloadAPI    — path segment for GET download, e.g. "download"
 //   - uploadAPI      — path segment for POST upload, e.g. "upload"
 //   - deleteAPI      — path segment for DELETE, e.g. "delete"
-//   - dialTimeout    — bounds TCP connection establishment and TLS handshake ONLY.
-//     There is intentionally NO http.Client.Timeout (no total-request cap here):
-//     the operation deadline is the per-request ctx deadline set by the handler,
-//     which governs the full lifecycle (download + ffmpeg + render) via a single
-//     context.WithTimeout. The body read is cancelled automatically when that
-//     ctx fires, because every request is built with http.NewRequestWithContext.
-func NewDirectClient(storageBaseURL, downloadAPI, uploadAPI, deleteAPI string, dialTimeout time.Duration) *DirectClient {
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: dialTimeout,
-		}).DialContext,
-		TLSHandshakeTimeout: dialTimeout,
-	}
+//   - fetchTimeout   — TOTAL wall-clock timeout applied to the buffered
+//     operations (RetrieveData, StoreData, Delete) via http.Client.Timeout.
+//     This bounds connect + TLS handshake + request write + full body read
+//     as one deadline — mirroring the Advanced edition's PowerStoreClient
+//     (internal/powerstore/powerstore.go), which uses the same value as its
+//     httpClient.Timeout.
+//
+// RetrieveDataStreaming does NOT use fetchTimeout: it is served by a separate
+// streamClient with Timeout:0, so a legitimate large video download is never
+// aborted by this wall-clock cap. Both clients share one empty *http.Transport
+// (no DialContext/TLSHandshakeTimeout override) — there is no separate dial
+// timeout because fetchTimeout on httpClient already bounds connect+TLS+body
+// for the buffered path, and the streaming path is deliberately unbounded.
+func NewDirectClient(storageBaseURL, downloadAPI, uploadAPI, deleteAPI string, fetchTimeout time.Duration) *DirectClient {
+	sharedTransport := &http.Transport{}
 	return &DirectClient{
 		downloadURL: storageBaseURL + "/" + downloadAPI,
 		uploadURL:   storageBaseURL + "/" + uploadAPI,
 		deleteURL:   storageBaseURL + "/" + deleteAPI,
-		http:        &http.Client{Transport: transport},
+		httpClient: &http.Client{
+			Timeout:   fetchTimeout,
+			Transport: sharedTransport,
+		},
+		streamClient: &http.Client{
+			Timeout:   0,
+			Transport: sharedTransport,
+		},
 	}
 }
 
@@ -91,7 +108,7 @@ func (c *DirectClient) RetrieveData(
 	}
 
 	start := time.Now()
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		// Any transport-level error (timeout, DNS, connection refused, etc.)
 		// maps to ErrUnavailable, mirroring the Python Nothing path.
@@ -136,6 +153,12 @@ func (c *DirectClient) RetrieveData(
 // RetrieveDataStreaming is the streaming variant of RetrieveData. It performs
 // the identical GET but returns resp.Body so the caller can read a prefix and
 // close early. The body MUST be closed by the caller.
+//
+// It is served by streamClient (Timeout:0), NOT httpClient — the buffered
+// fetchTimeout wall-clock cap does not apply here, so a legitimate large
+// video download is never aborted mid-stream. Cancelling ctx still aborts the
+// in-flight transfer; the video worker's idle-read watchdog uses this to
+// bound stalled downloads at the byte-progress level instead.
 func (c *DirectClient) RetrieveDataStreaming(
 	ctx context.Context,
 	fileID string,
@@ -151,7 +174,7 @@ func (c *DirectClient) RetrieveDataStreaming(
 	if err != nil {
 		return nil, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
@@ -217,7 +240,7 @@ func (c *DirectClient) StoreData(
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	start := time.Now()
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		slog.Debug("storage: upload request failed",
@@ -275,7 +298,7 @@ func (c *DirectClient) Delete(
 	}
 
 	start := time.Now()
-	resp, err := c.http.Do(req)
+	resp, err := c.httpClient.Do(req)
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		slog.Debug("storage: delete request failed",
