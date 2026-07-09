@@ -136,10 +136,10 @@ func TestRetrieveData_ConnectionRefused(t *testing.T) {
 // TestRetrieveData_CtxTimeout verifies that a request whose context deadline
 // fires while the server is hanging maps to ErrUnavailable.
 //
-// The storage client carries no total-request http.Client.Timeout; the
-// per-request deadline is provided by the caller's context (mirroring the
-// single-clock design where the video handler's context.WithTimeout governs
-// the full operation). A very short context deadline keeps the test fast.
+// The buffered httpClient also carries a total fetchTimeout (5s here), but
+// the ctx deadline (50ms) is far shorter and fires first — proving ctx-based
+// cancellation still works independently of, and in addition to, the total
+// wall-clock cap introduced by fetchTimeout.
 func TestRetrieveData_CtxTimeout(t *testing.T) {
 	// Server that never responds (hangs until ctx is cancelled).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +153,43 @@ func TestRetrieveData_CtxTimeout(t *testing.T) {
 	_, err := client.RetrieveData(ctx, "some-id", 1, "files", "")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Errorf("expected ErrUnavailable on ctx timeout, got %v", err)
+	}
+}
+
+// TestRetrieveData_TotalFetchTimeout_SlowBody verifies that RetrieveData is
+// bounded by fetchTimeout as a TOTAL wall-clock cap — even with an unbounded
+// caller ctx (context.Background()), and even when the server has already
+// sent response headers and started streaming the body. Before this fix,
+// fetchTimeout (then named dialTimeout) only bounded TCP connect + TLS
+// handshake, so a slow body past those phases would hang indefinitely absent
+// a ctx deadline. This proves the buffered path can no longer do that.
+func TestRetrieveData_TotalFetchTimeout_SlowBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		_, _ = w.Write([]byte("first-chunk"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Stall past fetchTimeout without ever finishing the body.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	const fetchTimeout = 150 * time.Millisecond
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", fetchTimeout)
+
+	start := time.Now()
+	_, err := client.RetrieveData(context.Background(), "some-id", 1, "files", "")
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable from total fetch timeout, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("elapsed = %v, expected the total fetchTimeout (%v) to bound the request, not hang", elapsed, fetchTimeout)
 	}
 }
 
@@ -263,7 +300,7 @@ func (errBodyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 func TestRetrieveData_BodyReadError(t *testing.T) {
 	client := &DirectClient{
 		downloadURL: "http://127.0.0.1:20000/download",
-		http:        &http.Client{Transport: errBodyRoundTripper{}},
+		httpClient:  &http.Client{Transport: errBodyRoundTripper{}},
 	}
 	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
 	if err == nil {
@@ -291,7 +328,7 @@ func TestBuildURL_ParseError(t *testing.T) {
 func TestRetrieveData_BuildURLError(t *testing.T) {
 	client := &DirectClient{
 		downloadURL: "http://[::1", // unparseable
-		http:        &http.Client{},
+		httpClient:  &http.Client{},
 	}
 	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
 	if err == nil {
@@ -339,6 +376,104 @@ func TestRetrieveDataStreaming_404(t *testing.T) {
 	_, err := client.RetrieveDataStreaming(context.Background(), "x", 1, "files", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+// TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted verifies that
+// RetrieveDataStreaming is served by streamClient (Timeout: 0), NOT the
+// buffered httpClient (Timeout: fetchTimeout). A body that trickles in over
+// a duration far longer than fetchTimeout must still be delivered in full —
+// proving the streaming path has no total wall-clock cap, unlike the
+// buffered path (see TestRetrieveData_TotalFetchTimeout_SlowBody).
+func TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted(t *testing.T) {
+	const chunkDelay = 60 * time.Millisecond
+	chunks := []string{"chunk0-", "chunk1-", "chunk2-", "chunk3"}
+	want := strings.Join(chunks, "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		if flusher != nil {
+			// Flush headers immediately (before any sleep) so Do() returns
+			// promptly and every chunkDelay below happens during the
+			// subsequent io.ReadAll, making the elapsed measurement below
+			// deterministic.
+			flusher.Flush()
+		}
+		for _, c := range chunks {
+			time.Sleep(chunkDelay)
+			_, _ = w.Write([]byte(c))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer srv.Close()
+
+	// fetchTimeout is much shorter than the total time the body takes to
+	// arrive (len(chunks) * chunkDelay). If RetrieveDataStreaming used the
+	// buffered httpClient, this transfer would be aborted partway through.
+	const fetchTimeout = 80 * time.Millisecond
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", fetchTimeout)
+
+	rc, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
+	if err != nil {
+		t.Fatalf("RetrieveDataStreaming: %v", err)
+	}
+	defer rc.Close()
+
+	start := time.Now()
+	got, err := io.ReadAll(rc)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("reading streamed body: %v (elapsed %v, fetchTimeout %v)", err, elapsed, fetchTimeout)
+	}
+	if string(got) != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if elapsed < time.Duration(len(chunks))*chunkDelay {
+		t.Errorf("elapsed = %v, want >= %v (chunks should have trickled in over time)", elapsed, time.Duration(len(chunks))*chunkDelay)
+	}
+}
+
+// TestRetrieveDataStreaming_CtxCancel_AbortsDespiteUnboundedTimeout verifies
+// that, even though streamClient carries no wall-clock Timeout, cancelling
+// the caller's ctx still aborts an in-flight streaming download. fetchTimeout
+// is deliberately large (5s) so that if the read is aborted quickly, it can
+// only be due to ctx cancellation — not a client-side timeout.
+func TestRetrieveDataStreaming_CtxCancel_AbortsDespiteUnboundedTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Hang until the client aborts the connection.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	rc, err := client.RetrieveDataStreaming(ctx, "node-1", 1, "files", "")
+	if err != nil {
+		t.Fatalf("RetrieveDataStreaming: %v", err)
+	}
+	defer rc.Close()
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = io.ReadAll(rc)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected read to be aborted by ctx cancellation, got nil error")
+	}
+	if elapsed > 1*time.Second {
+		t.Errorf("elapsed = %v, expected ctx cancellation (~50ms) to abort well before fetchTimeout (5s)", elapsed)
 	}
 }
 
