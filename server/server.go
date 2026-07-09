@@ -209,7 +209,7 @@ func (s *Server) Handler() http.Handler {
 // registered under huma (code-first OpenAPI).
 //
 // sem is the shared render semaphore (image/PDF/document), sized by the
-// render.max-concurrent-operations key. The dedicated video semaphore is built
+// image-document.max-concurrent-operations key. The dedicated video semaphore is built
 // here from cfg.VideoConcurrency (APPLICATION key
 // video.max-concurrent-extractions, default runtime.NumCPU()) so a flood of
 // video jobs can never starve image previews, and vice-versa.

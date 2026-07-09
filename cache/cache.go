@@ -65,7 +65,7 @@ type Cache struct {
 	mu     sync.Mutex
 	m      map[string]*item
 	used   int64 // sum of len(body) over all items
-	budget int64 // byte budget (render.cache-max-mb × 1024×1024)
+	budget int64 // byte budget (cache-max-mb × 1024×1024)
 }
 
 // New builds a Cache with the given byte budget. A budget <= 0 disables caching:

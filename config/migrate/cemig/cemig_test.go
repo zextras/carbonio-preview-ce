@@ -358,10 +358,11 @@ func TestHasApplicationWork_TrueWhenAbsentDueToV1Moves(t *testing.T) {
 // the opposite (false) before V1MoveDBPoolKeys existed: an ini containing
 // ONLY the bootstrap's drop-only keys did not require SETUP_CONSUL_TOKEN,
 // because the bootstrap's application-layer work is driven entirely by the
-// ini. Now that V1MoveDBPoolKeys' ApplicationKVMoves are registered in the
-// same "ce" set, they always talk to Consul KV regardless of what the ini
-// contains, so HasApplicationWork is true and a full run does touch Consul
-// (one Get(OldPath) probe per move, finding nothing to move).
+// ini. Now that V1MoveDBPoolKeys and V2RenameConfigNamespaces' ApplicationKVMoves
+// are registered in the same "ce" set, they always talk to Consul KV
+// regardless of what the ini contains, so HasApplicationWork is true and a
+// full run does touch Consul (one Get(OldPath) probe per move across BOTH
+// migrations, finding nothing to move).
 func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves(t *testing.T) {
 	dir := t.TempDir()
 	// ini with ONLY drop-only keys — no bootstrap application KV entries.
@@ -381,13 +382,14 @@ func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves(t *testing.T) {
 		t.Fatalf("NewRunner: %v", err)
 	}
 	if !runner.HasApplicationWork() {
-		t.Error("HasApplicationWork must be true: V1MoveDBPoolKeys' ApplicationKVMoves always count as application work, regardless of the ini's content")
+		t.Error("HasApplicationWork must be true: V1MoveDBPoolKeys' and V2RenameConfigNamespaces' ApplicationKVMoves always count as application work, regardless of the ini's content")
 	}
 
-	// A full run against a reachable Consul stub (no pool.* keys pre-seeded,
-	// so every GET is a clean 404) must still complete cleanly: the
-	// bootstrap's drop-only keys are consumed from the ini, and
-	// V1MoveDBPoolKeys' moves are no-ops (old paths absent).
+	// A full run against a reachable Consul stub (no pool.*/render.*/storage.*
+	// keys pre-seeded, so every GET is a clean 404) must still complete
+	// cleanly: the bootstrap's drop-only keys are consumed from the ini, and
+	// both V1MoveDBPoolKeys' and V2RenameConfigNamespaces' moves are no-ops
+	// (old paths absent).
 	consulHits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		consulHits++
@@ -408,10 +410,11 @@ func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves(t *testing.T) {
 	}
 	runner2.Run()
 
-	// V1MoveDBPoolKeys issues exactly one Get(OldPath) per declared move (3
-	// moves); none of them exist, so no Get(NewPath), Put, or Delete follows.
-	if consulHits != 3 {
-		t.Errorf("expected 3 Consul GETs (one OldPath probe per move), got %d", consulHits)
+	// V1MoveDBPoolKeys (3 moves) and V2RenameConfigNamespaces (4 moves) each
+	// issue exactly one Get(OldPath) per declared move; none of them exist, so
+	// no Get(NewPath), Put, or Delete follows. Total: 3 + 4 = 7.
+	if consulHits != 7 {
+		t.Errorf("expected 7 Consul GETs (one OldPath probe per move across V1+V2), got %d", consulHits)
 	}
 	// ini must have been renamed (all bootstrap keys consumed).
 	if _, err := os.Stat(iniPath); !os.IsNotExist(err) {

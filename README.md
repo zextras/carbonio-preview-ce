@@ -89,14 +89,14 @@ for the authoritative list of keys and defaults.
 
 | Consul KV key | Env override | Default | Description |
 |---------------|--------------|---------|-------------|
-| `carbonio-preview/render/max-concurrent-operations` | `APPLICATION_CONFIG_RENDER_MAX_CONCURRENT_OPERATIONS` | *CPU count* | Max concurrent render operations (image, PDF, document); does not apply to video |
-| `carbonio-preview/render/pdf-subprocess-pool-size` | `APPLICATION_CONFIG_RENDER_PDF_SUBPROCESS_POOL_SIZE` | *CPU count* | Number of PDFium helper OS subprocesses |
-| `carbonio-preview/render/cache-max-mb` | `APPLICATION_CONFIG_RENDER_CACHE_MAX_MB` | `256` | Size budget (MiB) of the shared rendered-output cache; `0` disables it |
+| `carbonio-preview/image-document/max-concurrent-operations` | `APPLICATION_CONFIG_IMAGE_DOCUMENT_MAX_CONCURRENT_OPERATIONS` | *CPU count* | Max concurrent render operations (image, PDF, document); does not apply to video |
+| `carbonio-preview/document/subprocess-pool-size` | `APPLICATION_CONFIG_DOCUMENT_SUBPROCESS_POOL_SIZE` | *CPU count* | Number of PDFium helper OS subprocesses |
+| `carbonio-preview/cache-max-mb` | `APPLICATION_CONFIG_CACHE_MAX_MB` | `256` | Size budget (MiB) of the global rendered-output cache shared by all preview types (image, PDF, document, video); `0` disables it |
 | `carbonio-preview/video/max-concurrent-extractions` | `APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS` | *CPU count* | Max concurrent video first-frame extraction jobs |
-| `carbonio-preview/storage/fetch-timeout-seconds` | `APPLICATION_CONFIG_STORAGE_FETCH_TIMEOUT_SECONDS` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
+| `carbonio-preview/image-document/fetch-timeout-seconds` | `APPLICATION_CONFIG_IMAGE_DOCUMENT_FETCH_TIMEOUT_SECONDS` | `30` | Timeout (s) for fetching the source blob from carbonio-storages |
 | `carbonio-preview/document/conversion-timeout-seconds` | `APPLICATION_CONFIG_DOCUMENT_CONVERSION_TIMEOUT_SECONDS` | `15` | Timeout (s) for carbonio-docs-editor (Collabora) conversion |
 
-Values must be positive integers >= 1 (`render/cache-max-mb` also accepts `0` to disable
+Values must be positive integers >= 1 (`cache-max-mb` also accepts `0` to disable
 the cache). An invalid value causes the service to fail-fast at startup.
 
 A few knobs are true per-instance environment variables, set via systemd drop-in

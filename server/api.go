@@ -37,7 +37,7 @@ type Deps struct {
 	Store storage.Client
 	Cache *cache.Cache
 	// Sem is the shared render semaphore (image/PDF/document ops), sized by the
-	// render.max-concurrent-operations key.
+	// image-document.max-concurrent-operations key.
 	Sem chan struct{}
 	// VideoSem is the DEDICATED video semaphore (capacity =
 	// video.max-concurrent-extractions, default NumCPU). Separate from Sem so a

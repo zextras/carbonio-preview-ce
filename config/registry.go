@@ -240,7 +240,7 @@ func registerCEKeys() {
 			Description: "Whether document thumbnail generation is enabled.",
 		},
 		{
-			Key:         "storage.fetch-timeout-seconds",
+			Key:         "image-document.fetch-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "30",
 			Description: "Timeout (seconds) for fetching the source blob from carbonio-storages.",
@@ -252,24 +252,24 @@ func registerCEKeys() {
 			Description: "Timeout (seconds) for the docs-editor (Collabora) conversion call.",
 		},
 		{
-			Key:         "render.cache-max-mb",
+			Key:         "cache-max-mb",
 			Namespace:   NamespaceApplication,
 			Default:     "256",
-			Description: "Size budget (MiB) of the shared image/PDF/document rendered-output cache; 0 disables it.",
+			Description: "Size budget (MiB) of the global rendered-output cache shared by all preview types (image, PDF, document, video); 0 disables it.",
 		},
 		{
-			Key:          "render.max-concurrent-operations",
+			Key:          "image-document.max-concurrent-operations",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
 			Description:  "Maximum render operations (image, PDF, document) processed concurrently; does not apply to video. Default: CPU count.",
 		},
 		{
-			Key:          "render.pdf-subprocess-pool-size",
+			Key:          "document.subprocess-pool-size",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Number of PDFium helper OS subprocesses used for PDF/document rendering; a render acquires one after passing render/max-concurrent-operations. Default: CPU count.",
+			Description:  "Number of PDFium helper OS subprocesses used for PDF/document rendering; a render acquires one after passing image-document/max-concurrent-operations. Default: CPU count.",
 		},
 		{
 			Key:          "video.max-concurrent-extractions",
