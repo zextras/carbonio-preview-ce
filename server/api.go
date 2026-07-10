@@ -443,16 +443,12 @@ func buildGetHealthLive() func(context.Context, *struct{}) (*apispec.HealthLiveO
 
 func buildGetHealthReady(deps Deps) func(context.Context, *struct{}) (*apispec.HealthReadyOutput, error) {
 	return func(ctx context.Context, _ *struct{}) (*apispec.HealthReadyOutput, error) {
-		cfg := deps.Cfg
-		if cfg == nil || !cfg.AreDocsEnabled {
-			return &apispec.HealthReadyOutput{}, nil
-		}
-		if isDependencyUp(cfg.DocumentConversionFullServiceAddress) {
-			return &apispec.HealthReadyOutput{}, nil
-		}
-		// Return 429 via huma error — huma will write the status; the body
-		// will be plain text matching the legacy handler.
-		return nil, huma.NewError(http.StatusTooManyRequests, config.Msg.DocsEditorUnavailable)
+		// Readiness reports only whether this service itself is up; it must
+		// not probe dependencies. carbonio-docs-editor and carbonio-storages
+		// are OPTIONAL and reported for information by GET /health/. This
+		// mirrors GET /health/live/ and the carbonio-tasks health pattern
+		// (gate on liveness; never fail health on a dependency being down).
+		return &apispec.HealthReadyOutput{}, nil
 	}
 }
 
