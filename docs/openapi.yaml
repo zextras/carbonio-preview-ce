@@ -107,18 +107,12 @@ paths:
       responses:
         "200":
           description: OK
-        "429":
+        default:
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
-          description: Too Many Requests
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Internal Server Error
+          description: Error
       summary: Readiness Probe
       tags:
         - health

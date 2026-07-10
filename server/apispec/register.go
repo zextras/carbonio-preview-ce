@@ -195,7 +195,6 @@ func RegisterHealthOps(
 		Summary:       "Readiness Probe",
 		Tags:          []string{"health"},
 		DefaultStatus: http.StatusOK,
-		Errors:        []int{429},
 	}, getReady)
 
 	// GET /health/

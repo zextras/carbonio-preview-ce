@@ -90,9 +90,11 @@ func TestHealthReady_DocsUp(t *testing.T) {
 	}
 }
 
-// TestHealthReady_DocsDown verifies that /health/ready/ returns 429 with the
-// DocsEditorUnavailable message when docs-editor is unreachable.
-func TestHealthReady_DocsDown(t *testing.T) {
+// TestHealthReady_SelfOnly_DocsDownStillReady verifies that /health/ready/
+// reports readiness based only on this service's own status: even when the
+// OPTIONAL docs-editor dependency is unreachable, readiness must still return
+// 200. Dependency states remain visible for information via GET /health/.
+func TestHealthReady_SelfOnly_DocsDownStillReady(t *testing.T) {
 	// Use a server that is immediately closed (connection refused).
 	docs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	docs.Close()
@@ -102,11 +104,8 @@ func TestHealthReady_DocsDown(t *testing.T) {
 
 	rec := doRequest(mux, http.MethodGet, "/health/ready/")
 
-	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("status: got %d, want 429", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), config.Msg.DocsEditorUnavailable) {
-		t.Errorf("body %q does not contain %q", rec.Body.String(), config.Msg.DocsEditorUnavailable)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status: got %d, want 200", rec.Code)
 	}
 }
 
