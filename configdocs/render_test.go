@@ -13,26 +13,24 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/v3/config"
 	"github.com/zextras/carbonio-preview-ce/v3/configdocs"
-	"github.com/zextras/carbonio-preview-ce/v3/docs"
 )
 
-// ── Drift-guard tests ─────────────────────────────────────────────────────────
+// -- Drift-guard tests ---------------------------------------------------------
+//
+// docs/configs.md is build-time generated OUTPUT: nothing embeds it and nothing
+// reads it back at runtime. These guards are therefore the only thing tying the
+// committed file to the live registry, and they are what makes CI's
+// "Verify Build Outputs" gate meaningful. They read the file from disk on
+// purpose -- that is the artefact under guard.
 
-// buildDocsFromRegistry converts the live registry into a Docs value using the
-// same logic as cmd/configdocs/main.go.
-func buildDocsFromRegistry() configdocs.Docs {
-	keys := config.RegisteredKeys()
-	raw := make([]configdocs.RawKey, len(keys))
-	for i, k := range keys {
-		raw[i] = configdocs.RawKey{
-			Key:            k.Key,
-			Namespace:      string(k.Namespace),
-			Default:        k.Default,
-			IfNotPresent:   k.IfNotPresent,
-			HiddenFromDocs: k.HiddenFromDocs,
-		}
+// committedConfigsMd reads the committed docs/configs.md from disk.
+func committedConfigsMd(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "configs.md"))
+	if err != nil {
+		t.Fatalf("could not read docs/configs.md: %v", err)
 	}
-	return configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
+	return string(b)
 }
 
 // repoRoot walks up from this test file's directory to find the directory
@@ -56,16 +54,19 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// TestDriftGuard_ConfigsMd_Embedded verifies that the embedded docs/configs.md
-// (via docs.ConfigsMd()) is byte-for-byte identical to rendering the live
-// registry. If this test fails the generator must be re-run: go run ./cmd/configdocs
-func TestDriftGuard_ConfigsMd_Embedded(t *testing.T) {
-	want := docs.ConfigsMd()
-	got := configdocs.RenderMd(buildDocsFromRegistry())
+// TestDriftGuard_ConfigsMd_RuntimeRender verifies that config.ConfigsMd() --
+// the exact string `carbonio-preview --setup <url>` prints, rendered at runtime
+// from the compiled-in registry -- is byte-for-byte identical to the committed
+// docs/configs.md. This is what replaced the old go:embed of docs/configs.md:
+// the operator-facing output must not silently diverge from the documented file
+// now that they are produced by two separate invocations of the same renderer.
+func TestDriftGuard_ConfigsMd_RuntimeRender(t *testing.T) {
+	want := committedConfigsMd(t)
+	got := config.ConfigsMd()
 	if got != want {
-		t.Errorf("docs/configs.md (embedded) has drifted from the registry.\n"+
+		t.Errorf("config.ConfigsMd() (what --setup prints) has drifted from docs/configs.md.\n"+
 			"Run: go run ./cmd/configdocs\n\n"+
-			"--- want (embedded) ---\n%s\n--- got (rendered) ---\n%s",
+			"--- want (committed) ---\n%s\n--- got (runtime render) ---\n%s",
 			want, got)
 	}
 }
@@ -73,13 +74,8 @@ func TestDriftGuard_ConfigsMd_Embedded(t *testing.T) {
 // TestDriftGuard_ConfigsMd verifies that rendering the live registry produces
 // output that is byte-for-byte identical to the committed docs/configs.md.
 func TestDriftGuard_ConfigsMd(t *testing.T) {
-	root := repoRoot(t)
-	committed, err := os.ReadFile(filepath.Join(root, "docs", "configs.md"))
-	if err != nil {
-		t.Fatalf("could not read docs/configs.md: %v", err)
-	}
-	want := string(committed)
-	got := configdocs.RenderMd(buildDocsFromRegistry())
+	want := committedConfigsMd(t)
+	got := configdocs.RenderMd(config.DocsFromRegistry())
 	if got != want {
 		t.Errorf("docs/configs.md has drifted from the registry.\n"+
 			"Run: go run ./cmd/configdocs\n\n"+
@@ -92,7 +88,7 @@ func TestDriftGuard_ConfigsMd(t *testing.T) {
 // modified key list) produces DIFFERENT output, proving the drift-guard is
 // not vacuously passing.
 func TestDriftGuard_Mutation(t *testing.T) {
-	// Build docs with an extra key injected — output must differ from committed.
+	// Build docs with an extra key injected -- output must differ from committed.
 	keys := config.RegisteredKeys()
 	raw := make([]configdocs.RawKey, len(keys)+1)
 	for i, k := range keys {
@@ -111,13 +107,13 @@ func TestDriftGuard_Mutation(t *testing.T) {
 	mutatedDocs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
 
 	got := configdocs.RenderMd(mutatedDocs)
-	committed := docs.ConfigsMd()
+	committed := committedConfigsMd(t)
 	if got == committed {
-		t.Error("mutated registry produced identical output — drift-guard cannot detect drift")
+		t.Error("mutated registry produced identical output -- drift-guard cannot detect drift")
 	}
 }
 
-// ── Unit tests ────────────────────────────────────────────────────────────────
+// -- Unit tests ----------------------------------------------------------------
 
 // TestAlphabeticalOrder verifies that entries are sorted alphabetically by
 // DisplayKey regardless of registration order.
@@ -204,8 +200,8 @@ func TestConditionalThirdColumn_EmptyDefaultNoNote(t *testing.T) {
 // application section uses 3 columns.  This is the actual behaviour with the
 // current preview registry keys.
 func TestConditionalThirdColumn_PerSection(t *testing.T) {
-	// Networking: all have defaults → 2 columns.
-	// Application: one has empty default + IfNotPresent → 3 columns.
+	// Networking: all have defaults -> 2 columns.
+	// Application: one has empty default + IfNotPresent -> 3 columns.
 	docs := configdocs.BuildDocs("carbonio-preview", "preview", []configdocs.RawKey{
 		{Key: "carbonio.service.host", Namespace: "networking", Default: "127.0.0.1"},
 		{Key: "workers", Namespace: "application", Default: "2"},
@@ -276,8 +272,7 @@ func TestHiddenFromDocs_Filtered(t *testing.T) {
 // the V1 upgrade migration carries an operator's customized timeout into these
 // Consul KV keys, so operators must be able to discover them.
 func TestTimeoutKeysPresentInGeneratedDocs(t *testing.T) {
-	docs := buildDocsFromRegistry()
-	md := configdocs.RenderMd(docs)
+	md := configdocs.RenderMd(config.DocsFromRegistry())
 
 	for _, key := range []string{
 		"carbonio-preview/image-document/fetch-timeout-seconds",
