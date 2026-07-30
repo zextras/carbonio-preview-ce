@@ -11,9 +11,9 @@
 //     <inputSpec>)
 //  2. docs/openapi.json  — OAS 3.0.3 JSON
 //
-// Both are pure build-time OUTPUT: nothing in the service reads them back. The
-// binary serves the spec straight from huma at runtime (see apispec.NewAPI and
-// the openapi.enabled config key), so there is no embedded copy to keep in sync.
+// Both are pure build-time OUTPUT: nothing in the service reads them back, and
+// the binary serves no spec route either (see apispec.NewAPI), so there is no
+// embedded copy and no runtime endpoint to keep in sync with them.
 //
 // No Python, no PyYAML, no pre-existing JSON file required.
 //
@@ -44,10 +44,8 @@ func main() {
 
 	// Build a throwaway huma API over a throwaway mux using the SAME constructor
 	// the live server uses, register all operations via stubs (cgo-free), then
-	// downgrade to OAS 3.0.3. serveDocs=false: the generator never needs huma's
-	// own spec/docs HTTP routes, and they are not part of the spec anyway (huma
-	// registers them with adapter.Handle, not huma.Register).
-	api := apispec.NewAPI(http.NewServeMux(), false)
+	// downgrade to OAS 3.0.3. The mux is discarded: only api.OpenAPI() is read.
+	api := apispec.NewAPI(http.NewServeMux())
 	apispec.RegisterStubs(api)
 
 	// ── YAML ────────────────────────────────────────────────────────────────

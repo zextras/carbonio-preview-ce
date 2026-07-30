@@ -43,7 +43,7 @@ func stubPDFRasterize(returnData []byte, returnErr error) (restore func()) {
 // buildPDFMux creates a huma-routed mux for PDF operations (test helper).
 func buildPDFMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux, cfg)
+	api := newHumaAPI(mux)
 	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: nil, Sem: nil})
 	return mux
 }

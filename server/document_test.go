@@ -37,7 +37,7 @@ func stubCollaboraConvert(returnData []byte, returnErr error) (restore func()) {
 // buildDocMux creates a huma-routed mux for document operations (test helper).
 func buildDocMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux, cfg)
+	api := newHumaAPI(mux)
 	registerDocumentOps(api, Deps{Cfg: cfg, Store: store, Cache: nil, Sem: nil})
 	return mux
 }

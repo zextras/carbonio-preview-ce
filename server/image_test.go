@@ -187,7 +187,7 @@ func assertStringDetail(t *testing.T, rec *httptest.ResponseRecorder, wantStatus
 // buildImageHumaMux creates a huma-routed mux for image operations (test helper).
 func buildImageHumaMux(cfg *config.Config, store storage.Client) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux, cfg)
+	api := newHumaAPI(mux)
 	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: nil, Sem: nil})
 	return mux
 }

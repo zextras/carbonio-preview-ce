@@ -117,15 +117,10 @@ func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 
 // newHumaAPI constructs a huma API over the given mux with all Carbonio
 // settings, delegating to apispec.NewAPI — the single shared constructor also
-// used by cmd/gendocs, so the served spec and the committed docs/ artefacts are
-// built from the same huma.Config.
-//
-// cfg supplies the ONE runtime decision: whether huma serves its built-in
-// OpenAPI spec routes and Swagger UI (application key "openapi.enabled",
-// default false). A nil cfg means disabled — that is the tests' spelling for
-// "plain API, no doc routes".
-func newHumaAPI(mux *http.ServeMux, cfg *config.Config) huma.API {
-	return apispec.NewAPI(mux, cfg != nil && cfg.OpenAPIEnabled)
+// used by cmd/gendocs, so the committed docs/ artefacts are built from the same
+// huma.Config the server runs on. It registers no spec or docs routes.
+func newHumaAPI(mux *http.ServeMux) huma.API {
+	return apispec.NewAPI(mux)
 }
 
 // ---------------------------------------------------------------------------

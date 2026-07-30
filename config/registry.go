@@ -278,20 +278,6 @@ func registerCEKeys() {
 			IfNotPresent: "Defaults to the number of CPUs",
 			Description:  "Maximum video first-frame extraction jobs run concurrently (each spawns an ffmpeg subprocess). Default: CPU count.",
 		},
-		// ── OpenAPI spec / Swagger UI endpoints ──────────────────────────────
-		// DEFAULT-OFF, mirroring the Java house convention
-		// (carbonio-quarkus-extensions-rest ships
-		// %prod.quarkus.smallrye-openapi.enabled=false): the OpenAPI document is a
-		// BUILD-TIME artefact committed under docs/, not something a production
-		// node needs to expose. Turning this on makes huma serve the spec it
-		// generates from the live handler registrations — the same registrations
-		// cmd/gendocs renders into docs/openapi.yaml — plus a Swagger UI page.
-		{
-			Key:         "openapi.enabled",
-			Namespace:   NamespaceApplication,
-			Default:     "false",
-			Description: "Whether the OpenAPI spec endpoints (/openapi.json, /openapi.yaml, /openapi-3.0.json, /openapi-3.0.yaml) and the Swagger UI at /docs are served. Off by default; the spec is a build-time artefact (docs/openapi.yaml).",
-		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via
 		// r.Application.Get("database.credentials.db-*"). Registered here so the

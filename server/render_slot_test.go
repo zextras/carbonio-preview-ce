@@ -41,7 +41,7 @@ func (s slotTestStore) Delete(_ context.Context, _ string, _ int, _, _ string) e
 // semaphore of the given capacity.
 func buildImageMuxWithSem(cfg *config.Config, store storage.Client, sem chan struct{}) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux, cfg)
+	api := newHumaAPI(mux)
 	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: cache.New(1 << 20), Sem: sem})
 	return mux
 }

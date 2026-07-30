@@ -6,75 +6,44 @@ package server
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 )
 
-// The route-level behaviour of the huma-served spec/docs endpoints is covered
-// exhaustively (and cgo-free) in server/apispec/api_test.go. These tests cover
-// the wiring this package owns: that config.Config.OpenAPIEnabled — the
-// "openapi.enabled" application key — actually reaches buildMux, in BOTH
-// states, through the real Server constructor.
+// The route-level behaviour is covered exhaustively (and cgo-free) in
+// server/apispec/api_test.go. These tests cover the wiring this package owns:
+// that the REAL production mux, assembled through the real Server constructor,
+// exposes no OpenAPI spec or documentation endpoint — with no way to turn one
+// on. The spec lives in the repository (docs/openapi.yaml), generated from
+// these same registrations; serving it would only echo what is already there.
 
-// buildMuxWithOpenAPI builds the real production mux for a server whose
-// openapi.enabled flag is set to enabled.
-func buildMuxWithOpenAPI(enabled bool) *http.ServeMux {
-	cfg := testCfg()
-	cfg.OpenAPIEnabled = enabled
-	return New(cfg, &mockStore{}, nil).buildMux(nil)
-}
+// TestBuildMux_NoDocEndpoints verifies the production mux 404s on every spec
+// and docs path huma could otherwise serve, and on the /redoc page the
+// hand-rolled server/docs.go used to expose.
+func TestBuildMux_NoDocEndpoints(t *testing.T) {
+	mux := New(testCfg(), &mockStore{}, nil).buildMux(nil)
 
-// TestBuildMux_OpenAPIDisabledByDefault verifies that a Config built the normal
-// way (testCfg never sets OpenAPIEnabled, exactly as an unconfigured install
-// resolves it) exposes no spec or docs endpoint. This is the shipped default.
-func TestBuildMux_OpenAPIDisabledByDefault(t *testing.T) {
-	if cfg := testCfg(); cfg.OpenAPIEnabled {
-		t.Fatal("testCfg() has OpenAPIEnabled=true; the default-off case is not being tested")
-	}
-	mux := buildMuxWithOpenAPI(false)
-
-	for _, path := range []string{"/openapi.json", "/openapi.yaml", "/openapi-3.0.json", "/openapi-3.0.yaml", "/docs"} {
+	for _, path := range []string{
+		"/openapi.json",
+		"/openapi.yaml",
+		"/openapi-3.0.json",
+		"/openapi-3.0.yaml",
+		"/docs",
+		// /redoc was a second, unpinned CDN documentation page; it is gone for
+		// good rather than merely disabled.
+		"/redoc",
+	} {
 		if rec := doRequest(mux, http.MethodGet, path); rec.Code != http.StatusNotFound {
-			t.Errorf("GET %s: status = %d, want 404 (spec endpoints are default-off)", path, rec.Code)
+			t.Errorf("GET %s: status = %d, want 404", path, rec.Code)
 		}
 	}
 }
 
-// TestBuildMux_OpenAPIEnabled verifies that flipping the key on makes the real
-// mux serve the spec generated from the live registrations, plus Swagger UI.
-func TestBuildMux_OpenAPIEnabled(t *testing.T) {
-	mux := buildMuxWithOpenAPI(true)
+// TestBuildMux_OperationsStillRouted verifies the production mux still routes
+// the real operations — the doc endpoints are the only thing that went away.
+func TestBuildMux_OperationsStillRouted(t *testing.T) {
+	mux := New(testCfg(), &mockStore{}, nil).buildMux(nil)
 
-	rec := doRequest(mux, http.MethodGet, "/openapi.json")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /openapi.json: status = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/openapi+json" {
-		t.Errorf("Content-Type = %q, want application/openapi+json", ct)
-	}
-	// The spec must describe the operations the server actually routes.
-	for _, opID := range []string{"getImagePreview", "getPdfPreview", "getDocumentPreview", "getVideoPreview", "getHealthLive"} {
-		if !strings.Contains(rec.Body.String(), opID) {
-			t.Errorf("served spec does not mention operationId %q", opID)
-		}
-	}
-
-	if rec := doRequest(mux, http.MethodGet, "/docs"); rec.Code != http.StatusOK {
-		t.Errorf("GET /docs: status = %d, want 200", rec.Code)
-	}
-	if rec := doRequest(mux, http.MethodPost, "/openapi.json"); rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST /openapi.json: status = %d, want 405", rec.Code)
-	}
-}
-
-// TestBuildMux_RedocGone documents an intentional behaviour change: the
-// hand-rolled /redoc page is removed. huma serves one UI (Swagger, pinned +
-// SRI + CSP); ReDoc was a second unpinned CDN page with neither.
-func TestBuildMux_RedocGone(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		mux := buildMuxWithOpenAPI(enabled)
-		if rec := doRequest(mux, http.MethodGet, "/redoc"); rec.Code != http.StatusNotFound {
-			t.Errorf("openapi.enabled=%v: GET /redoc: status = %d, want 404", enabled, rec.Code)
-		}
+	if rec := doRequest(mux, http.MethodGet, "/health/live/"); rec.Code != http.StatusOK {
+		t.Errorf("GET /health/live/: status = %d, want 200", rec.Code)
 	}
 }
