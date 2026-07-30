@@ -88,6 +88,11 @@ func TestDefaults(t *testing.T) {
 		// application (KV)
 		{"ServiceEnableDocumentPreview", App.ServiceEnableDocumentPreview, true},
 		{"ServiceEnableDocumentThumbnail", App.ServiceEnableDocumentThumbnail, false},
+		// The OpenAPI spec/Swagger-UI endpoints are DEFAULT-OFF (house
+		// convention, mirroring %prod.quarkus.smallrye-openapi.enabled=false).
+		// If this ever flips to true, a stock install starts publishing its API
+		// surface — do not "fix" this expectation, fix the registry default.
+		{"OpenAPIEnabled", App.OpenAPIEnabled, false},
 		// application (KV) — timeouts (HiddenFromDocs, but still KV-configurable)
 		{"ServiceTimeoutInSeconds", App.ServiceTimeoutInSeconds, 30},
 		{"ServiceDocsTimeout", App.ServiceDocsTimeout, 15},
@@ -378,6 +383,30 @@ func TestConsulKVOverride(t *testing.T) {
 	}
 	if App.ServiceEnableDocumentThumbnail != true {
 		t.Errorf("ServiceEnableDocumentThumbnail = %v, want true", App.ServiceEnableDocumentThumbnail)
+	}
+}
+
+// TestOpenAPIEnabledKVOverride verifies the openapi.enabled flag is an operator
+// opt-IN: absent/"false" in KV leaves it off, "true" turns it on.
+func TestOpenAPIEnabledKVOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kv   map[string]string
+		want bool
+	}{
+		{"absent from KV", nil, false},
+		{"explicit false", map[string]string{"openapi/enabled": "false"}, false},
+		{"explicit true", map[string]string{"openapi/enabled": "true"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := buildKVServer(t, tc.kv)
+			if err := loadWithConsul(t, srv); err != nil {
+				t.Fatalf("Load(): %v", err)
+			}
+			if App.OpenAPIEnabled != tc.want {
+				t.Errorf("OpenAPIEnabled = %v, want %v", App.OpenAPIEnabled, tc.want)
+			}
+		})
 	}
 }
 

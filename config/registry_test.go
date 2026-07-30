@@ -301,6 +301,7 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"document.subprocess-pool-size",
 		"image-document.fetch-timeout-seconds",
 		"image-document.max-concurrent-operations",
+		"openapi.enabled",
 		"video.max-attempts",
 		"video.max-concurrent-extractions",
 		"video.poll-interval-seconds",
@@ -315,6 +316,31 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		if appKeys[i].Key != want {
 			t.Errorf("application[%d] = %q, want %q", i, appKeys[i].Key, want)
 		}
+	}
+}
+
+// TestOpenAPIEnabledRegisteredDefaultOff pins the registry side of the
+// default-off contract for the OpenAPI spec / Swagger-UI endpoints: the key
+// exists, its default is the literal "false", and it is documented.
+// This mirrors carbonio-quarkus-extensions-rest shipping
+// %prod.quarkus.smallrye-openapi.enabled=false.
+func TestOpenAPIEnabledRegisteredDefaultOff(t *testing.T) {
+	m := registeredKeyMap(NamespaceApplication)
+	e, ok := m["openapi.enabled"]
+	if !ok {
+		t.Fatal("application key \"openapi.enabled\" not registered")
+	}
+	if e.Default != "false" {
+		t.Errorf("openapi.enabled default = %q, want \"false\" — the spec endpoints must be opt-in", e.Default)
+	}
+	if e.HiddenFromDocs {
+		t.Error("openapi.enabled must be visible in docs (HiddenFromDocs=false)")
+	}
+	if got, want := EnvName(ApplicationPrefix, e.Key), "APPLICATION_CONFIG_OPENAPI_ENABLED"; got != want {
+		t.Errorf("env var = %q, want %q", got, want)
+	}
+	if got, want := KvPath(e.Key), "carbonio-preview/openapi/enabled"; got != want {
+		t.Errorf("KV path = %q, want %q", got, want)
 	}
 }
 

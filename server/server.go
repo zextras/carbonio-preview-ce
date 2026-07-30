@@ -175,6 +175,7 @@ func (s *Server) Run() {
 		"storages_timeout", s.cfg.ServiceTimeoutInSeconds,
 		"docs_timeout", s.cfg.ServiceDocsTimeout,
 		"docs_enabled", s.cfg.AreDocsEnabled,
+		"openapi_enabled", s.cfg.OpenAPIEnabled,
 		"log_level", s.cfg.LogLevel.String(),
 	)
 
@@ -208,6 +209,11 @@ func (s *Server) Handler() http.Handler {
 // All resource operations (image, health, pdf, document, video-generate) are
 // registered under huma (code-first OpenAPI).
 //
+// huma also serves the OpenAPI document itself (/openapi.json|.yaml,
+// /openapi-3.0.json|.yaml) and a Swagger UI at /docs — but only when the
+// operator opts in via the "openapi.enabled" application key. It is off by
+// default, so those paths 404 on a stock install. See newHumaAPI.
+//
 // sem is the shared render semaphore (image/PDF/document), sized by the
 // image-document.max-concurrent-operations key. The dedicated video semaphore is built
 // here from cfg.VideoConcurrency (APPLICATION key
@@ -221,7 +227,7 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	// Register all operations under huma. The video worker is constructed here
 	// (gate-aware) and retained on the Server so it can be started once the DB is
 	// ready (EnableVideoDB / StartVideoWorker).
-	api := newHumaAPI(mux)
+	api := newHumaAPI(mux, s.cfg)
 	worker := RegisterOperations(api, Deps{
 		Cfg:      s.cfg,
 		Store:    s.store,
@@ -247,8 +253,6 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	}
 	s.workerStartMu.Unlock()
 
-	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).
-	registerDocRoutes(mux)
 	return mux
 }
 

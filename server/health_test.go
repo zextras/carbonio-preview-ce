@@ -17,7 +17,7 @@ import (
 // buildHealthMux creates a huma-routed mux for health operations (test helper).
 func buildHealthMux(cfg *config.Config) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux)
+	api := newHumaAPI(mux, cfg)
 	registerHealthOps(api, Deps{Cfg: cfg, Store: nil, Cache: nil, Sem: nil})
 	return mux
 }

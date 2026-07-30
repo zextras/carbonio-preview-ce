@@ -36,7 +36,6 @@ SPDX-License-Identifier = "AGPL-3.0-only"
 path = [
   "docs/openapi.yaml",
   "docs/openapi.json",
-  "server/static/openapi.json",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"

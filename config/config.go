@@ -99,6 +99,18 @@ type Config struct {
 	// Derived feature flag
 	AreDocsEnabled bool
 
+	// OpenAPIEnabled reports whether the huma-served OpenAPI spec endpoints
+	// (/openapi.json, /openapi.yaml, /openapi-3.0.json, /openapi-3.0.yaml) and
+	// the Swagger UI at /docs are exposed. Application-layer key
+	// "openapi.enabled" (Consul KV carbonio-preview/openapi/enabled / env
+	// APPLICATION_CONFIG_OPENAPI_ENABLED).
+	//
+	// DEFAULT-OFF (registry default "false"; an absent key also yields false),
+	// mirroring carbonio-quarkus-extensions-rest's
+	// %prod.quarkus.smallrye-openapi.enabled=false. Note this is unrelated to
+	// AreDocsEnabled above, which is about DOCUMENT (Collabora) previews.
+	OpenAPIEnabled bool
+
 	// LogLevel is the effective slog level, read from PREVIEW_LOG_LEVEL env var.
 	// This is a per-instance, framework-level knob (equivalent to QUARKUS_LOG_LEVEL)
 	// and is intentionally outside the extensions config chain (no registry key, no KV).
@@ -219,6 +231,9 @@ func Load() error {
 
 	c.ServiceEnableDocumentPreview, parseErr = appBool(r, "document.enable-preview", parseErr)
 	c.ServiceEnableDocumentThumbnail, parseErr = appBool(r, "document.enable-thumbnail", parseErr)
+	// Absent/unset → appBool returns false, so the spec endpoints stay off even
+	// if the registry default were ever dropped.
+	c.OpenAPIEnabled, parseErr = appBool(r, "openapi.enabled", parseErr)
 	c.ServiceTimeoutInSeconds, parseErr = appPositiveInt(r, "image-document.fetch-timeout-seconds", parseErr)
 	c.ServiceDocsTimeout, parseErr = appPositiveInt(r, "document.conversion-timeout-seconds", parseErr)
 

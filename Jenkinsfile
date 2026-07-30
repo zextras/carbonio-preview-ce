@@ -24,10 +24,13 @@ dt3_pipeline(
     nonJavaSdkPublish: true,
     // Generate OpenAPI + config docs on the agent (cgo-free via the apispec
     // package) and let the Generated Files Sync bot commit them — see goGenerate
-    // in jenkins-lib-common. docs/ covers both docs/configs.md and openapi files;
-    // the binary embeds docs/configs.md directly via docs.ConfigsMd().
+    // in jenkins-lib-common. docs/ is the ONLY generated tree: it holds
+    // docs/configs.md plus the OpenAPI artefacts (openapi.yaml — the SDK's
+    // inputSpec — and openapi.json). The service serves its spec straight from
+    // huma at runtime, so there is no embedded copy of it anywhere in the
+    // source tree.
     goGenerate: [
-        paths: ['docs/', 'server/static/openapi.json'],
+        paths: ['docs/'],
     ],
     packaging: [
         addCarbonioRepos: true,

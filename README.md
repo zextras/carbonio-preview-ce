@@ -111,8 +111,30 @@ var or KV key.
 
 ## APIs Documentation 📚
 
-Once the service is up and running, APIs will be found
-[here](https://127.78.0.6:10000/docs)
+The OpenAPI document is a **build-time artefact**: [`docs/openapi.yaml`](docs/openapi.yaml)
+(and `docs/openapi.json`) are generated from the huma handler registrations by
+`go generate ./...` and committed. `docs/openapi.yaml` is the `<inputSpec>` the Java
+SDK is generated from. Nothing in the service reads these files back.
+
+The running service can also serve the very same spec — generated live from the
+registrations it actually routes traffic through — but this is **off by default**,
+mirroring `carbonio-quarkus-extensions-rest`
+(`%prod.quarkus.smallrye-openapi.enabled=false`). Enable it per install with:
+
+| Consul KV key | Env override | Default |
+|---------------|--------------|---------|
+| `carbonio-preview/openapi/enabled` | `APPLICATION_CONFIG_OPENAPI_ENABLED` | `false` |
+
+With the key set to `true` the service exposes:
+
+| Endpoint | Content |
+|----------|---------|
+| `/openapi.json` / `/openapi.yaml` | OAS 3.1.0 |
+| `/openapi-3.0.json` / `/openapi-3.0.yaml` | OAS 3.0.3 (identical to the committed `docs/` artefacts) |
+| `/docs` | Swagger UI (pinned `swagger-ui-dist` release, subresource-integrity hashes, CSP header) |
+
+All are `GET`-only; any other method returns `405`. With the key unset or `false`
+they all return `404`.
 
 ## Dependencies 🔗
 

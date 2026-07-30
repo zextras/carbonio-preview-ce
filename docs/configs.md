@@ -44,6 +44,7 @@ Overridable by Consul KV
 | `carbonio-preview/document/subprocess-pool-size` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/image-document/fetch-timeout-seconds` | `30` |  |
 | `carbonio-preview/image-document/max-concurrent-operations` | *(not set)* | Defaults to the number of CPUs |
+| `carbonio-preview/openapi/enabled` | `false` |  |
 | `carbonio-preview/video/max-attempts` | `3` |  |
 | `carbonio-preview/video/max-concurrent-extractions` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/video/poll-interval-seconds` | `15` |  |

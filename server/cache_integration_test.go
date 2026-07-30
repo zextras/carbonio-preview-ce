@@ -18,7 +18,7 @@ func newCacheTestServer(t *testing.T, store *mockStore, maxBytes int64) *http.Se
 	c := cache.New(maxBytes)
 	cfg := testCfg()
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux)
+	api := newHumaAPI(mux, cfg)
 	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
 	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
 	registerDocumentOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
