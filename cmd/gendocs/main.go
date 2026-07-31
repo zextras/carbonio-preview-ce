@@ -5,15 +5,19 @@
 // Command gendocs generates the authoritative OpenAPI specification artefacts
 // directly from the huma handler registrations in server/api.go.
 //
-// It writes three files in one pass:
+// It writes two files in one pass:
 //
-//  1. docs/openapi.yaml  — OAS 3.0.3 YAML (human-readable, for diffs)
-//  2. docs/openapi.json  — OAS 3.0.3 JSON (for SDK generators)
-//  3. server/static/openapi.json — copy of the JSON picked up by go:embed in server/docs.go
+//  1. docs/openapi.yaml  — OAS 3.0.3 YAML (human-readable, for diffs; the SDK's
+//     <inputSpec>)
+//  2. docs/openapi.json  — OAS 3.0.3 JSON
+//
+// Both are pure build-time OUTPUT: nothing in the service reads them back, and
+// the binary serves no spec route either (see apispec.NewAPI), so there is no
+// embedded copy and no runtime endpoint to keep in sync with them.
 //
 // No Python, no PyYAML, no pre-existing JSON file required.
 //
-// Invoke via go:generate in server/docs.go:
+// Invoke via go:generate in server/api.go:
 //
 //	//go:generate go run ../cmd/gendocs
 //
@@ -29,9 +33,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humago"
-
 	"github.com/zextras/carbonio-preview-ce/v3/server/apispec"
 )
 
@@ -40,11 +41,11 @@ func main() {
 
 	yamlPath := filepath.Join(root, "docs", "openapi.yaml")
 	jsonPath := filepath.Join(root, "docs", "openapi.json")
-	staticJSONPath := filepath.Join(root, "server", "static", "openapi.json")
 
-	// Build a throwaway huma API, register all operations via stubs (cgo-free),
-	// then downgrade to OAS 3.0.3.
-	api := buildAPI()
+	// Build a throwaway huma API over a throwaway mux using the SAME constructor
+	// the live server uses, register all operations via stubs (cgo-free), then
+	// downgrade to OAS 3.0.3. The mux is discarded: only api.OpenAPI() is read.
+	api := apispec.NewAPI(http.NewServeMux())
 	apispec.RegisterStubs(api)
 
 	// ── YAML ────────────────────────────────────────────────────────────────
@@ -74,42 +75,6 @@ func main() {
 		log.Fatalf("gendocs: write %s: %v", jsonPath, err)
 	}
 	log.Printf("gendocs: wrote %s", jsonPath)
-
-	// ── server/static/openapi.json (same bytes, picked up by go:embed) ──────
-	if err := os.MkdirAll(filepath.Dir(staticJSONPath), 0o755); err != nil {
-		log.Fatalf("gendocs: mkdir %s: %v", filepath.Dir(staticJSONPath), err)
-	}
-	if err := os.WriteFile(staticJSONPath, prettyJSON, 0o644); err != nil {
-		log.Fatalf("gendocs: write %s: %v", staticJSONPath, err)
-	}
-	log.Printf("gendocs: wrote %s", staticJSONPath)
-}
-
-// buildAPI constructs a throwaway huma API over a fresh ServeMux.
-// The config is built from scratch (same as server.newHumaAPI) to avoid the
-// SchemaLinkTransformer that huma.DefaultConfig installs.
-func buildAPI() huma.API {
-	mux := http.NewServeMux()
-	registry := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
-	cfg := huma.Config{
-		OpenAPI: &huma.OpenAPI{
-			OpenAPI: "3.1.0",
-			Info: &huma.Info{
-				Title:       "preview",
-				Version:     "latest",
-				Description: "Preview service.",
-			},
-			Components: &huma.Components{
-				Schemas: registry,
-			},
-		},
-		OpenAPIPath:   "",
-		DocsPath:      "",
-		SchemasPath:   "",
-		Formats:       huma.DefaultFormats,
-		DefaultFormat: "application/json",
-	}
-	return humago.New(mux, cfg)
 }
 
 // prettyIndent re-encodes raw JSON bytes with 2-space indentation for stable diffs.

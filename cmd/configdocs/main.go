@@ -5,8 +5,10 @@
 // Command configdocs generates configuration documentation files from the
 // key registry:
 //
-//   - docs/configs.md — Markdown pipe-table format, committed and embedded in
-//     the binary via docs.ConfigsMd() (the docs package uses go:embed on it).
+//   - docs/configs.md -- Markdown pipe-table format, committed as build-time
+//     generated OUTPUT only. Nothing embeds or reads it back: the binary
+//     re-renders the same Markdown from the compiled-in registry via
+//     config.ConfigsMd() when `--setup` runs.
 //
 // It is invoked via the go:generate directive in config/registry.go:
 //
@@ -19,7 +21,6 @@ import (
 	"path/filepath"
 
 	"github.com/zextras/carbonio-preview-ce/v3/config"
-	"github.com/zextras/carbonio-preview-ce/v3/configdocs"
 )
 
 func main() {
@@ -29,25 +30,10 @@ func main() {
 	// go.mod is found on the first iteration.
 	root := repoRoot()
 
-	keys := config.RegisteredKeys()
-	raw := make([]configdocs.RawKey, len(keys))
-	for i, k := range keys {
-		raw[i] = configdocs.RawKey{
-			Key:            k.Key,
-			Namespace:      string(k.Namespace),
-			Default:        k.Default,
-			IfNotPresent:   k.IfNotPresent,
-			HiddenFromDocs: k.HiddenFromDocs,
-		}
-	}
+	// Exactly the string the binary prints at --setup time -- same registry,
+	// same renderer -- so the committed file cannot drift from the runtime output.
+	md := config.ConfigsMd()
 
-	docs := configdocs.BuildDocs(config.ServiceName, config.ShortName, raw)
-
-	md := configdocs.RenderMd(docs)
-
-	// Write docs/configs.md — the single committed copy. The docs package
-	// embeds this file at compile time (go:embed configs.md), so the binary
-	// serves it via docs.ConfigsMd() without a separate config/configs.md.
 	mdPath := filepath.Join(root, "docs", "configs.md")
 	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
 		log.Fatalf("configdocs: mkdir %s: %v", filepath.Dir(mdPath), err)

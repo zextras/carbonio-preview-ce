@@ -2,6 +2,15 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// The committed OpenAPI artefacts under docs/ are generated FROM the huma
+// handler registrations reachable from this file (RegisterOperations →
+// server/apispec). Nothing in the code reads them back. To regenerate them
+// after changing an operation, run:
+//
+//	go generate ./server/...
+//
+//go:generate go run ../cmd/gendocs
+
 package server
 
 import (
@@ -16,7 +25,6 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
 	"github.com/zextras/carbonio-preview-ce/v3/cache"
 	"github.com/zextras/carbonio-preview-ce/v3/config"
@@ -107,34 +115,12 @@ func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 	return w
 }
 
-// newHumaAPI constructs a huma API over the given mux with all Carbonio settings.
-// We build the config from scratch (not huma.DefaultConfig) to avoid the
-// SchemaLinkTransformer that DefaultConfig installs via CreateHooks — it
-// injects $schema fields into every response body, which conflicts with our
-// FastAPI-compatible error model (no $schema, no Link headers).
+// newHumaAPI constructs a huma API over the given mux with all Carbonio
+// settings, delegating to apispec.NewAPI — the single shared constructor also
+// used by cmd/gendocs, so the committed docs/ artefacts are built from the same
+// huma.Config the server runs on. It registers no spec or docs routes.
 func newHumaAPI(mux *http.ServeMux) huma.API {
-	registry := huma.NewMapRegistry("#/components/schemas/", huma.DefaultSchemaNamer)
-	cfg := huma.Config{
-		OpenAPI: &huma.OpenAPI{
-			OpenAPI: "3.1.0",
-			Info: &huma.Info{
-				Title:       "preview",
-				Version:     "latest",
-				Description: "Preview service.",
-			},
-			Components: &huma.Components{
-				Schemas: registry,
-			},
-		},
-		// All three doc/schema paths are "" → huma registers no built-in routes.
-		OpenAPIPath:   "",
-		DocsPath:      "",
-		SchemasPath:   "",
-		Formats:       huma.DefaultFormats,
-		DefaultFormat: "application/json",
-		// No CreateHooks → no SchemaLinkTransformer → no $schema injection.
-	}
-	return humago.New(mux, cfg)
+	return apispec.NewAPI(mux)
 }
 
 // ---------------------------------------------------------------------------

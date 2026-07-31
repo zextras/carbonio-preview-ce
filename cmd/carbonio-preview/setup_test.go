@@ -5,6 +5,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,8 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zextras/carbonio-preview-ce/v3/config"
 	"github.com/zextras/carbonio-preview-ce/v3/config/migrate"
-	"github.com/zextras/carbonio-preview-ce/v3/docs"
 
 	// Blank-imported for the same reason main.go does: this test package
 	// exercises the --setup path end-to-end and must see CE's "ce" migration
@@ -117,7 +119,16 @@ func TestSetupCLI_MissingConsulURL(t *testing.T) {
 }
 
 // TestSetupSuccessPath_PrintsConfigsMd verifies that migrate.RunSetup with an
-// absent ini exits cleanly and that config documentation is printed.
+// absent ini exits cleanly AND that the config documentation actually reaches
+// stdout -- a blank line followed by config.ConfigsMd(), mirroring
+// SetupAwareMain.printConfigDocumentation.
+//
+// The Markdown is rendered from the compiled-in key registry, not read from
+// docs/configs.md (docs/ is build-time generated output only); the drift guards
+// in configdocs/render_test.go pin that rendering to the committed file, so
+// asserting on config.ConfigsMd() here transitively asserts the operator sees
+// exactly the documented content.
+//
 // Uses t.TempDir() paths passed directly — no subprocess, no env-var hooks.
 func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 	dir := t.TempDir()
@@ -142,9 +153,56 @@ func TestSetupSuccessPath_PrintsConfigsMd(t *testing.T) {
 
 	// Call migrate.RunSetup directly with the test's Consul stub.
 	// When ini is absent there is no application work, so no token is needed.
-	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
-		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", err)
+	want := config.ConfigsMd()
+	var runErr error
+	out := captureStdout(t, func() {
+		runErr = migrate.RunSetup(srv.URL, paths, want)
+	})
+	if runErr != nil {
+		t.Fatalf("migrate.RunSetup with absent ini should not fail: %v", runErr)
 	}
+
+	// The runner prints its own migration summary first, so the docs block is a
+	// suffix -- but it must be the documentation verbatim, preceded by the blank
+	// separator line.
+	if !strings.HasSuffix(out, "\n"+want) {
+		t.Errorf("--setup stdout does not end with a blank line + config.ConfigsMd().\n"+
+			"--- want suffix (%d bytes) ---\n%s\n--- got stdout (%d bytes) ---\n%s",
+			len(want)+1, "\n"+want, len(out), out)
+	}
+	if want == "" {
+		t.Error("config.ConfigsMd() rendered empty: the registry produced no documentation")
+	}
+}
+
+// captureStdout redirects os.Stdout for the duration of fn and returns what was
+// written. migrate.RunSetup prints with fmt.Print*, which resolves os.Stdout at
+// call time, so the swap is observed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = orig
+		_ = w.Close() // no-op after the explicit close below; guards an early exit
+		_ = r.Close()
+	}()
+
+	// Drain concurrently so a payload larger than the pipe buffer cannot deadlock.
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+	_ = w.Close()
+	return <-done
 }
 
 // TestSetupEndToEnd_RunsOnlyCEMigrations proves the fix end-to-end at the
@@ -179,7 +237,7 @@ func TestSetupEndToEnd_RunsOnlyCEMigrations(t *testing.T) {
 		DropInPath:   filepath.Join(dir, "log-level.conf"),
 		MigrationSet: "ce", // hardcoded, matching main.go (dev-only, not KV config)
 	}
-	if err := migrate.RunSetup(srv.URL, paths, docs.ConfigsMd()); err != nil {
+	if err := migrate.RunSetup(srv.URL, paths, config.ConfigsMd()); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
 	if puts == 0 {

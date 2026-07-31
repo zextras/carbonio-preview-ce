@@ -208,6 +208,10 @@ func (s *Server) Handler() http.Handler {
 // All resource operations (image, health, pdf, document, video-generate) are
 // registered under huma (code-first OpenAPI).
 //
+// huma serves no spec or docs routes: the OpenAPI document is a build-time
+// artefact under docs/, so /openapi.json, /openapi.yaml, /docs and friends 404
+// on every install. See apispec.NewAPI.
+//
 // sem is the shared render semaphore (image/PDF/document), sized by the
 // image-document.max-concurrent-operations key. The dedicated video semaphore is built
 // here from cfg.VideoConcurrency (APPLICATION key
@@ -247,8 +251,6 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 	}
 	s.workerStartMu.Unlock()
 
-	// Hand-rolled docs endpoints (openapi.json, /docs, /redoc).
-	registerDocRoutes(mux)
 	return mux
 }
 

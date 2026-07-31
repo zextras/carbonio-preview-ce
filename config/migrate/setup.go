@@ -22,14 +22,19 @@ import (
 //     registered — those talk to Consul KV regardless of the ini).
 //   - Runs only the bootstrap/migrations registered under paths.MigrationSet
 //     (e.g. "ce"), never another edition's set, then always prints configsMd
-//     (a blank line followed by the embedded configs.md Markdown content).
+//     (a blank line followed by the configs.md Markdown content).
 //   - Returns a non-nil error on any failure; the caller is responsible for
 //     exiting with a non-zero code.
 //
 // paths holds the injectable file paths, Consul URL, and MigrationSet name;
 // the production caller passes the production paths, tests pass t.TempDir()
 // paths directly.
-// configsMd is the embedded configs.md content (config.ConfigsMd()).
+//
+// configsMd is the Markdown config reference, passed in rather than looked up
+// so this package stays independent of the config package (each edition's main
+// supplies its own registry's rendering -- CE passes config.ConfigsMd()). It is
+// rendered from the compiled-in key registry at call time, never read from
+// docs/configs.md, which is build-time generated output only.
 func RunSetup(consulURL string, paths Paths, configsMd string) error {
 	token := strings.TrimSpace(os.Getenv("SETUP_CONSUL_TOKEN"))
 	paths.ConsulURL = consulURL
@@ -52,7 +57,7 @@ func RunSetup(consulURL string, paths Paths, configsMd string) error {
 	return nil
 }
 
-// printDocs prints a blank line followed by the embedded configs.md content.
+// printDocs prints a blank line followed by the configs.md content.
 // Mirrors SetupAwareMain.printConfigDocumentation.
 func printDocs(configsMd string) {
 	fmt.Println()

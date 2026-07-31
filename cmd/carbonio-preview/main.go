@@ -46,7 +46,6 @@ import (
 	// the Advanced binary import config/migrate for the framework alone,
 	// without inheriting CE's migrations).
 	_ "github.com/zextras/carbonio-preview-ce/v3/config/migrate/cemig"
-	"github.com/zextras/carbonio-preview-ce/v3/docs"
 	"github.com/zextras/carbonio-preview-ce/v3/render"
 	"github.com/zextras/carbonio-preview-ce/v3/server"
 	"github.com/zextras/carbonio-preview-ce/v3/storage"
@@ -146,7 +145,9 @@ func runSetupIfRequested(args []string) (handled bool, exitCode int) {
 		// Advanced's own main hardcodes "advanced".
 		MigrationSet: "ce",
 	}
-	if err := migrate.RunSetup(consulURL, paths, docs.ConfigsMd()); err != nil {
+	// The config reference is rendered from the compiled-in key registry, not
+	// read from docs/configs.md: docs/ is build-time generated output only.
+	if err := migrate.RunSetup(consulURL, paths, config.ConfigsMd()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return true, 1
 	}

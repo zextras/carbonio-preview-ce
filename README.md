@@ -111,8 +111,16 @@ var or KV key.
 
 ## APIs Documentation 📚
 
-Once the service is up and running, APIs will be found
-[here](https://127.78.0.6:10000/docs)
+The OpenAPI document is a **build-time artefact**: [`docs/openapi.yaml`](docs/openapi.yaml)
+(and `docs/openapi.json`) are generated from the huma handler registrations by
+`go generate ./...` and committed. `docs/openapi.yaml` is the `<inputSpec>` the Java
+SDK is generated from. Nothing in the service reads these files back.
+
+The running service serves **no** spec or documentation endpoint: `/openapi.json`,
+`/openapi.yaml`, `/openapi-3.0.json`, `/openapi-3.0.yaml`, `/docs` and `/redoc` all
+return `404`, and there is no knob to turn them on. A runtime-served spec would be
+redundant with `docs/openapi.yaml` by construction — both are produced from the same
+handler registrations — so it could only ever return what is already committed here.
 
 ## Dependencies 🔗
 

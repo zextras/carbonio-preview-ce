@@ -61,15 +61,21 @@ ENV GONOSUMCHECK=github.com/zextras/*
 RUN go mod download
 
 # Copy source tree.
-COPY cache/  ./cache/
-COPY cmd/    ./cmd/
-COPY config/ ./config/
-COPY db/     ./db/
-COPY render/ ./render/
-COPY server/ ./server/
-COPY storage/ ./storage/
-COPY video/  ./video/
-COPY docs/   ./docs/
+#
+# docs/ is deliberately NOT copied: it holds build-time generated OUTPUT only
+# (configs.md + the OpenAPI artefacts) and nothing in the source tree embeds or
+# reads it. The binary re-renders the config reference from the compiled-in key
+# registry (config.ConfigsMd()) and serves its OpenAPI spec from huma, so the
+# build does not need those files -- and the runtime stage never copied them.
+COPY cache/      ./cache/
+COPY cmd/        ./cmd/
+COPY config/     ./config/
+COPY configdocs/ ./configdocs/
+COPY db/         ./db/
+COPY render/     ./render/
+COPY server/     ./server/
+COPY storage/    ./storage/
+COPY video/      ./video/
 
 # Build the Go binary.
 # CGO_LDFLAGS rpath: at runtime the binary looks for libpdfium.so in
