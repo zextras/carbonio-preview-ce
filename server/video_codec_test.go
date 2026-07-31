@@ -498,7 +498,7 @@ func TestIsSupportedVideoCodec(t *testing.T) {
 		{"mpeg4", true},
 		{"mpeg2video", true},
 		{"theora", true},
-		{"av1", false},  // not in current list
+		{"av1", false}, // not in current list
 		{"wmv3", false},
 		{"", false},
 		{"not_a_codec_xyz", false},
@@ -510,4 +510,3 @@ func TestIsSupportedVideoCodec(t *testing.T) {
 		}
 	}
 }
-

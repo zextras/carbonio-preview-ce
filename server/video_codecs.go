@@ -17,14 +17,14 @@ import (
 // change that requires end-to-end testing with the actual binary — it is NOT an
 // operator configuration option.
 var supportedVideoCodecs = map[string]struct{}{
-	"h264":  {},
-	"hevc":  {},
-	"h265":  {}, // alias for hevc, reported by some containers
-	"vp8":   {},
-	"vp9":   {},
-	"mpeg4": {},
+	"h264":       {},
+	"hevc":       {},
+	"h265":       {}, // alias for hevc, reported by some containers
+	"vp8":        {},
+	"vp9":        {},
+	"mpeg4":      {},
 	"mpeg2video": {},
-	"theora": {},
+	"theora":     {},
 }
 
 // isSupportedVideoCodec reports whether codec (lowercased) is in the supported set.

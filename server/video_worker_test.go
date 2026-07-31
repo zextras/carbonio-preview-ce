@@ -61,13 +61,13 @@ func newBlockingStorageServer(t *testing.T) *httptest.Server {
 // configurable delay between chunks, but never silences for the full
 // idleReadCloser timeout.
 type slowStreamReader struct {
-	data     []byte
-	pos      int
-	chunkSz  int
-	delay    time.Duration
-	mu       sync.Mutex
-	once     sync.Once
-	doneCh   chan struct{}
+	data    []byte
+	pos     int
+	chunkSz int
+	delay   time.Duration
+	mu      sync.Mutex
+	once    sync.Once
+	doneCh  chan struct{}
 }
 
 func newSlowStreamReader(data string, chunkSz int, delay time.Duration) *slowStreamReader {

@@ -21,7 +21,8 @@ import (
 var ffprobeVideoCodecRe = regexp.MustCompile(`(?m)^\s*([a-z0-9_]+)\s*$`)
 
 // ffmpegStreamRe parses the video codec from ffmpeg -i stderr, e.g.:
-//   Stream #0:0(und): Video: h264 (High) ...
+//
+//	Stream #0:0(und): Video: h264 (High) ...
 var ffmpegStreamRe = regexp.MustCompile(`Stream #\S+: Video: ([a-zA-Z0-9_]+)`)
 
 // ffprobePath derives the ffprobe sibling of FFmpegPath (same directory).
