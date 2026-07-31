@@ -48,3 +48,15 @@ path = "THIRDPARTIES"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
 SPDX-License-Identifier = "AGPL-3.0-only"
+
+# Vendored data files (JSON/text templates, no comment syntax available for an inline
+# SPDX header) copied verbatim from jenkins-lib-common's resources/thirdparties-go-*
+# so the local pre-commit hook can regenerate THIRDPARTIES the same way Jenkins does.
+[[annotations]]
+path = [
+  ".ci/thirdparties/thirdparties-go-rules.json",
+  ".ci/thirdparties/thirdparties-go-deps.tmpl",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Zextras <https://www.zextras.com>"
+SPDX-License-Identifier = "AGPL-3.0-only"
