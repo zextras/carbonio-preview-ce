@@ -53,11 +53,11 @@ func startPostgres(t *testing.T) *Store {
 	}
 
 	const (
-		pgUser   = "preview"
-		pgPass   = "preview"
-		pgDB     = "preview_test"
-		pgPort   = "5432"
-		imgName  = "postgres:16-alpine"
+		pgUser  = "preview"
+		pgPass  = "preview"
+		pgDB    = "preview_test"
+		pgPort  = "5432"
+		imgName = "postgres:16-alpine"
 	)
 
 	// Start the container.

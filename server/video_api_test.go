@@ -342,11 +342,11 @@ func TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
 
 	handler := buildGetVideoPreview(deps, nil)
 	_, herr := handler(ctx, &apispec.VideoGetPreviewInput{
-		ID:          fileID,
-		Version:     version,
-		Area:        "100x100",
-		ServiceType: "files",
-		Quality:     "medium",
+		ID:           fileID,
+		Version:      version,
+		Area:         "100x100",
+		ServiceType:  "files",
+		Quality:      "medium",
 		OutputFormat: "jpeg",
 	})
 
