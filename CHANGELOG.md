@@ -1,3 +1,5 @@
+## [3.1.0](https://github.com/zextras/carbonio-preview-ce/compare/v3.0.7...v3.1.0) (2026-08-11)
+
 ## [3.0.7](https://github.com/zextras/carbonio-preview-ce/compare/v3.0.6...v3.0.7) (2026-07-31)
 
 ## [3.0.6](https://github.com/zextras/carbonio-preview-ce/compare/v3.0.5...v3.0.6) (2026-07-13)
