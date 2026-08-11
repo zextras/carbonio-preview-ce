@@ -44,6 +44,19 @@ class PreviewClientTest {
     wireMock.stop();
   }
 
+  @Test
+  void builderApiReadTimeoutAbortsSlowNonBlobCall() {
+    stubFor(
+        get(urlPathEqualTo("/health/ready/"))
+            .willReturn(aResponse().withStatus(200).withFixedDelay(1500)));
+    PreviewClient timed =
+        PreviewClient.builder("http://localhost:" + wireMock.port())
+            .apiReadTimeout(java.time.Duration.ofMillis(200))
+            .build();
+    assertTimeoutPreemptively(
+        java.time.Duration.ofSeconds(1), () -> assertFalse(timed.healthReady()));
+  }
+
   // ── GET downloads ────────────────────────────────────────────────────────────
 
   @Test
@@ -381,7 +394,7 @@ class PreviewClientTest {
 
   @Test
   void getPreviewOfVideo_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/1/640x480/"))
+    stubFor(get(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/640x480/"))
         .withQueryParam("service_type", equalTo("chats"))
         .willReturn(aResponse()
             .withStatus(200)
@@ -390,7 +403,7 @@ class PreviewClientTest {
             .withBody(IMAGE_BYTES)));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(1)
         .area("640x480")
         .serviceType("chats")
@@ -405,14 +418,14 @@ class PreviewClientTest {
 
   @Test
   void getPreviewOfVideo_withOwnerId_sendsFileOwnerIdHeader() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/vid-uuid/2/320x240/"))
+    stubFor(get(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/320x240/"))
         .willReturn(aResponse()
             .withStatus(200)
             .withHeader("Content-Type", MIME_JPEG)
             .withBody(IMAGE_BYTES)));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(2)
         .area("320x240")
         .serviceType("files")
@@ -423,7 +436,7 @@ class PreviewClientTest {
       assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
 
-    verify(getRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/2/320x240/"))
+    verify(getRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/320x240/"))
         .withHeader("FileOwnerId", equalTo("owner-abc")));
   }
 
@@ -476,12 +489,12 @@ class PreviewClientTest {
 
   @Test
   void deleteVideoPreview_200_completes() {
-    stubFor(delete(urlPathEqualTo("/preview/video/vid-uuid/1/"))
+    stubFor(delete(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/"))
         .withQueryParam("service_type", equalTo("files"))
         .willReturn(aResponse().withStatus(200)));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(1)
         .serviceType("files")
         .build();
@@ -492,12 +505,12 @@ class PreviewClientTest {
 
   @Test
   void deleteVideoPreview_204_completes() {
-    stubFor(delete(urlPathEqualTo("/preview/video/vid-uuid/2/"))
+    stubFor(delete(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/"))
         .withQueryParam("service_type", equalTo("chats"))
         .willReturn(aResponse().withStatus(204)));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(2)
         .serviceType("chats")
         .build();
@@ -507,11 +520,11 @@ class PreviewClientTest {
 
   @Test
   void deleteVideoPreview_withOwnerId_sendsFileOwnerIdHeader() {
-    stubFor(delete(urlPathEqualTo("/preview/video/owned-vid/1/"))
+    stubFor(delete(urlPathEqualTo("/preview/video/44444444-4444-4444-4444-444444444444/1/"))
         .willReturn(aResponse().withStatus(200)));
 
     Query q = new QueryBuilder()
-        .fileId("owned-vid")
+        .fileId("44444444-4444-4444-4444-444444444444")
         .version(1)
         .serviceType("files")
         .ownerId("owner-xyz")
@@ -519,17 +532,17 @@ class PreviewClientTest {
 
     client.deleteVideoPreview(q);
 
-    verify(deleteRequestedFor(urlPathEqualTo("/preview/video/owned-vid/1/"))
+    verify(deleteRequestedFor(urlPathEqualTo("/preview/video/44444444-4444-4444-4444-444444444444/1/"))
         .withHeader("FileOwnerId", equalTo("owner-xyz")));
   }
 
   @Test
   void deleteVideoPreview_404_throwsPreviewException() {
-    stubFor(delete(urlPathEqualTo("/preview/video/gone/1/"))
+    stubFor(delete(urlPathEqualTo("/preview/video/33333333-3333-3333-3333-333333333333/1/"))
         .willReturn(aResponse().withStatus(404)));
 
     Query q = new QueryBuilder()
-        .fileId("gone")
+        .fileId("33333333-3333-3333-3333-333333333333")
         .version(1)
         .serviceType("files")
         .build();
@@ -541,82 +554,82 @@ class PreviewClientTest {
 
   @Test
   void copyVideoPreview_routesToCorrectPathAndReturnsPreviewId() {
-    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
         .withQueryParam("service_type", equalTo("files"))
-        .withQueryParam("target", equalTo("new-blob-uuid"))
+        .withQueryParam("target", equalTo("22222222-2222-2222-2222-222222222222"))
         .willReturn(aResponse()
             .withStatus(200)
             .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"new-blob-uuid\"}")));
+            .withBody("{\"preview_id\":\"22222222-2222-2222-2222-222222222222\"}")));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(1)
         .serviceType("files")
         .build();
 
-    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "new-blob-uuid", null);
-    assertEquals("new-blob-uuid", resp.getPreviewId());
+    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null);
+    assertEquals("22222222-2222-2222-2222-222222222222", resp.getPreviewId());
   }
 
   @Test
   void copyVideoPreview_withOwnerIds_sendsCorrectHeaders() {
-    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
         .willReturn(aResponse()
             .withStatus(200)
             .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"new-blob-uuid\"}")));
+            .withBody("{\"preview_id\":\"22222222-2222-2222-2222-222222222222\"}")));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(1)
         .serviceType("chats")
         .ownerId("src-owner")
         .build();
 
-    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "new-blob-uuid", "tgt-owner");
-    assertEquals("new-blob-uuid", resp.getPreviewId());
+    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", "tgt-owner");
+    assertEquals("22222222-2222-2222-2222-222222222222", resp.getPreviewId());
 
-    verify(postRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+    verify(postRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
         .withHeader("FileOwnerId", equalTo("src-owner"))
         .withHeader("TargetOwnerId", equalTo("tgt-owner")));
   }
 
   @Test
   void copyVideoPreview_withoutTargetOwnerId_doesNotSendTargetOwnerIdHeader() {
-    stubFor(post(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
         .willReturn(aResponse()
             .withStatus(200)
             .withHeader("Content-Type", "application/json")
             .withBody("{\"preview_id\":\"x\"}")));
 
     Query q = new QueryBuilder()
-        .fileId("vid-uuid")
+        .fileId("11111111-1111-1111-1111-111111111111")
         .version(1)
         .serviceType("files")
         .ownerId("src-owner")
         .build();
 
-    client.copyVideoPreview(q, "x", null);
+    client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null);
 
-    verify(postRequestedFor(urlPathEqualTo("/preview/video/vid-uuid/1/copy/"))
+    verify(postRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
         .withHeader("FileOwnerId", equalTo("src-owner"))
         .withoutHeader("TargetOwnerId"));
   }
 
   @Test
   void copyVideoPreview_404_throwsPreviewException() {
-    stubFor(post(urlPathEqualTo("/preview/video/gone/1/copy/"))
+    stubFor(post(urlPathEqualTo("/preview/video/33333333-3333-3333-3333-333333333333/1/copy/"))
         .willReturn(aResponse().withStatus(404)));
 
     Query q = new QueryBuilder()
-        .fileId("gone")
+        .fileId("33333333-3333-3333-3333-333333333333")
         .version(1)
         .serviceType("files")
         .build();
 
     PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.copyVideoPreview(q, "x", null));
+        () -> client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null));
     assertEquals(404, ex.getHttpStatus());
   }
 
