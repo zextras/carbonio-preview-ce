@@ -119,6 +119,7 @@ SPDX-License-Identifier: AGPL-3.0-only
             <phase>generate-sources</phase>
             <configuration>
               <inputSpec>${project.basedir}/../docs/openapi.yaml</inputSpec>
+              <ignoreFileOverride>${project.basedir}/.openapi-generator-ignore</ignoreFileOverride>
               <generatorName>java</generatorName>
               <library>native</library>
               <output>${project.build.directory}/generated-sources/openapi</output>

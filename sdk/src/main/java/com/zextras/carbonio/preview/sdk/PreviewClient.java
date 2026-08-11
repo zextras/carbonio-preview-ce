@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package com.zextras.carbonio.preview.sdk;
 
+import com.zextras.carbonio.preview.sdk.rest.ApiClient;
+import com.zextras.carbonio.preview.sdk.rest.ApiException;
+import com.zextras.carbonio.preview.sdk.rest.api.HealthApi;
+import com.zextras.carbonio.preview.sdk.rest.api.VideoApi;
+import com.zextras.carbonio.preview.sdk.rest.model.VideoCopyOutputBody;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +19,8 @@ import java.net.http.HttpRequest.BodyPublishers;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.UUID;
 
 /**
  * Thin REST client for the Carbonio Preview CE service.
@@ -49,33 +56,128 @@ public final class PreviewClient implements Closeable {
   private static final String MULTIPART_BOUNDARY = "PreviewClientBoundary1234567890";
 
   private final String baseUrl;
-  private final HttpClient http;
+  private final HttpClient blobHttpClient;
+  private final VideoApi videoApi;
+  private final HealthApi healthApi;
 
   /**
-   * Creates a client connected to {@code baseUrl}.
+   * Creates a client connected to {@code baseUrl}, using {@code http} for every request with no
+   * per-request timeout. Kept for back-compat / TLS customisation; prefer {@link #builder(String)}
+   * to control timeouts per call class.
    *
-   * @param baseUrl base URL of the service, e.g. {@code "http://localhost:20003"}.
-   *                Must NOT have a trailing slash.
+   * @param baseUrl base URL of the service, e.g. {@code "http://localhost:20003"}. Must NOT have a
+   *     trailing slash.
    * @param http    the {@link HttpClient} to use
    */
   public PreviewClient(String baseUrl, HttpClient http) {
-    // Normalise: strip trailing slash
-    this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-    this.http = http;
+    // Back-compat: the injected client backs the blob path; the non-blob path (video/health) uses a
+    // default generated ApiClient with no timeouts. Prefer builder(String) for timeout control.
+    this(normalize(baseUrl), http, defaultApiClient(normalize(baseUrl)));
+  }
+
+  private PreviewClient(String baseUrl, HttpClient blobHttpClient, ApiClient apiClient) {
+    this.baseUrl = baseUrl;
+    this.blobHttpClient = blobHttpClient;
+    this.videoApi = new VideoApi(apiClient);
+    this.healthApi = new HealthApi(apiClient);
+  }
+
+  private static String normalize(String baseUrl) {
+    return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+  }
+
+  private static ApiClient defaultApiClient(String baseUrl) {
+    ApiClient apiClient = new ApiClient();
+    apiClient.updateBaseUri(baseUrl);
+    return apiClient;
   }
 
   /**
-   * Creates a client backed by a default {@link HttpClient} configured to use HTTP/1.1.
+   * Creates a client backed by a default {@link HttpClient} (HTTP/1.1, no timeouts).
    *
-   * <p>HTTP/1.1 is used explicitly because the Go preview service speaks HTTP/1.1, and
-   * because {@link java.net.http.HttpClient} with HTTP/2 + chunked streaming (unknown
-   * content-length) triggers RST_STREAM cancellation on some server stacks.
+   * <p>HTTP/1.1 is used explicitly because the Go preview service speaks HTTP/1.1, and because
+   * {@link java.net.http.HttpClient} with HTTP/2 + chunked streaming (unknown content-length)
+   * triggers RST_STREAM cancellation on some server stacks.
    *
    * @param baseUrl base URL, e.g. {@code "http://localhost:20003"}
    */
   public static PreviewClient atURL(String baseUrl) {
-    return new PreviewClient(baseUrl,
-        HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
+    return builder(baseUrl).build();
+  }
+
+  /**
+   * Fluent builder exposing timeout knobs per call class, mirroring the generated {@code ApiClient}
+   * (no SDK defaults — nothing is set unless the caller sets it):
+   *
+   * <ul>
+   *   <li>non-blob ops (copy/delete/health) carry {@link Builder#apiConnectTimeout} + {@link
+   *       Builder#apiReadTimeout};
+   *   <li>blob ops (image/pdf/document/video preview + thumbnail GET, and the multipart uploads)
+   *       carry only {@link Builder#blobConnectTimeout}. There is deliberately no blob read/request
+   *       timeout: a request timeout is a single absolute deadline over the whole exchange —
+   *       harmless on a streamed download but fatal on a large upload — so blob transfers always run
+   *       to completion; the connect timeout is the only guard.
+   * </ul>
+   */
+  public static Builder builder(String baseUrl) {
+    return new Builder(baseUrl);
+  }
+
+  /** See {@link #builder(String)}. */
+  public static final class Builder {
+    private final String baseUrl;
+    private Duration apiConnectTimeout;
+    private Duration apiReadTimeout;
+    private Duration blobConnectTimeout;
+
+    private Builder(String baseUrl) {
+      this.baseUrl = baseUrl;
+    }
+
+    /** Connect timeout for non-blob (copy/delete/health) ops; {@code null} = none (default). */
+    public Builder apiConnectTimeout(Duration timeout) {
+      this.apiConnectTimeout = timeout;
+      return this;
+    }
+
+    /** Request/read timeout for non-blob (copy/delete/health) ops; {@code null} = none (default). */
+    public Builder apiReadTimeout(Duration timeout) {
+      this.apiReadTimeout = timeout;
+      return this;
+    }
+
+    /** Connect timeout for blob (streamed preview/thumbnail/upload) ops; {@code null} = none. */
+    public Builder blobConnectTimeout(Duration timeout) {
+      this.blobConnectTimeout = timeout;
+      return this;
+    }
+
+    public PreviewClient build() {
+      String normalized = normalize(baseUrl);
+      ApiClient apiClient = new ApiClient();
+      apiClient.updateBaseUri(normalized);
+      // Must be set before constructing the *Api: their constructors snapshot the ApiClient's
+      // timeouts into final fields, so setting them afterwards would be a silent no-op.
+      if (apiConnectTimeout != null) {
+        apiClient.setConnectTimeout(apiConnectTimeout);
+      }
+      if (apiReadTimeout != null) {
+        apiClient.setReadTimeout(apiReadTimeout);
+      }
+      return new PreviewClient(normalized, http1Client(blobConnectTimeout), apiClient);
+    }
+  }
+
+  private static HttpClient http1Client(Duration connectTimeout) {
+    HttpClient.Builder builder = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1);
+    if (connectTimeout != null) {
+      builder.connectTimeout(connectTimeout);
+    }
+    return builder.build();
+  }
+
+  private static String emptyToNull(String value) {
+    return (value == null || value.isEmpty()) ? null : value;
   }
 
   // -------------------------------------------------------------------------
@@ -212,11 +314,15 @@ public final class PreviewClient implements Closeable {
    */
   public void deleteVideoPreview(Query query) {
     requireFileId(query);
-    String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
-        + "/" + query.getVersion() + "/"
-        + buildVideoDeleteQueryString(query);
-    doDelete(query, url);
+    try {
+      videoApi.deleteVideoPreview(
+          UUID.fromString(query.getFileId()),
+          (long) query.getVersion(),
+          query.getServiceType(),
+          emptyToNull(query.getOwnerId()));
+    } catch (ApiException e) {
+      throw new PreviewException(e.getCode(), "deleteVideoPreview failed: " + e.getMessage(), e);
+    }
   }
 
   /**
@@ -247,36 +353,19 @@ public final class PreviewClient implements Closeable {
    */
   public VideoPreviewCopyResponse copyVideoPreview(Query query, String targetBlobId, String targetOwnerId) {
     requireFileId(query);
-    String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
-        + "/" + query.getVersion() + "/copy/"
-        + buildVideoCopyQueryString(query, targetBlobId);
-
-    HttpRequest.Builder b = HttpRequest.newBuilder()
-        .uri(URI.create(url))
-        .header("Content-Type", "application/json")
-        .POST(BodyPublishers.noBody());
-    applyOwner(b, query);
-    if (targetOwnerId != null && !targetOwnerId.isEmpty()) {
-      b.header("TargetOwnerId", targetOwnerId);
-    }
-
-    HttpResponse<String> response;
     try {
-      response = http.send(b.build(), BodyHandlers.ofString());
-    } catch (IOException e) {
-      throw new PreviewException(0, "I/O error sending copy request to " + url, e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new PreviewException(0, "Copy request interrupted", e);
+      VideoCopyOutputBody body =
+          videoApi.copyVideoPreview(
+              UUID.fromString(query.getFileId()),
+              (long) query.getVersion(),
+              query.getServiceType(),
+              UUID.fromString(targetBlobId),
+              emptyToNull(query.getOwnerId()),
+              emptyToNull(targetOwnerId));
+      return new VideoPreviewCopyResponse(body.getPreviewId());
+    } catch (ApiException e) {
+      throw new PreviewException(e.getCode(), "copyVideoPreview failed: " + e.getMessage(), e);
     }
-
-    int status = response.statusCode();
-    if (status != 200) {
-      throw new PreviewException(status,
-          "Server returned HTTP " + status + " for " + url);
-    }
-    return new VideoPreviewCopyResponse(parsePreviewId(response.body()));
   }
 
   // -------------------------------------------------------------------------
@@ -327,13 +416,8 @@ public final class PreviewClient implements Closeable {
    */
   public boolean healthReady() {
     try {
-      HttpResponse<Void> resp = http.send(
-          HttpRequest.newBuilder()
-              .uri(URI.create(baseUrl + "/health/ready/"))
-              .GET()
-              .build(),
-          BodyHandlers.discarding());
-      return resp.statusCode() == 200;
+      healthApi.getHealthReady();
+      return true;
     } catch (Exception e) {
       return false;
     }
@@ -415,35 +499,6 @@ public final class PreviewClient implements Closeable {
   }
 
   /**
-   * Issues a DELETE request and discards the response body.
-   *
-   * <p>Returns normally on HTTP 200 or 204; throws {@link PreviewException} on any other status.
-   * The optional {@code FileOwnerId} header is sent if the query carries a non-empty ownerId.
-   */
-  private void doDelete(Query query, String url) {
-    HttpRequest.Builder b = HttpRequest.newBuilder()
-        .uri(URI.create(url))
-        .DELETE();
-    applyOwner(b, query);
-
-    HttpResponse<Void> response;
-    try {
-      response = http.send(b.build(), BodyHandlers.discarding());
-    } catch (IOException e) {
-      throw new PreviewException(0, "I/O error sending DELETE request to " + url, e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new PreviewException(0, "DELETE request interrupted", e);
-    }
-
-    int status = response.statusCode();
-    if (status != 200 && status != 204) {
-      throw new PreviewException(status,
-          "Server returned HTTP " + status + " for DELETE " + url);
-    }
-  }
-
-  /**
    * Adds the {@code FileOwnerId} header to the request builder when the query carries a
    * non-null, non-empty owner ID. The preview server uses this header for PowerStore storage
    * routing; it is ignored by legacy storage nodes that do not require it.
@@ -456,7 +511,7 @@ public final class PreviewClient implements Closeable {
   private PreviewResponse execute(HttpRequest request) {
     HttpResponse<InputStream> response;
     try {
-      response = http.send(request, BodyHandlers.ofInputStream());
+      response = blobHttpClient.send(request, BodyHandlers.ofInputStream());
     } catch (IOException e) {
       throw new PreviewException(0, "I/O error sending request to " + request.uri(), e);
     } catch (InterruptedException e) {
@@ -547,19 +602,6 @@ public final class PreviewClient implements Closeable {
     return sb.toString();
   }
 
-  private String buildVideoDeleteQueryString(Query q) {
-    StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    return sb.toString();
-  }
-
-  private String buildVideoCopyQueryString(Query q, String targetBlobId) {
-    StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    appendRequired(sb, "target", targetBlobId);
-    return sb.toString();
-  }
-
   private static void appendRequired(StringBuilder sb, String key, String value) {
     if (value == null || value.isEmpty()) return;
     // sb starts with "?" so always use "&" if there is already a param
@@ -582,33 +624,6 @@ public final class PreviewClient implements Closeable {
     if (query.getFileId() == null || query.getFileId().isEmpty()) {
       throw new IllegalArgumentException("fileId is required for GET requests");
     }
-  }
-
-  /**
-   * Extracts the {@code preview_id} field from a JSON response body
-   * ({@code {"preview_id":"<id>"}}). Used by {@link #copyVideoPreview(Query, String, String)}.
-   * Uses a minimal dependency-free scan to avoid coupling the client to the Jackson runtime.
-   *
-   * @throws PreviewException (status 0) when the field is absent or the body is malformed.
-   */
-  private static String parsePreviewId(String json) {
-    if (json != null) {
-      int key = json.indexOf("\"preview_id\"");
-      if (key >= 0) {
-        int colon = json.indexOf(':', key + "\"preview_id\"".length());
-        if (colon >= 0) {
-          int firstQuote = json.indexOf('"', colon + 1);
-          if (firstQuote >= 0) {
-            int secondQuote = json.indexOf('"', firstQuote + 1);
-            if (secondQuote > firstQuote) {
-              return json.substring(firstQuote + 1, secondQuote);
-            }
-          }
-        }
-      }
-    }
-    throw new PreviewException(0,
-        "Generate response missing \"preview_id\" field: " + json);
   }
 
   // -------------------------------------------------------------------------
