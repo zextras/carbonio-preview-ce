@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.25
+# syntax=docker/dockerfile:1.26
 # SPDX-FileCopyrightText: 2025 Zextras <https://www.zextras.com>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
@@ -14,7 +14,7 @@
 ARG TARGETPLATFORM
 ARG TARGETARCH
 
-FROM --platform=${TARGETPLATFORM} golang:1.26-bookworm AS builder
+FROM --platform=${TARGETPLATFORM} golang:1.27-bookworm AS builder
 
 ARG TARGETARCH
 
