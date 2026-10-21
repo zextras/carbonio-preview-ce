@@ -23,6 +23,19 @@ SPDX-License-Identifier: AGPL-3.0-only
     <openapi-generator.version>7.23.0</openapi-generator.version>
   </properties>
 
+  <repositories>
+    <repository>
+      <id>zextras-nexus</id>
+      <url>https://repo.zextras.tools/repository/java-sdk/</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
+
   <distributionManagement>
     <snapshotRepository>
       <id>nexus-prod</id>
