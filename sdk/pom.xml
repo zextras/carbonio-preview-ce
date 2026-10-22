@@ -54,7 +54,7 @@ SPDX-License-Identifier: AGPL-3.0-only
       <dependency>
         <groupId>com.fasterxml.jackson</groupId>
         <artifactId>jackson-bom</artifactId>
-        <version>2.22.1</version>
+        <version>2.22.4</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -79,7 +79,7 @@ SPDX-License-Identifier: AGPL-3.0-only
     <dependency>
       <groupId>io.swagger.core.v3</groupId>
       <artifactId>swagger-annotations-jakarta</artifactId>
-      <version>2.2.52</version>
+      <version>2.2.55</version>
     </dependency>
     <!-- httpmime + httpclient required by the native library's multipart support -->
     <dependency>
@@ -153,7 +153,7 @@ SPDX-License-Identifier: AGPL-3.0-only
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>build-helper-maven-plugin</artifactId>
-        <version>3.6.1</version>
+        <version>3.6.2</version>
         <executions>
           <execution>
             <id>add-generated-sources</id>
