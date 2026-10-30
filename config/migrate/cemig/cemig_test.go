@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/v4/config/migrate"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────

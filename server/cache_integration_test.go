@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/cache"
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
 )
 
 func newCacheTestServer(t *testing.T, store *mockStore, maxBytes int64) *http.ServeMux {
