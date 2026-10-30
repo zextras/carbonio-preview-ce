@@ -48,28 +48,27 @@ consul config write /etc/carbonio/preview/service-discover/service-protocol.json
 # Allow other services to contact this service
 consul config write /etc/carbonio/preview/service-discover/intentions.json
 
-if [[ ! -f "/etc/carbonio/preview/service-discover/token" ]]; then
-    # create the token
-    consul acl token create -format json -policy-name "${POLICY_NAME}" -description "Token for carbonio-preview/$(hostname -A)" |
-      jq -r '.SecretID' > /etc/carbonio/preview/service-discover/token;
-    chown carbonio-preview:carbonio-preview /etc/carbonio/preview/service-discover/token
-    chmod 0600 /etc/carbonio/preview/service-discover/token
+service-discover service-token ensure --service carbonio-preview --policy "${POLICY_NAME}" \
+  --token-file /etc/carbonio/preview/service-discover/token --owner carbonio-preview
 
-    # to pass the token to consul-template we need to inject it to a env. variable
-    # since it doesn't accept a file as an argument
-    mkdir -p /etc/systemd/system/carbonio-preview.service.d/
-    cat >/etc/systemd/system/carbonio-preview.service.d/override.conf <<EOF
+# to pass the token to consul-template we need to inject it to a env. variable
+# since it doesn't accept a file as an argument
+mkdir -p /etc/systemd/system/carbonio-preview.service.d/
+cat >/etc/systemd/system/carbonio-preview.service.d/override.conf <<EOF
 [Service]
 Environment="CONSUL_HTTP_TOKEN=$(cat /etc/carbonio/preview/service-discover/token)"
 EOF
-    chmod 0600 /etc/systemd/system/carbonio-preview.service.d/override.conf
-    systemctl daemon-reload
-fi
+chmod 0600 /etc/systemd/system/carbonio-preview.service.d/override.conf
+systemctl daemon-reload
 
 consul reload
 
-# limit token visibility as much as possible
-export -n CONSUL_HTTP_TOKEN
 
 systemctl restart carbonio-preview.service
 systemctl restart carbonio-preview-sidecar.service
+
+# remove tokens leaked by previous setup runs (needs the bootstrap token)
+service-discover service-token prune-legacy --service carbonio-preview --policy "${POLICY_NAME}"
+
+# Limit token visibility as much as possible
+export -n CONSUL_HTTP_TOKEN
