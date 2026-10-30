@@ -4,7 +4,7 @@
 
 package config
 
-import "github.com/zextras/carbonio-preview-ce/v3/configdocs"
+import "github.com/zextras/carbonio-preview-ce/v4/configdocs"
 
 // DocsFromRegistry converts the live key registry into a configdocs.Docs value
 // ready for rendering.

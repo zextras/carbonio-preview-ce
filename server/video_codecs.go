@@ -9,7 +9,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/zextras/carbonio-preview-ce/v3/video"
+	"github.com/zextras/carbonio-preview-ce/v4/video"
 )
 
 // supportedVideoCodecs is the hardcoded set of codecs that carbonio-ffmpeg can
