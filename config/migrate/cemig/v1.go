@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/zextras/carbonio-preview-ce/v3/config/migrate"
+	"github.com/zextras/carbonio-preview-ce/v4/config/migrate"
 )
 
 func init() {

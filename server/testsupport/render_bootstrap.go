@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/render"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
 )
 
 // InitRealRender builds the pdfium worker from source, initialises the libvips

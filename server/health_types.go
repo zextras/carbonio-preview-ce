@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v3/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 )
 
 // isDependencyUp performs a GET to url with a 5-second timeout.

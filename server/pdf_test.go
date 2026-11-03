@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/config"
-	"github.com/zextras/carbonio-preview-ce/v3/render"
-	"github.com/zextras/carbonio-preview-ce/v3/storage"
+	"github.com/zextras/carbonio-preview-ce/v4/config"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
+	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
 // fakePDFBytes is a minimal stand-in for real PDF content.

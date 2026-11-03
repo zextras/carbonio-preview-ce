@@ -1,3 +1,15 @@
+## [4.0.0](https://github.com/zextras/carbonio-preview-ce/compare/v3.1.13...v4.0.0) (2026-10-30)
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** CO-4559 - drop HttpClient 4 from the REST SDK (#215)
+
+### Build System
+
+* **sdk:** CO-4559 - drop HttpClient 4 from the REST SDK ([#215](https://github.com/zextras/carbonio-preview-ce/issues/215)) ([81e11d9](https://github.com/zextras/carbonio-preview-ce/commit/81e11d9b6adfa5fea3426b84cc59ee22913e73f3))
+
+## [3.1.13](https://github.com/zextras/carbonio-preview-ce/compare/v3.1.12...v3.1.13) (2026-10-28)
+
 ## [3.1.12](https://github.com/zextras/carbonio-preview-ce/compare/v3.1.11...v3.1.12) (2026-10-21)
 
 ## [3.1.11](https://github.com/zextras/carbonio-preview-ce/compare/v3.1.10...v3.1.11) (2026-10-19)

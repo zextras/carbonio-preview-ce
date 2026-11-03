@@ -4,7 +4,7 @@
 
 package cemig
 
-import "github.com/zextras/carbonio-preview-ce/v3/config/migrate"
+import "github.com/zextras/carbonio-preview-ce/v4/config/migrate"
 
 func init() {
 	if err := migrate.RegisterInSet("ce", V2RenameConfigNamespaces()); err != nil {

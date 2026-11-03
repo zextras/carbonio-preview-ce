@@ -30,11 +30,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v3/cache"
-	"github.com/zextras/carbonio-preview-ce/v3/db"
-	"github.com/zextras/carbonio-preview-ce/v3/server/apispec"
-	"github.com/zextras/carbonio-preview-ce/v3/storage"
-	"github.com/zextras/carbonio-preview-ce/v3/video"
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
+	"github.com/zextras/carbonio-preview-ce/v4/db"
+	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v4/storage"
+	"github.com/zextras/carbonio-preview-ce/v4/video"
 )
 
 // ---------------------------------------------------------------------------

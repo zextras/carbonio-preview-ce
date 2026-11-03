@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zextras/carbonio-preview-ce/v3/cache"
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
 )
 
 // startVideoPostgresDSN spins up a throwaway Postgres 16 container (mirroring

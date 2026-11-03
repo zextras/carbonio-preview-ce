@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 )
 
 // These tests replace the ones that used to cover the hand-rolled

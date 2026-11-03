@@ -33,7 +33,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zextras/carbonio-preview-ce/v3/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 )
 
 func main() {

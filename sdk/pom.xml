@@ -81,17 +81,6 @@ SPDX-License-Identifier: AGPL-3.0-only
       <artifactId>swagger-annotations-jakarta</artifactId>
       <version>2.2.52</version>
     </dependency>
-    <!-- httpmime + httpclient required by the native library's multipart support -->
-    <dependency>
-      <groupId>org.apache.httpcomponents</groupId>
-      <artifactId>httpmime</artifactId>
-      <version>4.5.14</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.httpcomponents</groupId>
-      <artifactId>httpclient</artifactId>
-      <version>4.5.14</version>
-    </dependency>
 
     <!-- Test dependencies -->
     <dependency>
@@ -136,6 +125,9 @@ SPDX-License-Identifier: AGPL-3.0-only
               <generateApiDocumentation>false</generateApiDocumentation>
               <generateModelDocumentation>false</generateModelDocumentation>
               <skipValidateSpec>true</skipValidateSpec>
+              <openapiNormalizer>
+                <rule>FILTER=operationId:getHealthReady|deleteVideoPreview|copyVideoPreview</rule>
+              </openapiNormalizer>
               <configOptions>
                 <useJakartaEe>true</useJakartaEe>
                 <serializationLibrary>jackson</serializationLibrary>

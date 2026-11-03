@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zextras/carbonio-preview-ce/v3/config"
-	"github.com/zextras/carbonio-preview-ce/v3/configdocs"
+	"github.com/zextras/carbonio-preview-ce/v4/config"
+	"github.com/zextras/carbonio-preview-ce/v4/configdocs"
 )
 
 // -- Drift-guard tests ---------------------------------------------------------
