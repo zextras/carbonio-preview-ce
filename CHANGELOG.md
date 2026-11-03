@@ -1,3 +1,9 @@
+## [4.0.1](https://github.com/zextras/carbonio-preview-ce/compare/v4.0.0...v4.0.1) (2026-11-03)
+
+### Bug Fixes
+
+* **setup:** reuse a deterministic Consul token per node - CO-3612 ([#214](https://github.com/zextras/carbonio-preview-ce/issues/214)) ([475bb89](https://github.com/zextras/carbonio-preview-ce/commit/475bb8962bf769f2df919d76cd315889a02dad69))
+
 ## [4.0.0](https://github.com/zextras/carbonio-preview-ce/compare/v3.1.13...v4.0.0) (2026-10-30)
 
 ### ⚠ BREAKING CHANGES
