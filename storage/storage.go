@@ -30,6 +30,12 @@ var ErrStoreNotSupported = errors.New("storage: write not supported by this clie
 // this error; it is retained as a sentinel for future custom implementations.
 var ErrDeleteNotSupported = errors.New("storage: delete not supported by this client")
 
+// HealthChecker is optionally implemented by a Client whose backing store has
+// an HTTP health endpoint the service should report on GET /health/.
+type HealthChecker interface {
+	HealthTarget() (name, url string)
+}
+
 // Client is the minimal interface the preview service requires from
 // the storage layer.
 type Client interface {

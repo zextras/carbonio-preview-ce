@@ -24,6 +24,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/config"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
@@ -349,17 +350,15 @@ func buildGetHealth(deps Deps) func(context.Context, *struct{}) (*apispec.Health
 			// gendocs mode — return empty response
 			return &apispec.HealthFullOutput{Body: &apispec.HealthResponse{Ready: true}}, nil
 		}
-		storageHealthURL := cfg.StorageFullAddress + "/" + cfg.StorageHealthCheck
-		docsHealthURL := cfg.DocumentConversionFullServiceAddress
-		storageUp := isDependencyUp(storageHealthURL)
-		docsUp := isDependencyUp(docsHealthURL)
-		resp := &apispec.HealthResponse{
-			Ready: true,
-			Dependencies: []apispec.HealthDependency{
-				{Name: "carbonio-storages", Ready: storageUp, Live: storageUp, Type: "OPTIONAL"},
-				{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"},
-			},
+		docsUp := isDependencyUp(cfg.DocumentConversionFullServiceAddress)
+		var dependencies []apispec.HealthDependency
+		if hc, ok := deps.Store.(storage.HealthChecker); ok {
+			name, url := hc.HealthTarget()
+			up := isDependencyUp(url)
+			dependencies = append(dependencies, apispec.HealthDependency{Name: name, Ready: up, Live: up, Type: "OPTIONAL"})
 		}
+		dependencies = append(dependencies, apispec.HealthDependency{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"})
+		resp := &apispec.HealthResponse{Ready: true, Dependencies: dependencies}
 		return &apispec.HealthFullOutput{Body: resp}, nil
 	}
 }
@@ -519,7 +518,7 @@ func buildGetDocumentPreview(deps Deps) func(context.Context, *apispec.DocGetPre
 			if err != nil {
 				return cache.Entry{}, err
 			}
-			pdfBytes, err := step.convert(deps.Cfg, data, langTag)
+			pdfBytes, err := step.convert(deps.Cfg, data, langTag, "pdf")
 			if err != nil {
 				return cache.Entry{}, err
 			}
@@ -565,11 +564,11 @@ func buildGetDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocGetT
 			if err != nil {
 				return cache.Entry{}, err
 			}
-			pdfBytes, err := step.convert(deps.Cfg, data, langTag)
+			pageImage, err := step.convert(deps.Cfg, data, langTag, render.SanitizeOutputExtension(outputFormat))
 			if err != nil {
 				return cache.Entry{}, err
 			}
-			out, err := step.pdfRasterize(pdfBytes, width, height, outputFormat, quality, shape)
+			out, err := step.image(step.printfRenderErr, pageImage, width, height, outputFormat, quality, shape, "center")
 			if err != nil {
 				return cache.Entry{}, err
 			}
@@ -600,7 +599,7 @@ func buildPostDocumentPreview(deps Deps) func(context.Context, *apispec.DocPostP
 		}
 
 		step := lim.forCaller(ctx, "postDocumentPreview")
-		pdfBytes, err := step.convert(deps.Cfg, fileData, langTag)
+		pdfBytes, err := step.convert(deps.Cfg, fileData, langTag, "pdf")
 		if err != nil {
 			return nil, err
 		}
@@ -639,11 +638,11 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 		}
 
 		step := lim.forCaller(ctx, "postDocumentThumbnail")
-		pdfBytes, err := step.convert(deps.Cfg, fileData, langTag)
+		pageImage, err := step.convert(deps.Cfg, fileData, langTag, render.SanitizeOutputExtension(outputFormat))
 		if err != nil {
 			return nil, err
 		}
-		out, err := step.pdfRasterize(pdfBytes, width, height, outputFormat, quality, shape)
+		out, err := step.image(step.printfRenderErr, pageImage, width, height, outputFormat, quality, shape, "center")
 		if err != nil {
 			return nil, err
 		}

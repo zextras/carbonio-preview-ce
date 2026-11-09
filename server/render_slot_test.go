@@ -339,7 +339,7 @@ func TestRenderSlot_PostCancelledWhileQueuedNeverHoldsSlot(t *testing.T) {
 		return []byte(fakePDFBytes), nil
 	})
 	var rasterized atomic.Int32
-	swap(t, &pdfRasterizeFunc, func(context.Context, []byte, int, int, int, string, string, string) ([]byte, error) {
+	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
 		rasterized.Add(1)
 		return []byte("jpeg"), nil
 	})
@@ -419,7 +419,7 @@ func TestRenderSlot_HeldOnlyAroundRenderCall(t *testing.T) {
 		convertSaw = len(lim.render)
 		return []byte(fakePDFBytes), nil
 	})
-	swap(t, &pdfRasterizeFunc, func(context.Context, []byte, int, int, int, string, string, string) ([]byte, error) {
+	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
 		rasterSaw = len(lim.render)
 		return []byte("jpeg"), nil
 	})
@@ -757,7 +757,7 @@ func TestFlight_DocumentAbandonedDuringConversionFillsCache(t *testing.T) {
 		convertCtxErr <- ctx.Err()
 		return []byte(fakePDFBytes), nil
 	})
-	swap(t, &pdfRasterizeFunc, func(context.Context, []byte, int, int, int, string, string, string) ([]byte, error) {
+	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
 		return []byte("jpeg"), nil
 	})
 	handler := buildGetDocumentThumbnail(Deps{Cfg: testCfg(), Store: newGatedStore(), Cache: c, Limits: lim})
@@ -1111,7 +1111,7 @@ func TestRenderSlot_CollaboraConversionsAreNotGated(t *testing.T) {
 		<-release
 		return []byte(fakePDFBytes), nil
 	})
-	swap(t, &pdfRasterizeFunc, func(context.Context, []byte, int, int, int, string, string, string) ([]byte, error) {
+	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
 		return []byte("jpeg"), nil
 	})
 	mux := slotMux(lim, newGatedStore(), nil)

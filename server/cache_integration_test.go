@@ -229,7 +229,7 @@ func TestDocThumbnailCacheHit_SkipsSecondFetch(t *testing.T) {
 	store := &mockStore{blob: []byte("doc-src")}
 	restoreC := stubCollaboraConvert([]byte("converted-pdf"), nil)
 	defer restoreC()
-	restoreR := stubPDFRasterize([]byte("thumb-bytes"), nil)
+	restoreR := stubImageThumbnail("", "", "", "", []byte("thumb-bytes"), nil)
 	defer restoreR()
 	mux := newCacheTestServer(t, store, 8<<20)
 

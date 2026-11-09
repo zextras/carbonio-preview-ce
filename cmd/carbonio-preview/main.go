@@ -83,7 +83,7 @@ func main() {
 		"upload",
 		"delete",
 		storageIdle,
-	)
+	).WithHealthPath(cfg.StorageFullAddress, cfg.StorageHealthCheck)
 
 	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).
 	outCache := cache.New(cfg.CacheMaxBytes)

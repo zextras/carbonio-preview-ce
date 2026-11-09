@@ -78,6 +78,17 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDFRasterize: ok, %d bytes", len(rendered))
 
+	prevMask := roundedMaskFunc
+	roundedMaskFunc = func([]byte, int, int) ([]byte, error) { return nil, fmt.Errorf("mask failed") }
+	unmasked, err := PDFRasterize(context.Background(), pdfData, 0, 100, 100, "png", "medium", "rounded")
+	roundedMaskFunc = prevMask
+	if err != nil {
+		t.Fatalf("PDFRasterize with failing mask: %v", err)
+	}
+	if len(unmasked) < 8 || string(unmasked[1:4]) != "PNG" {
+		t.Fatalf("mask failure must return the unmasked PNG, got %d bytes", len(unmasked))
+	}
+
 	// Correctness-after-many-calls: run 20 sequential PDFSlice calls and assert
 	// each produces valid non-empty output. This verifies that closing documents
 	// via defer does not break handle reuse across repeated pool borrows.

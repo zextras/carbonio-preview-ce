@@ -27,6 +27,8 @@ package server
 
 import (
 	"bytes"
+	"image"
+	_ "image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -216,6 +218,7 @@ func TestFullFlow(t *testing.T) {
 		storages := testsupport.NewStoragesMock("download", fx.doc, "application/octet-stream")
 		t.Cleanup(storages.Close)
 		collabora := testsupport.NewCollaboraMock(fx.pdf)
+		collabora.PNG = fx.png
 		t.Cleanup(collabora.Close)
 		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
 
@@ -228,6 +231,10 @@ func TestFullFlow(t *testing.T) {
 		}
 		if len(body) == 0 {
 			t.Error("empty document-thumbnail body")
+		}
+		cfgImg, format, err := image.DecodeConfig(bytes.NewReader(body))
+		if err != nil || format != "jpeg" || cfgImg.Width != 80 || cfgImg.Height != 80 {
+			t.Errorf("thumbnail decode: cfg=%+v format=%q err=%v, want 80x80 jpeg", cfgImg, format, err)
 		}
 	})
 

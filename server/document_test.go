@@ -309,7 +309,7 @@ func TestDocGetThumbnail_HappyPath(t *testing.T) {
 	store := &mockStore{blob: []byte("docx-bytes")}
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreRaster := stubPDFRasterize([]byte("jpeg-output"), nil)
+	restoreRaster := stubImageThumbnail("", "", "", "", []byte("jpeg-output"), nil)
 	defer restoreRaster()
 
 	cfg := testCfg()
@@ -402,7 +402,7 @@ func TestDocMethodNotAllowed(t *testing.T) {
 func TestDocPostThumbnail_HappyPath(t *testing.T) {
 	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
 	defer restoreCollab()
-	restoreRaster := stubPDFRasterize([]byte("jpeg-output"), nil)
+	restoreRaster := stubImageThumbnail("", "", "", "", []byte("jpeg-output"), nil)
 	defer restoreRaster()
 
 	cfg := testCfg()
@@ -560,26 +560,6 @@ func TestDocPostThumbnail_CollaboraFailure_502(t *testing.T) {
 	assertStringDetail(t, rec, http.StatusBadGateway, config.Msg.StorageUnavailable)
 }
 
-// TestDocPostThumbnail_PoolUnavailable_503 verifies the POST thumbnail pool-
-// exhaustion arm → 503 (the GET thumbnail variant is covered below).
-func TestDocPostThumbnail_PoolUnavailable_503(t *testing.T) {
-	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
-	defer restoreCollab()
-	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
-	defer restoreRaster()
-
-	cfg := testCfg()
-	mux := buildDocMux(cfg, nil)
-
-	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc-bytes"))
-	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x200/thumbnail/", body)
-	req.Header.Set("Content-Type", ct)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-}
-
 // TestDocPostThumbnail_InvalidQueryParams covers the query-param validation arms
 // of docPostThumbnail (area, shape, quality, output_format → 422).
 func TestDocPostThumbnail_InvalidQueryParams(t *testing.T) {
@@ -644,24 +624,6 @@ func TestDocGetPreview_RenderError_400(t *testing.T) {
 	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.InputError)
 }
 
-// TestDocGetThumbnail_PoolUnavailable_503 verifies that ErrRenderUnavailable from
-// PDFRasterize → HTTP 503 on the document thumbnail endpoint.
-func TestDocGetThumbnail_PoolUnavailable_503(t *testing.T) {
-	store := &mockStore{blob: []byte("docx-bytes")}
-	restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
-	defer restoreCollab()
-	restoreRaster := stubPDFRasterize(nil, render.ErrRenderUnavailable)
-	defer restoreRaster()
-
-	cfg := testCfg()
-	mux := buildDocMux(cfg, store)
-
-	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
-	rec := doRequest(mux, http.MethodGet, path)
-
-	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-}
-
 func TestDocLangTag_InvalidIs422(t *testing.T) {
 	cfg := testCfg()
 
@@ -718,4 +680,22 @@ func TestDocLangTag_RealWorldTagsAccepted(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDocThumbnail_RenderFailureIs400(t *testing.T) {
+	restoreCollab := stubCollaboraConvert([]byte("png"), nil)
+	defer restoreCollab()
+	restoreImg := stubImageThumbnail("", "", "", "", nil, fmt.Errorf("vips: bad image"))
+	defer restoreImg()
+	mux := buildDocMux(testCfg(), &mockStore{blob: []byte("docx-bytes")})
+
+	path := fmt.Sprintf("/preview/document/%s/1/100x200/thumbnail/?service_type=files", validUUID)
+	assertStringDetail(t, doRequest(mux, http.MethodGet, path), http.StatusBadRequest, config.Msg.FormatNotSupported)
+
+	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc-bytes"))
+	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x200/thumbnail/", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assertStringDetail(t, rec, http.StatusBadRequest, config.Msg.FormatNotSupported)
 }

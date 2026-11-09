@@ -36,8 +36,18 @@ type DirectClient struct {
 	downloadURL string // pre-built base URL including the API path, e.g. "http://127.78.0.6:20000/download"
 	uploadURL   string // e.g. "http://127.78.0.6:20000/upload"
 	deleteURL   string // e.g. "http://127.78.0.6:20000/delete"
+	healthURL   string
 	client      *http.Client
 	idle        time.Duration
+}
+
+func (c *DirectClient) WithHealthPath(storageBaseURL, healthPath string) *DirectClient {
+	c.healthURL = storageBaseURL + "/" + healthPath
+	return c
+}
+
+func (c *DirectClient) HealthTarget() (string, string) {
+	return "carbonio-storages", c.healthURL
 }
 
 // NewDirectClient constructs a DirectClient.

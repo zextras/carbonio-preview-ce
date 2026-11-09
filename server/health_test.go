@@ -10,15 +10,22 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zextras/carbonio-preview-ce/v4/config"
+	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
 // buildHealthMux creates a huma-routed mux for health operations (test helper).
 func buildHealthMux(cfg *config.Config) *http.ServeMux {
 	mux := http.NewServeMux()
 	api := newHumaAPI(mux)
-	registerHealthOps(api, Deps{Cfg: cfg, Store: nil, Cache: nil})
+	var store storage.Client
+	if cfg != nil {
+		store = storage.NewDirectClient(cfg.StorageFullAddress, "download", "upload", "delete", time.Second).
+			WithHealthPath(cfg.StorageFullAddress, cfg.StorageHealthCheck)
+	}
+	registerHealthOps(api, Deps{Cfg: cfg, Store: store, Cache: nil})
 	return mux
 }
 
@@ -310,5 +317,36 @@ func TestHealthFull_DependencyTypeField(t *testing.T) {
 		if dep.Type != "OPTIONAL" {
 			t.Errorf("dep %q: type=%q, want OPTIONAL", dep.Name, dep.Type)
 		}
+	}
+}
+
+func TestHealthFull_StorageDependencyOnlyWithHealthChecker(t *testing.T) {
+	c := testCfg()
+	c.StorageFullAddress = "http://127.0.0.1:1"
+	c.DocumentConversionFullServiceAddress = "http://127.0.0.1:1/"
+
+	names := func(store storage.Client) []string {
+		mux := http.NewServeMux()
+		registerHealthOps(newHumaAPI(mux), Deps{Cfg: c, Store: store})
+		rec := doRequest(mux, http.MethodGet, "/health/")
+		var resp healthResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("JSON unmarshal: %v", err)
+		}
+		var out []string
+		for _, d := range resp.Dependencies {
+			out = append(out, d.Name)
+		}
+		return out
+	}
+
+	with := names(storage.NewDirectClient(c.StorageFullAddress, "download", "upload", "delete", time.Second).
+		WithHealthPath(c.StorageFullAddress, "health/live"))
+	if len(with) != 2 || with[0] != "carbonio-storages" || with[1] != "carbonio-docs-editor" {
+		t.Errorf("with HealthChecker: got %v", with)
+	}
+	without := names(&fakeVideoStore{})
+	if len(without) != 1 || without[0] != "carbonio-docs-editor" {
+		t.Errorf("without HealthChecker: got %v", without)
 	}
 }

@@ -120,13 +120,13 @@ func pdfRenderError(err error) error {
 	return huma.NewError(http.StatusBadRequest, config.Msg.InputError)
 }
 
-func (r runner) convert(cfg *config.Config, data []byte, langTag string) ([]byte, error) {
+func (r runner) convert(cfg *config.Config, data []byte, langTag, ext string) ([]byte, error) {
 	docsIdle := time.Duration(cfg.ServiceDocsTimeout) * time.Second
-	docsURL := cfg.DocumentConversionFullConvertAddress + "/pdf"
-	pdfBytes, err := collaboraConvertFunc(r.work, data, langTag, docsURL, docsIdle)
+	docsURL := cfg.DocumentConversionFullConvertAddress + "/" + ext
+	converted, err := collaboraConvertFunc(r.work, data, langTag, docsURL, docsIdle)
 	if err != nil {
 		log.Printf("%s: convert: %v", r.op, err)
 		return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
 	}
-	return pdfBytes, nil
+	return converted, nil
 }

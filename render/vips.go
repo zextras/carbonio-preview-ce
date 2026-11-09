@@ -443,7 +443,7 @@ func SetVipsConcurrency(n int) {
 func QualityToInt(quality string) int {
 	switch quality {
 	case "lowest":
-		return 0
+		return 5
 	case "low":
 		return 15
 	case "medium":
@@ -602,6 +602,8 @@ func scaleFitPadVips(buf []byte, w, h int, fmtStr string, jpegQuality int) ([]by
 // SSIM difference is typically < 0.002 on natural images — within the
 // API-identity gate tolerance. Full byte-identity is not achievable due to
 // different rasterisers.
+var roundedMaskFunc = applyRoundedMaskVips
+
 func applyRoundedMaskVips(pngData []byte, width, height int) ([]byte, error) {
 	if len(pngData) == 0 {
 		return nil, fmt.Errorf("empty input buffer")

@@ -200,7 +200,7 @@ func TestPDFSliceAndRasterize_PoolUnavailable(t *testing.T) {
 // TestQualityToInt covers every named level plus the default arm.
 func TestQualityToInt(t *testing.T) {
 	cases := map[string]int{
-		"lowest": 0, "low": 15, "medium": 50, "high": 80, "highest": 95,
+		"lowest": 5, "low": 15, "medium": 50, "high": 80, "highest": 95,
 		"": 50, "garbage": 50, // default arm
 	}
 	for in, want := range cases {
