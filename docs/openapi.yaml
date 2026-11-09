@@ -145,6 +145,7 @@ paths:
           schema:
             default: en-US
             description: Language tag for conversion
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
             type: string
       requestBody:
         content:
@@ -265,6 +266,7 @@ paths:
           schema:
             default: en-US
             description: Language tag for conversion
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
             type: string
       requestBody:
         content:
@@ -396,6 +398,7 @@ paths:
           schema:
             default: en-US
             description: Language tag for conversion (default en-US)
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
             type: string
         - description: File owner ID
           in: header
@@ -539,6 +542,7 @@ paths:
           schema:
             default: en-US
             description: Language tag for conversion
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
             type: string
         - description: File owner ID
           in: header

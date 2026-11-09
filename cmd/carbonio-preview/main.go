@@ -76,13 +76,13 @@ func main() {
 	// CE uses DirectClient: a single-endpoint HTTP client to carbonio-storages.
 	// ownerID is passed to RetrieveData but ignored by DirectClient;
 	// Advanced's PowerStore implementation will use it for server routing.
-	storageTimeout := time.Duration(cfg.ServiceTimeoutInSeconds) * time.Second
+	storageIdle := time.Duration(cfg.ServiceTimeoutInSeconds) * time.Second
 	storageClient := storage.NewDirectClient(
 		cfg.StorageFullAddress,
 		cfg.StorageDownloadAPI,
 		"upload",
 		"delete",
-		storageTimeout,
+		storageIdle,
 	)
 
 	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).

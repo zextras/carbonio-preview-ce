@@ -661,3 +661,61 @@ func TestDocGetThumbnail_PoolUnavailable_503(t *testing.T) {
 
 	assertStringDetail(t, rec, http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
 }
+
+func TestDocLangTag_InvalidIs422(t *testing.T) {
+	cfg := testCfg()
+
+	t.Run("GET preview", func(t *testing.T) {
+		mux := buildDocMux(cfg, &mockStore{blob: []byte("doc")})
+		path := fmt.Sprintf("/preview/document/%s/1/?service_type=files&lang_tag=en%%26x%%3D1", validUUID)
+		assertValidationError(t, doRequest(mux, http.MethodGet, path), "lang_tag")
+	})
+	t.Run("GET thumbnail", func(t *testing.T) {
+		mux := buildDocMux(cfg, &mockStore{blob: []byte("doc")})
+		path := fmt.Sprintf("/preview/document/%s/1/100x100/thumbnail/?service_type=files&lang_tag=x", validUUID)
+		assertValidationError(t, doRequest(mux, http.MethodGet, path), "lang_tag")
+	})
+	t.Run("POST preview", func(t *testing.T) {
+		mux := buildDocMux(cfg, nil)
+		body, ct := buildMultipart(t, "file", "x.docx", []byte("doc-bytes"))
+		req := httptest.NewRequest(http.MethodPost, "/preview/document/?lang_tag=en_US", body)
+		req.Header.Set("Content-Type", ct)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assertValidationError(t, rec, "lang_tag")
+	})
+	t.Run("POST thumbnail", func(t *testing.T) {
+		mux := buildDocMux(cfg, nil)
+		body, ct := buildMultipart(t, "file", "x.docx", []byte("doc-bytes"))
+		req := httptest.NewRequest(http.MethodPost, "/preview/document/100x100/thumbnail/?lang_tag=%20", body)
+		req.Header.Set("Content-Type", ct)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assertValidationError(t, rec, "lang_tag")
+	})
+}
+
+func TestDocLangTag_RealWorldTagsAccepted(t *testing.T) {
+	for _, tag := range []string{"pt-BR", "zh-Hans-CN", "it", "en"} {
+		t.Run(tag, func(t *testing.T) {
+			restoreCollab := stubCollaboraConvert([]byte(fakePDFBytes), nil)
+			defer restoreCollab()
+			restoreSlice := stubPDFSlice([]byte(fakePDFBytes), nil)
+			defer restoreSlice()
+
+			mux := buildDocMux(testCfg(), &mockStore{blob: []byte("doc")})
+			path := fmt.Sprintf("/preview/document/%s/1/?service_type=files&lang_tag=%s", validUUID, tag)
+			if rec := doRequest(mux, http.MethodGet, path); rec.Code != http.StatusOK {
+				t.Errorf("GET lang_tag=%q: status %d", tag, rec.Code)
+			}
+			body, ct := buildMultipart(t, "file", "x.docx", []byte("doc-bytes"))
+			req := httptest.NewRequest(http.MethodPost, "/preview/document/?lang_tag="+tag, body)
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("POST lang_tag=%q: status %d", tag, rec.Code)
+			}
+		})
+	}
+}

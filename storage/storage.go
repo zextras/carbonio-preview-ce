@@ -50,13 +50,10 @@ type Client interface {
 	// the video path to avoid buffering whole videos in memory.
 	//
 	// Timeout design: the storage http.Client carries NO total-request timeout.
-	// The only time-based cap on the entire operation (download + processing) is
-	// the single per-request context deadline established by the handler via
-	// context.WithTimeout(r.Context(), cfg.ServiceTimeoutInSeconds). Every
-	// request is built with http.NewRequestWithContext(ctx, ...), so cancelling
-	// or expiring that ctx aborts both the in-flight header wait and the body
-	// read immediately via the underlying transport. The storage client's
-	// Transport only sets connection-establishment (dial + TLS) timeouts.
+	// Nothing but ctx bounds this call: the caller is responsible for stall
+	// protection (the video worker arms an idle watchdog before the call and
+	// resets it on every body read). Cancelling ctx aborts both the in-flight
+	// header wait and the body read.
 	//
 	// Same error contract as RetrieveData (ErrNotFound / ErrUnavailable).
 	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, error)

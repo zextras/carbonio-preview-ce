@@ -243,13 +243,13 @@ func registerCEKeys() {
 			Key:         "image-document.fetch-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "30",
-			Description: "Timeout (seconds) for fetching the source blob from carbonio-storages.",
+			Description: "Inactivity window (seconds) for carbonio-storages transfers (fetch, upload, delete): a transfer fails after this many seconds without data. Also the upload-body inactivity window and the HTTP server's header and idle-connection timeout.",
 		},
 		{
 			Key:         "document.conversion-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "15",
-			Description: "Timeout (seconds) for the docs-editor (Collabora) conversion call.",
+			Description: "Maximum silence (seconds) while converting a document with Collabora; upload and download do not count while data flows.",
 		},
 		{
 			Key:         "cache-max-mb",

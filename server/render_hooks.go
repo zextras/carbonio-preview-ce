@@ -64,7 +64,7 @@ var collaboraConvertFunc = func(
 	data []byte,
 	langTag string,
 	docsEditorURL string,
-	timeout time.Duration,
+	idle time.Duration,
 ) ([]byte, error) {
-	return render.CollaboraConvert(ctx, data, langTag, docsEditorURL, timeout)
+	return render.CollaboraConvert(ctx, data, langTag, docsEditorURL, idle)
 }

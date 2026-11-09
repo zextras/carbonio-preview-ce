@@ -74,23 +74,18 @@ var heartbeatInterval = 60 * time.Second
 var extractCeiling = 120 * time.Second
 
 // idleReadCloser wraps a ReadCloser and resets a timer on every successful
-// read.  The timer fires dlCancel when no bytes arrive for readIdleTimeout.
+// read.  The timer is armed by the caller before the response wait and fires
+// dlCancel when no bytes arrive for readIdleTimeout.
 // Call Close to stop the timer and release resources.
 type idleReadCloser struct {
-	rc       io.ReadCloser
-	timer    *time.Timer
-	timeout  time.Duration
-	dlCancel context.CancelFunc
+	rc      io.ReadCloser
+	timer   *time.Timer
+	timeout time.Duration
 }
 
-func newIdleReadCloser(rc io.ReadCloser, timeout time.Duration, dlCancel context.CancelFunc) *idleReadCloser {
-	irc := &idleReadCloser{
-		rc:       rc,
-		timeout:  timeout,
-		dlCancel: dlCancel,
-	}
-	irc.timer = time.AfterFunc(timeout, dlCancel)
-	return irc
+func newIdleReadCloser(rc io.ReadCloser, timeout time.Duration, timer *time.Timer) *idleReadCloser {
+	timer.Reset(timeout)
+	return &idleReadCloser{rc: rc, timer: timer, timeout: timeout}
 }
 
 func (irc *idleReadCloser) Read(p []byte) (n int, err error) {
@@ -417,8 +412,10 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	// not on bytes transferred.  The goroutine is stopped (via hbStop close) as
 	// soon as io.Copy returns — heartbeat is ONLY for the download phase.
 	dlCtx, dlCancel := context.WithCancel(ctx)
+	idleTimer := time.AfterFunc(readIdleTimeout, dlCancel)
 	rc, err := w.deps.Store.RetrieveDataStreaming(dlCtx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
+		idleTimer.Stop()
 		dlCancel()
 		if isStorageNotFound(err) {
 			slog.Warn("VideoWorker: source blob not found, marking FAILED",
@@ -435,6 +432,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	tmp, err := os.CreateTemp("", "carbonio-preview-worker-*.bin")
 	if err != nil {
 		rc.Close()
+		idleTimer.Stop()
 		dlCancel()
 		w.releaseOrFail(ctx, row, err)
 		return
@@ -467,7 +465,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	}()
 
 	// Wrap rc in the idle watchdog for the duration of the copy only.
-	guard := newIdleReadCloser(rc, readIdleTimeout, dlCancel)
+	guard := newIdleReadCloser(rc, readIdleTimeout, idleTimer)
 	// Stream the source into a SPARSE temp file: only the head (frame-0 sample
 	// + faststart moov) and the tail (trailing moov/index) are retained; the
 	// middle is discarded so a multi-GB source costs ~head+tail of temp disk,

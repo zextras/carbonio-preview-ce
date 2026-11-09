@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -136,10 +137,9 @@ func TestRetrieveData_ConnectionRefused(t *testing.T) {
 // TestRetrieveData_CtxTimeout verifies that a request whose context deadline
 // fires while the server is hanging maps to ErrUnavailable.
 //
-// The buffered httpClient also carries a total fetchTimeout (5s here), but
-// the ctx deadline (50ms) is far shorter and fires first — proving ctx-based
-// cancellation still works independently of, and in addition to, the total
-// wall-clock cap introduced by fetchTimeout.
+// The idle window (5s here) is far longer than the ctx deadline (50ms), so the
+// ctx deadline fires first — proving ctx-based cancellation still works
+// independently of the inactivity window.
 func TestRetrieveData_CtxTimeout(t *testing.T) {
 	// Server that never responds (hangs until ctx is cancelled).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,14 +156,10 @@ func TestRetrieveData_CtxTimeout(t *testing.T) {
 	}
 }
 
-// TestRetrieveData_TotalFetchTimeout_SlowBody verifies that RetrieveData is
-// bounded by fetchTimeout as a TOTAL wall-clock cap — even with an unbounded
-// caller ctx (context.Background()), and even when the server has already
-// sent response headers and started streaming the body. Before this fix,
-// fetchTimeout (then named dialTimeout) only bounded TCP connect + TLS
-// handshake, so a slow body past those phases would hang indefinitely absent
-// a ctx deadline. This proves the buffered path can no longer do that.
-func TestRetrieveData_TotalFetchTimeout_SlowBody(t *testing.T) {
+// TestRetrieveData_InactivityTimeout_StalledBody verifies that RetrieveData
+// fails with ErrUnavailable when the body stalls for longer than the idle
+// window, even with an unbounded caller ctx.
+func TestRetrieveData_InactivityTimeout_StalledBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if f, ok := w.(http.Flusher); ok {
@@ -173,7 +169,7 @@ func TestRetrieveData_TotalFetchTimeout_SlowBody(t *testing.T) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		// Stall past fetchTimeout without ever finishing the body.
+		// Stall past the idle window without ever finishing the body.
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -186,10 +182,13 @@ func TestRetrieveData_TotalFetchTimeout_SlowBody(t *testing.T) {
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("expected ErrUnavailable from total fetch timeout, got %v", err)
+		t.Fatalf("expected ErrUnavailable from inactivity timeout, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "no data for") {
+		t.Errorf("err = %v, want inactivity message", err)
 	}
 	if elapsed > 2*time.Second {
-		t.Errorf("elapsed = %v, expected the total fetchTimeout (%v) to bound the request, not hang", elapsed, fetchTimeout)
+		t.Errorf("elapsed = %v, expected the idle window (%v) to bound the request, not hang", elapsed, fetchTimeout)
 	}
 }
 
@@ -300,7 +299,8 @@ func (errBodyRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 func TestRetrieveData_BodyReadError(t *testing.T) {
 	client := &DirectClient{
 		downloadURL: "http://127.0.0.1:20000/download",
-		httpClient:  &http.Client{Transport: errBodyRoundTripper{}},
+		client:      &http.Client{Transport: errBodyRoundTripper{}},
+		idle:        time.Second,
 	}
 	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
 	if err == nil {
@@ -328,7 +328,7 @@ func TestBuildURL_ParseError(t *testing.T) {
 func TestRetrieveData_BuildURLError(t *testing.T) {
 	client := &DirectClient{
 		downloadURL: "http://[::1", // unparseable
-		httpClient:  &http.Client{},
+		client:      &http.Client{},
 	}
 	_, err := client.RetrieveData(context.Background(), "id", 1, "files", "")
 	if err == nil {
@@ -380,11 +380,10 @@ func TestRetrieveDataStreaming_404(t *testing.T) {
 }
 
 // TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted verifies that
-// RetrieveDataStreaming is served by streamClient (Timeout: 0), NOT the
-// buffered httpClient (Timeout: fetchTimeout). A body that trickles in over
-// a duration far longer than fetchTimeout must still be delivered in full —
-// proving the streaming path has no total wall-clock cap, unlike the
-// buffered path (see TestRetrieveData_TotalFetchTimeout_SlowBody).
+// RetrieveDataStreaming does not go through the inactivity helper. A body
+// that trickles in over a duration far longer than the idle window must still
+// be delivered in full (see TestRetrieveData_InactivityTimeout_StalledBody for
+// the buffered path).
 func TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted(t *testing.T) {
 	const chunkDelay = 60 * time.Millisecond
 	chunks := []string{"chunk0-", "chunk1-", "chunk2-", "chunk3"}
@@ -412,7 +411,7 @@ func TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted(t *testing.T) {
 
 	// fetchTimeout is much shorter than the total time the body takes to
 	// arrive (len(chunks) * chunkDelay). If RetrieveDataStreaming used the
-	// buffered httpClient, this transfer would be aborted partway through.
+	// inactivity helper, this transfer would be aborted partway through.
 	const fetchTimeout = 80 * time.Millisecond
 	client := NewDirectClient(srv.URL, "download", "upload", "delete", fetchTimeout)
 
@@ -554,5 +553,93 @@ func TestDirectClient_Delete_HappyPath(t *testing.T) {
 	c := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
 	if err := c.Delete(context.Background(), nodeID, 1, "files", ""); err != nil {
 		t.Fatalf("Delete error: %v", err)
+	}
+}
+
+type splitBodyTransport struct {
+	payload []byte
+	known   bool
+}
+
+func (rt splitBodyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	cut := len(rt.payload) - 200
+	resp := &http.Response{
+		StatusCode:    http.StatusOK,
+		Header:        http.Header{},
+		ContentLength: -1,
+		Body: io.NopCloser(io.MultiReader(
+			bytes.NewReader(rt.payload[:cut]),
+			bytes.NewReader(rt.payload[cut:]),
+		)),
+	}
+	if rt.known {
+		resp.ContentLength = int64(len(rt.payload))
+	}
+	return resp, nil
+}
+
+func TestRetrieveData_PresizedAndUnknownLength(t *testing.T) {
+	payload := bytes.Repeat([]byte("abcdefgh"), 1<<16)
+	for _, known := range []bool{true, false} {
+		c := &DirectClient{
+			downloadURL: "http://storage.invalid/download",
+			client:      &http.Client{Transport: splitBodyTransport{payload: payload, known: known}},
+			idle:        time.Second,
+		}
+		got, err := c.RetrieveData(context.Background(), "id", 1, "files", "")
+		if err != nil {
+			t.Fatalf("known=%v: %v", known, err)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Fatalf("known=%v: body mismatch (len %d)", known, len(got))
+		}
+		if known && cap(got) != len(got) {
+			t.Fatalf("presize defeated: cap %d, len %d", cap(got), len(got))
+		}
+	}
+}
+
+func TestRetrieveData_ShortBodyIsUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte("short"))
+	}))
+	defer srv.Close()
+	if _, err := newTestClient(srv.URL).RetrieveData(context.Background(), "id", 1, "files", ""); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRetrieveData_NoSizeLimit(t *testing.T) {
+	const size = 64 << 20
+	chunk := make([]byte, 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < size/len(chunk); i++ {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+	got, err := newTestClient(srv.URL).RetrieveData(context.Background(), "id", 1, "files", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != size {
+		t.Fatalf("got %d bytes, want %d", len(got), size)
+	}
+}
+
+func TestStoreData_StalledServerFailsOnInactivity(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	defer close(release)
+	c := NewDirectClient(srv.URL, "download", "upload", "delete", 150*time.Millisecond)
+	if _, err := c.StoreData(context.Background(), "n", 1, "files", "", []byte("x")); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no data for") {
+		t.Fatalf("StoreData err = %v", err)
+	}
+	if err := c.Delete(context.Background(), "n", 1, "files", ""); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no data for") {
+		t.Fatalf("Delete err = %v", err)
 	}
 }

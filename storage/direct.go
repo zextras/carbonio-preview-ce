@@ -7,6 +7,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,52 +36,41 @@ type DirectClient struct {
 	downloadURL string // pre-built base URL including the API path, e.g. "http://127.78.0.6:20000/download"
 	uploadURL   string // e.g. "http://127.78.0.6:20000/upload"
 	deleteURL   string // e.g. "http://127.78.0.6:20000/delete"
-	// httpClient is used for the buffered operations: RetrieveData, StoreData,
-	// and Delete. It carries fetchTimeout as a hard wall-clock cap covering the
-	// full request lifecycle (connect + TLS + write + read-entire-body).
-	httpClient *http.Client
-	// streamClient is used exclusively by RetrieveDataStreaming. It has
-	// Timeout:0 so the overall response-body read is never capped by a
-	// wall-clock timer — a large video download is not aborted mid-stream.
-	// The caller's ctx (and, in the video worker, the idle-read watchdog) is
-	// the actual stall protection for streaming downloads.
-	streamClient *http.Client
+	client      *http.Client
+	idle        time.Duration
 }
 
 // NewDirectClient constructs a DirectClient.
 //
-//   - storageBaseURL — scheme://host:port, e.g. "http://127.78.0.6:20000"
-//   - downloadAPI    — path segment for GET download, e.g. "download"
-//   - uploadAPI      — path segment for POST upload, e.g. "upload"
-//   - deleteAPI      — path segment for DELETE, e.g. "delete"
-//   - fetchTimeout   — TOTAL wall-clock timeout applied to the buffered
-//     operations (RetrieveData, StoreData, Delete) via http.Client.Timeout.
-//     This bounds connect + TLS handshake + request write + full body read
-//     as one deadline — mirroring the Advanced edition's PowerStoreClient
-//     (internal/powerstore/powerstore.go), which uses the same value as its
-//     httpClient.Timeout.
+//   - storageBaseURL      — scheme://host:port, e.g. "http://127.78.0.6:20000"
+//   - downloadAPI         — path segment for GET download, e.g. "download"
+//   - uploadAPI           — path segment for PUT upload, e.g. "upload"
+//   - deleteAPI           — path segment for DELETE, e.g. "delete"
+//   - idle                — inactivity window for RetrieveData, StoreData and
+//     Delete: a transfer fails when no bytes move (request or response, headers
+//     included) for this long. There is no total time or size limit.
 //
-// RetrieveDataStreaming does NOT use fetchTimeout: it is served by a separate
-// streamClient with Timeout:0, so a legitimate large video download is never
-// aborted by this wall-clock cap. Both clients share one empty *http.Transport
-// (no DialContext/TLSHandshakeTimeout override) — there is no separate dial
-// timeout because fetchTimeout on httpClient already bounds connect+TLS+body
-// for the buffered path, and the streaming path is deliberately unbounded.
-func NewDirectClient(storageBaseURL, downloadAPI, uploadAPI, deleteAPI string, fetchTimeout time.Duration) *DirectClient {
-	sharedTransport := &http.Transport{}
+// RetrieveDataStreaming is not covered by idle: stall protection is the
+// caller's (the video worker's watchdog).
+func NewDirectClient(storageBaseURL, downloadAPI, uploadAPI, deleteAPI string, idle time.Duration) *DirectClient {
 	return &DirectClient{
 		downloadURL: storageBaseURL + "/" + downloadAPI,
 		uploadURL:   storageBaseURL + "/" + uploadAPI,
 		deleteURL:   storageBaseURL + "/" + deleteAPI,
-		httpClient: &http.Client{
-			Timeout:   fetchTimeout,
-			Transport: sharedTransport,
-		},
-		streamClient: &http.Client{
-			Timeout:   0,
-			Transport: sharedTransport,
-		},
+		client:      &http.Client{Transport: NewTransport()},
+		idle:        idle,
 	}
+}
+
+func (c *DirectClient) do(req *http.Request) (*http.Response, error) {
+	resp, err := DoWithInactivity(c.client, req, c.idle)
+	if err != nil {
+		if errors.Is(err, ErrUnavailable) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return resp, nil
 }
 
 // RetrieveData fetches a file from storage.
@@ -108,7 +98,7 @@ func (c *DirectClient) RetrieveData(
 	}
 
 	start := time.Now()
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		// Any transport-level error (timeout, DNS, connection refused, etc.)
 		// maps to ErrUnavailable, mirroring the Python Nothing path.
@@ -118,7 +108,7 @@ func (c *DirectClient) RetrieveData(
 			"duration_ms", time.Since(start).Milliseconds(),
 			"err", err,
 		)
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	slog.Debug("storage: request",
@@ -135,8 +125,11 @@ func (c *DirectClient) RetrieveData(
 
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
 		// Success path.
-		body, err := io.ReadAll(resp.Body)
+		body, err := readBody(resp)
 		if err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("%w: reading body: %v", ErrUnavailable, err)
 		}
 		return body, nil
@@ -150,15 +143,22 @@ func (c *DirectClient) RetrieveData(
 	}
 }
 
+func readBody(resp *http.Response) ([]byte, error) {
+	if resp.ContentLength <= 0 {
+		return io.ReadAll(resp.Body)
+	}
+	buf := make([]byte, resp.ContentLength)
+	if _, err := io.ReadFull(resp.Body, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
 // RetrieveDataStreaming is the streaming variant of RetrieveData. It performs
 // the identical GET but returns resp.Body so the caller can read a prefix and
 // close early. The body MUST be closed by the caller.
 //
-// It is served by streamClient (Timeout:0), NOT httpClient — the buffered
-// fetchTimeout wall-clock cap does not apply here, so a legitimate large
-// video download is never aborted mid-stream. Cancelling ctx still aborts the
-// in-flight transfer; the video worker's idle-read watchdog uses this to
-// bound stalled downloads at the byte-progress level instead.
+// Not bounded by the inactivity helper: only ctx (and the caller's watchdog) stops it.
 func (c *DirectClient) RetrieveDataStreaming(
 	ctx context.Context,
 	fileID string,
@@ -174,7 +174,7 @@ func (c *DirectClient) RetrieveDataStreaming(
 	if err != nil {
 		return nil, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
 	}
-	resp, err := c.streamClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
@@ -240,7 +240,7 @@ func (c *DirectClient) StoreData(
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	start := time.Now()
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		slog.Debug("storage: upload request failed",
@@ -249,7 +249,7 @@ func (c *DirectClient) StoreData(
 			"duration_ms", durationMs,
 			"err", err,
 		)
-		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return "", err
 	}
 	defer resp.Body.Close()
 	slog.Debug("storage: upload response",
@@ -298,7 +298,7 @@ func (c *DirectClient) Delete(
 	}
 
 	start := time.Now()
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.do(req)
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		slog.Debug("storage: delete request failed",
@@ -307,7 +307,7 @@ func (c *DirectClient) Delete(
 			"duration_ms", durationMs,
 			"err", err,
 		)
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return err
 	}
 	defer resp.Body.Close()
 	slog.Debug("storage: delete response",

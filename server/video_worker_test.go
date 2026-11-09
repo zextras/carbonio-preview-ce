@@ -779,3 +779,57 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	delete(w.live, key)
 	w.mu.Unlock()
 }
+
+type headerBlockingStore struct{ controllableStore }
+
+func (*headerBlockingStore) RetrieveDataStreaming(ctx context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
+	orig := readIdleTimeout
+	readIdleTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { readIdleTimeout = orig })
+
+	dbStore := startVideoPostgres(t)
+	ctx := context.Background()
+	fileID := videoUID(t, "hdrwait")
+	const version = 1
+
+	w := makeWorkerWithSem(dbStore, &headerBlockingStore{}, 3)
+	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
+		t.Fatalf("EnqueueIfAbsent: %v", err)
+	}
+	if ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID); err != nil || !ok {
+		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	}
+	row, err := dbStore.Find(ctx, fileID, version)
+	if err != nil || row == nil {
+		t.Fatalf("Find: %v", err)
+	}
+
+	acquireSlot(w)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer w.releaseSem()
+		w.attempt(ctx, *row)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("attempt() hung waiting for the storage response")
+	}
+
+	if !w.tryAcquireSem() {
+		t.Error("semaphore slot was not freed")
+	}
+	after, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || after == nil {
+		t.Fatalf("Find after attempt: %v", ferr)
+	}
+	if after.Status != db.StatusPending && after.Status != db.StatusFailed {
+		t.Errorf("status: got %q, want PENDING or FAILED", after.Status)
+	}
+}

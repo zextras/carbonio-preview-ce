@@ -121,9 +121,9 @@ func pdfRenderError(err error) error {
 }
 
 func (r runner) convert(cfg *config.Config, data []byte, langTag string) ([]byte, error) {
-	docsTimeout := time.Duration(cfg.ServiceDocsTimeout) * time.Second
+	docsIdle := time.Duration(cfg.ServiceDocsTimeout) * time.Second
 	docsURL := cfg.DocumentConversionFullConvertAddress + "/pdf"
-	pdfBytes, err := collaboraConvertFunc(r.work, data, langTag, docsURL, docsTimeout)
+	pdfBytes, err := collaboraConvertFunc(r.work, data, langTag, docsURL, docsIdle)
 	if err != nil {
 		log.Printf("%s: convert: %v", r.op, err)
 		return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
