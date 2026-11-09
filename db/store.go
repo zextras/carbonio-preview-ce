@@ -59,6 +59,8 @@ type VideoPreview struct {
 	Codec       *string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+
+	LastAccessedAt time.Time
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +178,7 @@ func scanVideoPreview(rows pgx.Rows) (VideoPreview, error) {
 		&vp.Codec,
 		&vp.CreatedAt,
 		&vp.UpdatedAt,
+		&vp.LastAccessedAt,
 	)
 	return vp, err
 }
@@ -210,7 +213,7 @@ func scanAll(rows pgx.Rows) ([]VideoPreview, error) {
 
 // selectCols is the canonical column list for SELECT * equivalents.
 const selectCols = `file_id, version, status, preview_id, owner_id, service_type,
-    claimed_by, claimed_at, attempts, codec, created_at, updated_at`
+    claimed_by, claimed_at, attempts, codec, created_at, updated_at, last_accessed_at`
 
 // ---------------------------------------------------------------------------
 // Query methods
@@ -318,7 +321,7 @@ func (s *Store) MarkReady(ctx context.Context, fileID string, version int, insta
 	_, err := s.pool.Exec(ctx,
 		`UPDATE video_preview
          SET status='READY', preview_id=$1,
-             claimed_by=NULL, claimed_at=NULL, updated_at=now()
+             claimed_by=NULL, claimed_at=NULL, updated_at=now(), last_accessed_at=now()
          WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
 		previewID, fileID, version, instanceID,
 	)
@@ -491,6 +494,129 @@ func (s *Store) InsertReady(ctx context.Context, fileID string, version int, own
 		return fmt.Errorf("db.InsertReady: %w", err)
 	}
 	return nil
+}
+
+// DeleteClaimed deletes a GENERATING row owned by instanceID, as if the preview
+// had never been requested. A row owned by another instance, or in any other
+// status, is left untouched.
+func (s *Store) DeleteClaimed(ctx context.Context, fileID string, version int, instanceID string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM video_preview
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		fileID, version, instanceID,
+	)
+	if err != nil {
+		return fmt.Errorf("db.DeleteClaimed: %w", err)
+	}
+	return nil
+}
+
+// TouchReady records an access on a READY row whose last access is older than
+// one day. It writes nothing otherwise.
+func (s *Store) TouchReady(ctx context.Context, fileID string, version int) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE video_preview SET last_accessed_at=now()
+         WHERE file_id=$1 AND version=$2 AND status='READY'
+           AND last_accessed_at < now() - interval '1 day'`,
+		fileID, version,
+	)
+	if err != nil {
+		return fmt.Errorf("db.TouchReady: %w", err)
+	}
+	return nil
+}
+
+// CleanupConn is the connection holding the cleanup advisory lock; the job runs
+// its queries on it so a run never needs a second pooled connection.
+type CleanupConn struct {
+	conn *pgxpool.Conn
+}
+
+// FindExpiredReady returns up to limit READY rows not accessed for 30 days,
+// ordered by (last_accessed_at, file_id, version) and strictly after the
+// cursor row when after is non-nil.
+func (s *CleanupConn) FindExpiredReady(ctx context.Context, after *VideoPreview, limit int) ([]VideoPreview, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if after == nil {
+		rows, err = s.conn.Query(ctx,
+			`SELECT `+selectCols+` FROM video_preview
+             WHERE status='READY' AND last_accessed_at < now() - interval '30 days'
+             ORDER BY last_accessed_at, file_id, version
+             LIMIT $1`,
+			limit,
+		)
+	} else {
+		rows, err = s.conn.Query(ctx,
+			`SELECT `+selectCols+` FROM video_preview
+             WHERE status='READY' AND last_accessed_at < now() - interval '30 days'
+               AND (last_accessed_at, file_id, version) > ($2, $3, $4)
+             ORDER BY last_accessed_at, file_id, version
+             LIMIT $1`,
+			limit, after.LastAccessedAt, after.FileID, after.Version,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("db.FindExpiredReady: %w", err)
+	}
+	vps, err := scanAll(rows)
+	if err != nil {
+		return nil, fmt.Errorf("db.FindExpiredReady: scan: %w", err)
+	}
+	return vps, nil
+}
+
+// DeleteExpiredReady deletes the row only if it is still READY and still not
+// accessed for 30 days, so an access that happened after FindExpiredReady
+// saves it.
+func (s *CleanupConn) DeleteExpiredReady(ctx context.Context, fileID string, version int) error {
+	_, err := s.conn.Exec(ctx,
+		`DELETE FROM video_preview
+         WHERE file_id=$1 AND version=$2 AND status='READY'
+           AND last_accessed_at < now() - interval '30 days'`,
+		fileID, version,
+	)
+	if err != nil {
+		return fmt.Errorf("db.DeleteExpiredReady: %w", err)
+	}
+	return nil
+}
+
+// cleanupLockKey is the fixed Postgres advisory-lock key serialising the
+// cleanup job across instances.
+const cleanupLockKey int64 = 0x7a65787472617663
+
+// unlockTimeout bounds releasing the cleanup lock after the caller's context ended.
+const unlockTimeout = 5 * time.Second
+
+// WithCleanupLock runs fn while holding the cleanup advisory lock on a
+// dedicated connection, which fn receives for all of its queries. It returns false without running fn when another
+// session already holds the lock.
+func (s *Store) WithCleanupLock(ctx context.Context, fn func(context.Context, *CleanupConn) error) (bool, error) {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return false, fmt.Errorf("db.WithCleanupLock: acquire: %w", err)
+	}
+	defer conn.Release()
+
+	var got bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, cleanupLockKey).Scan(&got); err != nil {
+		return false, fmt.Errorf("db.WithCleanupLock: lock: %w", err)
+	}
+	if !got {
+		return false, nil
+	}
+	defer func() {
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+		defer cancel()
+		var unlocked bool
+		if err := conn.QueryRow(uctx, `SELECT pg_advisory_unlock($1)`, cleanupLockKey).Scan(&unlocked); err != nil || !unlocked {
+			_ = conn.Conn().Close(uctx)
+		}
+	}()
+	return true, fn(ctx, &CleanupConn{conn: conn})
 }
 
 // DeleteByFileId deletes the row for (fileID, version).

@@ -60,7 +60,7 @@ func DetectCodecFromFile(ctx context.Context, inputPath string) (string, error) 
 }
 
 // DetectCodec downloads the video stream r to a temp file and calls DetectCodecFromFile.
-// The temp file is shared with ExtractFirstFramePNG if you pass the same reader
+// The temp file is shared with ExtractFirstFrameJPEG if you pass the same reader
 // — but since both consume the reader, callers that need BOTH operations should
 // download once to a temp file and call DetectCodecFromFile + runFFmpegFirstFrame
 // directly. See video_worker probe-first flow for the actual usage.
@@ -85,9 +85,9 @@ func DetectCodec(ctx context.Context, r io.Reader) (string, error) {
 	return DetectCodecFromFile(ctx, tmp.Name())
 }
 
-// ExtractFirstFramePNGFromFile is the seekable-file variant of ExtractFirstFramePNG,
+// ExtractFirstFrameJPEGFromFile is the seekable-file variant of ExtractFirstFrameJPEG,
 // used internally when both probe and extract share a pre-downloaded temp file.
-func ExtractFirstFramePNGFromFile(ctx context.Context, inputPath string) ([]byte, error) {
+func ExtractFirstFrameJPEGFromFile(ctx context.Context, inputPath string) ([]byte, error) {
 	return runFFmpegFirstFrame(ctx, inputPath)
 }
 

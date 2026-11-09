@@ -14,12 +14,12 @@ import (
 var (
 	// ErrExtractFailed means ffmpeg could not extract a frame (unsupported/corrupt/no frame).
 	ErrExtractFailed = errors.New("video: first-frame extraction failed")
-	// ErrExtractTimeout means ffmpeg exceeded Timeout.
+	// ErrExtractTimeout means the extraction hit its context deadline.
 	ErrExtractTimeout = errors.New("video: extraction timed out")
 )
 
-// ExtractFirstFramePNG streams r to a seekable temp file, extracts frame 0
-// with ffmpeg, and returns the PNG-encoded frame. No size cap is applied —
+// ExtractFirstFrameJPEG streams r to a seekable temp file, extracts frame 0
+// with ffmpeg, and returns the JPEG-encoded frame. No size cap is applied —
 // preview is a pure transform service; size policy belongs to the caller (WSC).
 //
 // A seekable temp file (not a pipe) is mandatory: moov-at-end MP4 requires
@@ -30,12 +30,9 @@ var (
 // (capacity = video.max-concurrent-extractions, default runtime.NumCPU()).
 // Bounding again inside this function would double-bound the same work.
 //
-// Single-clock design: ctx is the SOLE time budget for the entire operation.
-// It is the per-request context.WithTimeout set by the generate handler
-// (ServiceTimeoutInSeconds). It is propagated to both the streaming body read
-// (via r, which is backed by an http.Response.Body bound to ctx) and the
-// ffmpeg subprocess (via exec.CommandContext). There is no inner timeout.
-func ExtractFirstFramePNG(ctx context.Context, r io.Reader) ([]byte, error) {
+// ctx is the only time budget for the ffmpeg subprocess (via
+// exec.CommandContext); reading r is bounded by whatever r itself enforces.
+func ExtractFirstFrameJPEG(ctx context.Context, r io.Reader) ([]byte, error) {
 	tmp, err := os.CreateTemp("", "carbonio-preview-video-*.bin")
 	if err != nil {
 		return nil, err

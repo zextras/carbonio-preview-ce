@@ -317,7 +317,7 @@ func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
 
 	origExtract := videoFirstFrameFromFileFunc
 	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyPNG(t), nil
+		return tinyJPEG(t), nil
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
@@ -451,7 +451,7 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 
 	origExtract := videoFirstFrameFromFileFunc
 	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyPNG(t), nil
+		return tinyJPEG(t), nil
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 

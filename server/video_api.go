@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -100,6 +101,11 @@ func resolve(
 			return resolveResult{httpStatus: http.StatusAccepted}
 		}
 		pid := *row.PreviewID
+		if time.Since(row.LastAccessedAt) > 24*time.Hour {
+			if terr := store.TouchReady(ctx, fileID, version); terr != nil {
+				slog.Warn("resolve: TouchReady error", "file_id", fileID, "version", version, "err", terr)
+			}
+		}
 		// DB says READY: return 200 with previewID. The handler will fetch the blob
 		// and handle a missing blob lazily (ErrNotFound → ReenqueueReady → 202).
 		return resolveResult{httpStatus: http.StatusOK, previewID: pid}
@@ -121,67 +127,67 @@ func resolve(
 		return resolveResult{httpStatus: http.StatusUnprocessableEntity}
 
 	default: // PENDING or GENERATING
-		fireAsyncAttempt(ctx, deps, worker, fileID, version)
+		if row.Status == db.StatusPending {
+			fireAsyncAttempt(ctx, deps, worker, fileID, version)
+		}
 		return resolveResult{httpStatus: http.StatusAccepted}
 	}
 }
 
-// fireAsyncAttempt attempts to claim the row and submit a generate job to the
-// worker. This is a non-blocking best-effort fast-path: if the semaphore is
-// busy or the claim is lost (race with another instance), the row simply waits
-// for the next sweep tick. No error is returned — failures are logged only.
+// fireAsyncAttempt claims the row and submits a generate job to the worker. This
+// is a non-blocking best-effort fast-path: if the worker is not started, this
+// instance already runs maxInFlight jobs or the claim is lost (race with another
+// instance), the row simply waits for the next sweep tick. No error is returned —
+// failures are logged only.
 //
-// The goroutine uses context.WithoutCancel(ctx) so that the HTTP handler
-// returning 202 (and net/http cancelling the request context) does not abort
-// an in-flight generateFirstFrameJPEG call. Values (trace ids etc.) are
-// preserved; only the cancellation signal is dropped.
-func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileID string, version int) {
+// The job runs on the worker's own context, never on the request's, so the 202
+// response completing does not abort it and a worker shutdown does.
+func fireAsyncAttempt(_ context.Context, deps Deps, worker *VideoWorker, fileID string, version int) {
 	store := deps.videoStore()
 	if worker == nil || store == nil {
 		return
 	}
-	// Detach from request lifetime: keep values but drop cancellation so that
-	// the 202 response completing does not cancel the in-flight generation.
-	bgCtx := context.WithoutCancel(ctx)
+	go worker.runOne(fileID, version)
+}
+
+// runOne claims the row and runs one attempt on the worker context. A worker
+// that is not running, a full instance or a lost claim leaves the row for the
+// next sweep tick.
+func (w *VideoWorker) runOne(fileID string, version int) {
+	store := w.db()
+	ctx := w.jobContext()
+	if store == nil || ctx == nil || ctx.Err() != nil {
+		return
+	}
+	key := liveKey(fileID, version)
+	if w.reserve(key) != reserveOK {
+		return
+	}
+	claimCtx, cancel := dbCtx(ctx)
+	claimed, err := store.Claim(claimCtx, fileID, version, w.instanceID)
+	cancel()
+	if err != nil {
+		slog.Warn("VideoWorker: Claim failed", "file_id", fileID, "version", version, "err", err)
+	}
+	if err != nil || !claimed {
+		w.unreserve(key)
+		return
+	}
 	go func() {
-		claimed, err := store.Claim(bgCtx, fileID, version, worker.instanceID)
-		if err != nil || !claimed {
-			return // lost the race or DB error — sweep will retry
-		}
-		// Acquire semaphore non-blocking.
-		if !worker.tryAcquireSem() {
-			// Busy — return the row without counting an attempt (back-pressure, not a failure).
-			slog.Debug("fireAsyncAttempt: semaphore busy on immediate attempt, releasing without attempt increment",
-				"file_id", fileID, "version", version)
-			_ = store.Release(bgCtx, fileID, version, worker.instanceID)
+		defer w.unreserve(key)
+		row, rerr := store.Find(ctx, fileID, version)
+		if rerr != nil || row == nil {
+			if rerr != nil {
+				slog.Warn("fireAsyncAttempt: Find error before attempt, releasing", "err", rerr,
+					"file_id", fileID, "version", version)
+			} else {
+				slog.Debug("fireAsyncAttempt: row vanished before attempt, releasing",
+					"file_id", fileID, "version", version)
+			}
+			w.releaseRow(ctx, db.VideoPreview{FileID: fileID, Version: version})
 			return
 		}
-		key := liveKey(fileID, version)
-		worker.mu.Lock()
-		worker.live[key] = struct{}{}
-		worker.mu.Unlock()
-		go func() {
-			defer func() {
-				worker.mu.Lock()
-				delete(worker.live, key)
-				worker.mu.Unlock()
-			}()
-			defer worker.releaseSem()
-			// Re-read the row to get ownerID and serviceType (they may not be known here).
-			row, rerr := store.Find(bgCtx, fileID, version)
-			if rerr != nil || row == nil {
-				if rerr != nil {
-					slog.Warn("fireAsyncAttempt: Find error before attempt, releasing", "err", rerr,
-						"file_id", fileID, "version", version)
-				} else {
-					slog.Debug("fireAsyncAttempt: row vanished before attempt, releasing",
-						"file_id", fileID, "version", version)
-				}
-				_ = store.Release(bgCtx, fileID, version, worker.instanceID)
-				return
-			}
-			worker.attempt(bgCtx, *row)
-		}()
+		w.attempt(ctx, *row)
 	}()
 }
 

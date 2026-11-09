@@ -61,6 +61,14 @@ type Server struct {
 	workerStartMu        sync.Mutex
 	workerStartRequested bool
 	workerStartCtx       context.Context
+
+	// videoMu guards the video DB lifecycle owned by StartVideoDBAsync: its
+	// cancellable context, the init goroutine and the pool, closed by stopVideo
+	// only after the worker's jobs have ended.
+	videoMu     sync.Mutex
+	videoCancel context.CancelFunc
+	videoInit   sync.WaitGroup
+	videoStore  *db.Store
 }
 
 // Option is a functional option for Server configuration.
@@ -176,6 +184,33 @@ func (s *Server) Run() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: HTTP shutdown", "err", err)
+	}
+	s.stopVideo()
+}
+
+// stopVideo ends the video worker and closes the video DB pool, in that order:
+// it cancels the context owned by StartVideoDBAsync, waits for the DB init, then
+// for the worker's jobs (each returns its row to PENDING), and only then closes the pool.
+func (s *Server) stopVideo() {
+	s.videoMu.Lock()
+	cancel := s.videoCancel
+	s.videoMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.videoInit.Wait()
+	s.workerStartMu.Lock()
+	w := s.worker
+	s.workerStartMu.Unlock()
+	if w != nil {
+		w.Wait()
+	}
+	s.videoMu.Lock()
+	store := s.videoStore
+	s.videoStore = nil
+	s.videoMu.Unlock()
+	if store != nil {
+		store.Close()
 	}
 }
 

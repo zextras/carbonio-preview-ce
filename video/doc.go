@@ -19,6 +19,6 @@ var (
 	// the binary, change this constant (and the carbonio-ffmpeg dependency).
 	//
 	// Concurrency is bounded by the caller (the generate handler's dedicated
-	// video-semaphore middleware), not here — see ExtractFirstFramePNG.
+	// video-semaphore middleware), not here — see ExtractFirstFrameJPEG.
 	FFmpegPath = "/opt/zextras/common/bin/ffmpeg"
 )

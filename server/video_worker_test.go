@@ -5,8 +5,7 @@
 // video_worker_test.go covers:
 //
 //  1. Idle-read watchdog: a stalled download (reader blocks forever) is
-//     cancelled by the watchdog timer → attempt() calls releaseOrFail →
-//     semaphore slot is released (tryAcquireSem returns true again).
+//     cancelled by the watchdog timer → attempt() calls dropRow (row deleted).
 //
 //  2. Flowing download: a reader that delivers bytes slowly but never idles
 //     for readIdleTimeout is NOT cancelled; the attempt proceeds normally
@@ -162,26 +161,17 @@ func makeWorkerWithSem(dbStore *db.Store, store storage.Client, maxAttempts int)
 	})
 }
 
-// acquireSlot acquires the worker semaphore (blocking).
-func acquireSlot(w *VideoWorker) {
-	if w.deps.VideoSem != nil {
-		w.deps.VideoSem <- struct{}{}
-	}
-}
-
 // ---------------------------------------------------------------------------
-// Test 1: Stalled download → watchdog fires → slot freed
+// Test 1: Stalled download → watchdog fires → row dropped
 // ---------------------------------------------------------------------------
 
-// TestWorker_StalledDownload_WatchdogFreesSlot verifies:
+// TestWorker_StalledDownload_WatchdogDropsRow verifies:
 //   - A real HTTP server sends headers immediately but then blocks writing the body.
 //   - The idle-read watchdog fires after readIdleTimeout, calling dlCancel().
 //   - dlCancel() propagates through http.NewRequestWithContext → transport aborts
 //     the body read → io.Copy returns a context error.
-//   - attempt() treats the copy error as a transient failure (releaseOrFail).
-//   - After attempt() returns, tryAcquireSem() returns true (slot freed by defer
-//     releaseSem() in the goroutine).
-func TestWorker_StalledDownload_WatchdogFreesSlot(t *testing.T) {
+//   - attempt() treats the copy error as a connectivity failure (dropRow).
+func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 	// Use a tiny idle timeout so the test runs in ms, not seconds.
 	orig := readIdleTimeout
 	readIdleTimeout = 50 * time.Millisecond
@@ -224,15 +214,10 @@ func TestWorker_StalledDownload_WatchdogFreesSlot(t *testing.T) {
 		t.Fatalf("Find: %v", err)
 	}
 
-	// Acquire the single semaphore slot before launching so we can verify
-	// releaseSem() gives it back after attempt returns.
-	acquireSlot(w)
-
 	// Run attempt in a goroutine (it will block until the watchdog fires).
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.releaseSem() // mirrors the caller goroutine in tick/fireAsyncAttempt
 		w.attempt(ctx, *row)
 	}()
 
@@ -244,18 +229,12 @@ func TestWorker_StalledDownload_WatchdogFreesSlot(t *testing.T) {
 		t.Fatal("attempt() did not return within 1s after watchdog should have fired")
 	}
 
-	// Semaphore slot must be free (releaseSem was deferred by the goroutine).
-	if !w.tryAcquireSem() {
-		t.Error("semaphore slot was not freed after stalled-download cancellation")
-	}
-
-	// Row must be PENDING (transient error → ReleaseWithAttempt) or FAILED at cap.
 	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
+	if ferr != nil {
 		t.Fatalf("Find after attempt: %v", ferr)
 	}
-	if after.Status != db.StatusPending && after.Status != db.StatusFailed {
-		t.Errorf("status: got %q, want PENDING or FAILED (transient download error)", after.Status)
+	if after != nil {
+		t.Errorf("idle-cancelled download must drop the row, got status %q", after.Status)
 	}
 }
 
@@ -284,7 +263,7 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 
 	origExtract := videoFirstFrameFromFileFunc
 	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyPNG(t), nil
+		return tinyJPEG(t), nil
 	}
 	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
 
@@ -316,11 +295,9 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 		t.Fatalf("Find: %v", err)
 	}
 
-	acquireSlot(w)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.releaseSem()
 		w.attempt(ctx, *row)
 	}()
 
@@ -400,12 +377,12 @@ func TestWorker_LiveSet_KeyInsertAndDelete(t *testing.T) {
 
 // TestWorker_LiveSet_StaleSkipWithDB verifies that when a row's key is in the
 // live-set at the time tick runs the stale loop, the goroutine is NOT re-launched
-// (i.e. no second semaphore slot is consumed and the stale row is released back
+// (i.e. no second job is spawned and the stale row is released back
 // to PENDING without incrementing attempts beyond what ReclaimStale already did).
 //
 // Strategy: pre-populate a row as GENERATING, then inject the key into w.live
 // (simulating an already-running goroutine).  Call tick.  Verify that no attempt
-// goroutine is fired (inFlight stays 0, semaphore stays free).
+// goroutine is fired (liveCount stays 1) and the row stays GENERATING.
 func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	orig := readIdleTimeout
 	readIdleTimeout = 50 * time.Millisecond
@@ -453,10 +430,17 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 
 	// Run tick.  It should reclaim the stale row but skip re-spawning it (key in live).
 	w.tick(ctx)
+	w.Wait()
 
-	// Semaphore must still be free (no goroutine consumed a slot).
-	if !w.tryAcquireSem() {
-		t.Error("semaphore was consumed even though row's goroutine is in live-set (should skip)")
+	after, ferr := dbStore.Find(ctx, fileID, version)
+	if ferr != nil || after == nil {
+		t.Fatalf("Find after tick: %v", ferr)
+	}
+	if after.Status != db.StatusGenerating || after.Attempts != 1 {
+		t.Errorf("live row after tick: status=%s attempts=%d, want GENERATING/1 (only ReclaimStale's +1)", after.Status, after.Attempts)
+	}
+	if n := w.liveCount(); n != 1 {
+		t.Errorf("live jobs=%d after tick, want 1 (no second job for a live row)", n)
 	}
 
 	// Restore live (simulate goroutine finishing) and clean up.
@@ -500,7 +484,7 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 
 	origExtract := videoFirstFrameFromFileFunc
 	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyPNG(t), nil
+		return tinyJPEG(t), nil
 	}
 	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
 
@@ -550,11 +534,9 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	// Record claimed_at before download starts.
 	claimedAtBefore := row.ClaimedAt
 
-	acquireSlot(w)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.releaseSem()
 		w.attempt(ctx, *row)
 	}()
 
@@ -584,10 +566,6 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 		// Note: this is a weak check — UpdatedAt is also bumped by MarkReady.
 		// The primary assertion is that the row ends READY (not reclaimed/FAILED).
 	}
-	// Semaphore slot must be free after completion.
-	if !w.tryAcquireSem() {
-		t.Error("semaphore slot not freed after successful attempt")
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -597,7 +575,7 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 // TestWorker_ExtractCeilingCancelsHungExtract verifies that if
 // videoFirstFrameFromFileFunc blocks indefinitely, the extractCeiling context
 // cancels it, the attempt is released as transient (not UNSUPPORTED), and the
-// semaphore slot is freed.
+// attempt is released as transient.
 func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 	// Tiny ceiling so the test completes fast.
 	origCeiling := extractCeiling
@@ -651,11 +629,9 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 		t.Fatalf("Find: %v", err)
 	}
 
-	acquireSlot(w)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.releaseSem()
 		w.attempt(ctx, *row)
 	}()
 
@@ -664,11 +640,6 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("attempt() did not return after extractCeiling fired")
-	}
-
-	// Semaphore slot must be freed.
-	if !w.tryAcquireSem() {
-		t.Error("semaphore slot was not freed after extract-ceiling cancellation")
 	}
 
 	// Row must be PENDING (transient — attempts < maxAttempts) or FAILED (at cap).
@@ -693,7 +664,7 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 // stale-reclaim loop:
 //   - A live row (key in w.live) is NOT MarkFailed even when Attempts >= maxAttempts.
 //   - The row stays GENERATING (no Release → PENDING that would cause duplication).
-//   - No semaphore slot is consumed (no goroutine launched).
+//   - No goroutine is launched (liveCount stays 1).
 func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	orig := readIdleTimeout
 	readIdleTimeout = 50 * time.Millisecond
@@ -753,9 +724,8 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	// Run tick — stale-reclaim fires; live-check must protect the row.
 	w.tick(ctx)
 
-	// Semaphore must be free (no goroutine launched).
-	if !w.tryAcquireSem() {
-		t.Error("semaphore slot consumed despite row being in live-set")
+	if n := w.liveCount(); n != 1 {
+		t.Errorf("live jobs=%d after tick, want 1 (no goroutine launched for a live row)", n)
 	}
 
 	// Row must still be GENERATING (not FAILED, not PENDING).
@@ -809,11 +779,9 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 		t.Fatalf("Find: %v", err)
 	}
 
-	acquireSlot(w)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		defer w.releaseSem()
 		w.attempt(ctx, *row)
 	}()
 	select {
@@ -822,14 +790,11 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 		t.Fatal("attempt() hung waiting for the storage response")
 	}
 
-	if !w.tryAcquireSem() {
-		t.Error("semaphore slot was not freed")
-	}
 	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
+	if ferr != nil {
 		t.Fatalf("Find after attempt: %v", ferr)
 	}
-	if after.Status != db.StatusPending && after.Status != db.StatusFailed {
-		t.Errorf("status: got %q, want PENDING or FAILED", after.Status)
+	if after != nil {
+		t.Errorf("header wait cancelled by the idle timeout must drop the row, got status %q", after.Status)
 	}
 }

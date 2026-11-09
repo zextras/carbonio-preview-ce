@@ -37,10 +37,10 @@ var videoDetectCodecFromFileFunc = func(ctx context.Context, inputPath string) (
 	return video.DetectCodecFromFile(ctx, inputPath)
 }
 
-// videoFirstFrameFromFileFunc is the seam for video.ExtractFirstFramePNGFromFile.
+// videoFirstFrameFromFileFunc is the seam for video.ExtractFirstFrameJPEGFromFile.
 // Tests override it so probe and extract can be stubbed independently.
 var videoFirstFrameFromFileFunc = func(ctx context.Context, inputPath string) ([]byte, error) {
-	return video.ExtractFirstFramePNGFromFile(ctx, inputPath)
+	return video.ExtractFirstFrameJPEGFromFile(ctx, inputPath)
 }
 
 // pdfSliceFunc is the seam for render.PDFSlice.

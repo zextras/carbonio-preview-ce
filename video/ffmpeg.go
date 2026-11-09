@@ -13,17 +13,13 @@ import (
 )
 
 // runFFmpegFirstFrame runs ffmpeg on a seekable input file and returns the
-// first video frame encoded as PNG. -an drops audio; -frames:v 1 makes ffmpeg
-// exit after the first frame. Output goes to stdout (pipe:1).
+// first video frame encoded as a full-range JPEG. -an drops audio; -frames:v 1
+// makes ffmpeg exit after the first frame. Output goes to stdout (pipe:1).
 //
-// Single-clock design: ctx is the SOLE time budget for this operation. It is
-// the per-request context.WithTimeout established by the video handler
-// (covering the full lifecycle: download + ffmpeg + render). There is no inner
-// nested WithTimeout here — the independent 20 s ffmpeg cap has been removed.
-// exec.CommandContext kills the ffmpeg process when ctx is cancelled or its
-// deadline fires. WaitDelay is a short OS-level kill-grace period only (not a
-// duration cap); it ensures the process is actually reaped even if it ignores
-// SIGKILL, which is extremely rare.
+// ctx is the only time budget: the caller bounds the local extraction and
+// exec.CommandContext kills ffmpeg when it is cancelled. WaitDelay is a short
+// OS-level kill-grace period only (not a duration cap); it ensures the process
+// is actually reaped even if it ignores SIGKILL, which is extremely rare.
 func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, FFmpegPath,
 		"-hide_banner", "-loglevel", "error", "-nostdin",
@@ -31,7 +27,7 @@ func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) 
 		"-i", inputPath,
 		"-an",
 		"-frames:v", "1",
-		"-f", "image2pipe", "-c:v", "png",
+		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj420p",
 		"pipe:1",
 	)
 	// WaitDelay: a small grace period after ctx fires before we force-kill.
@@ -53,7 +49,7 @@ func runFFmpegFirstFrame(ctx context.Context, inputPath string) ([]byte, error) 
 	// ffmpeg can exit 0 yet produce nothing (e.g. moov-at-end over a pipe, or a
 	// stream with no decodable frame). Treat empty/invalid output as failure.
 	out := stdout.Bytes()
-	if len(out) < 8 || string(out[1:4]) != "PNG" {
+	if len(out) < 4 || out[0] != 0xFF || out[1] != 0xD8 {
 		return nil, fmt.Errorf("%w: ffmpeg produced no frame: %s", ErrExtractFailed, stderr.String())
 	}
 	return out, nil

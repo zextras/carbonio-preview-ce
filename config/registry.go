@@ -276,7 +276,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum video first-frame extraction jobs run concurrently (each spawns an ffmpeg subprocess). Default: CPU count.",
+			Description:  "Maximum number of video first-frame extractions (ffmpeg probe and decode, each an ffmpeg subprocess) running at the same time. Source downloads and frame uploads take no slot. Default: CPU count.",
 		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via

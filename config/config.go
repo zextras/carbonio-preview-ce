@@ -73,8 +73,9 @@ type Config struct {
 	// runtime.NumCPU() when absent.
 	PDFWorkers int
 
-	// VideoConcurrency is the maximum number of concurrent video first-frame
-	// extraction jobs. Application-layer key "video.max-concurrent-extractions"
+	// VideoConcurrency is the maximum number of video first-frame extractions
+	// (ffmpeg codec probe and decode) running at the same time; source downloads
+	// and frame uploads take no slot. Application-layer key "video.max-concurrent-extractions"
 	// (Consul KV carbonio-preview/video/max-concurrent-extractions / env
 	// APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS).
 	// Defaults to runtime.NumCPU() when absent.

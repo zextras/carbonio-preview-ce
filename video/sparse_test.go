@@ -148,7 +148,7 @@ func genTestVideo(t *testing.T, ext string, encArgs []string, faststart bool) []
 
 // assertSparseExtract reconstructs data through StreamToSparseTemp with tiny
 // windows (forcing a hole), then asserts ffprobe sees a codec and ffmpeg
-// extracts a PNG frame — proving head+tail suffices for this container.
+// extracts a JPEG frame — proving head+tail suffices for this container.
 func assertSparseExtract(t *testing.T, data []byte) {
 	t.Helper()
 	withWindows(t, 32<<10, 16<<10) // 32 KiB head, 16 KiB tail
@@ -173,15 +173,15 @@ func assertSparseExtract(t *testing.T, data []byte) {
 	if err != nil || codec == "" {
 		t.Fatalf("probe from sparse failed: codec=%q err=%v", codec, err)
 	}
-	png, err := ExtractFirstFramePNGFromFile(ctx, f.Name())
+	jpg, err := ExtractFirstFrameJPEGFromFile(ctx, f.Name())
 	if err != nil {
 		t.Fatalf("extract from sparse failed (codec=%s): %v", codec, err)
 	}
-	if len(png) < 8 || string(png[1:4]) != "PNG" {
-		t.Fatalf("not a PNG (codec=%s, len=%d)", codec, len(png))
+	if len(jpg) < 4 || jpg[0] != 0xFF || jpg[1] != 0xD8 {
+		t.Fatalf("not a JPEG (codec=%s, len=%d)", codec, len(jpg))
 	}
 	t.Logf("OK: container yielded codec=%s, frame=%d bytes from %d-byte source (sparse)",
-		codec, len(png), len(data))
+		codec, len(jpg), len(data))
 }
 
 func TestSparseExtract_AllContainers(t *testing.T) {

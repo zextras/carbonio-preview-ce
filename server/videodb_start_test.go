@@ -166,8 +166,7 @@ func TestStartVideoDBAsync_ValidDSN_EnablesGateAndWorker(t *testing.T) {
 		t.Error("worker must be started once the DB becomes ready")
 	}
 
-	// Cancel and confirm the pool close goroutine doesn't panic / hang the test.
-	cancel()
+	stopVideoChecked(t, s)
 }
 
 // TestStartVideoDBAsync_ConfigValues_MatchMainGo pins the retry backoff
@@ -246,5 +245,39 @@ func TestStartVideoDBAsync_DBReadyBeforeBuildMux_WorkerStillStarts(t *testing.T)
 	if !started {
 		t.Error("worker was never started: DB became ready BEFORE buildMux constructed the worker, " +
 			"and the pending start request was lost — this is the main.go ordering race")
+	}
+
+	stopVideoChecked(t, s)
+}
+
+// stopVideoChecked runs stopVideo and checks that it returns (the worker's
+// context was cancelled and its jobs ended), the worker is closed and the pool
+// recorded by the DB init is closed.
+func stopVideoChecked(t *testing.T, s *Server) {
+	t.Helper()
+	s.videoMu.Lock()
+	store := s.videoStore
+	s.videoMu.Unlock()
+	if store == nil {
+		t.Fatal("StartVideoDBAsync did not record the pool")
+	}
+	done := make(chan struct{})
+	go func() {
+		s.stopVideo()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(slotWatchdog):
+		t.Fatal("stopVideo did not return: the worker context was not cancelled by it")
+	}
+	s.worker.mu.Lock()
+	closed := s.worker.closed
+	s.worker.mu.Unlock()
+	if !closed {
+		t.Error("worker not closed by stopVideo")
+	}
+	if _, err := store.Find(context.Background(), "x", 1); err == nil {
+		t.Error("video DB pool still open after stopVideo")
 	}
 }

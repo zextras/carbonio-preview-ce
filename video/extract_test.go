@@ -7,6 +7,9 @@ package video
 import (
 	"bytes"
 	"context"
+	"image/jpeg"
+	"image/png"
+	"math"
 	"os"
 	"os/exec"
 	"testing"
@@ -67,33 +70,91 @@ func genTestMP4(t *testing.T, faststart bool) []byte {
 	return data
 }
 
-func TestExtractFirstFramePNG_MoovAtEnd(t *testing.T) {
+func TestExtractFirstFrameJPEG_MoovAtEnd(t *testing.T) {
 	data := genTestMP4(t, false) // moov-at-end (the hard case)
-	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data))
+	jpg, err := ExtractFirstFrameJPEG(context.Background(), bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	if len(png) < 8 || string(png[1:4]) != "PNG" {
-		t.Fatalf("output is not a PNG (len=%d, prefix=%q)", len(png), png[:min(8, len(png))])
+	if len(jpg) < 4 || jpg[0] != 0xFF || jpg[1] != 0xD8 {
+		t.Fatalf("output is not a JPEG (len=%d, prefix=%q)", len(jpg), jpg[:min(8, len(jpg))])
 	}
 }
 
-func TestExtractFirstFramePNG_Faststart(t *testing.T) {
+func TestExtractFirstFrameJPEG_Faststart(t *testing.T) {
 	data := genTestMP4(t, true)
-	png, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader(data))
+	jpg, err := ExtractFirstFrameJPEG(context.Background(), bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	if string(png[1:4]) != "PNG" {
-		t.Fatalf("not a PNG")
+	if jpg[0] != 0xFF || jpg[1] != 0xD8 {
+		t.Fatalf("not a JPEG")
 	}
 }
 
-func TestExtractFirstFramePNG_NotAVideo(t *testing.T) {
+func TestExtractFirstFrameJPEG_DecodesWithSameSizeAndColors(t *testing.T) {
+	data := genTestMP4(t, true)
+	jpg, err := ExtractFirstFrameJPEG(context.Background(), bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	got, err := jpeg.Decode(bytes.NewReader(jpg))
+	if err != nil {
+		t.Fatalf("decode jpeg: %v", err)
+	}
+	if b := got.Bounds(); b.Dx() != 320 || b.Dy() != 240 {
+		t.Fatalf("dimensions: got %dx%d, want 320x240", b.Dx(), b.Dy())
+	}
+
+	in, err := os.CreateTemp(t.TempDir(), "ref-*.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Write(data)
+	in.Close()
+	cmd := exec.Command(FFmpegPath, "-hide_banner", "-loglevel", "error", "-nostdin",
+		"-i", in.Name(), "-an", "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("reference png: %v: %s", err, errb.String())
+	}
+	ref, err := png.Decode(&out)
+	if err != nil {
+		t.Fatalf("decode png: %v", err)
+	}
+
+	var sumAbs, mr, mg, mb, rr, rg, rb float64
+	b := ref.Bounds()
+	n := float64(b.Dx() * b.Dy())
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r1, g1, b1, _ := ref.At(x, y).RGBA()
+			r2, g2, b2, _ := got.At(x, y).RGBA()
+			rr += float64(r1 >> 8)
+			rg += float64(g1 >> 8)
+			rb += float64(b1 >> 8)
+			mr += float64(r2 >> 8)
+			mg += float64(g2 >> 8)
+			mb += float64(b2 >> 8)
+			sumAbs += math.Abs(float64(r1>>8)-float64(r2>>8)) + math.Abs(float64(g1>>8)-float64(g2>>8)) + math.Abs(float64(b1>>8)-float64(b2>>8))
+		}
+	}
+	for name, d := range map[string]float64{"r": (mr - rr) / n, "g": (mg - rg) / n, "b": (mb - rb) / n} {
+		if math.Abs(d) > 3 {
+			t.Errorf("mean %s differs from the PNG path by %.2f levels", name, d)
+		}
+	}
+	if mad := sumAbs / (3 * n); mad > 6 {
+		t.Errorf("mean absolute difference vs PNG path: %.2f levels", mad)
+	}
+}
+
+func TestExtractFirstFrameJPEG_NotAVideo(t *testing.T) {
 	if !ffmpegAvailable() {
 		t.Skip("ffmpeg not available")
 	}
-	_, err := ExtractFirstFramePNG(context.Background(), bytes.NewReader([]byte("not a video")))
+	_, err := ExtractFirstFrameJPEG(context.Background(), bytes.NewReader([]byte("not a video")))
 	if err == nil {
 		t.Fatalf("want error for non-video input, got nil")
 	}

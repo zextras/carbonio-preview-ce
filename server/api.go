@@ -14,14 +14,10 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -42,11 +38,11 @@ type Deps struct {
 	Cfg   *config.Config
 	Store storage.Client
 	Cache *cache.Cache
-	// Limits bounds render/download/docs work and coalesces identical GETs; nil = unlimited (tests).
+	// Limits bounds render (CPU) work and coalesces identical GETs; nil = unlimited (tests).
 	Limits *limits
 	// VideoSem is the DEDICATED video semaphore (capacity =
-	// video.max-concurrent-extractions, default NumCPU) bounding ffmpeg
-	// generation in the worker only. nil = unlimited (tests).
+	// video.max-concurrent-extractions, default NumCPU) bounding ffmpeg work
+	// (codec probe and first-frame extraction) only. nil = unlimited (tests).
 	VideoSem chan struct{}
 	// DB is the video_preview database store.  nil means the video DB layer is
 	// disabled (spec-only gendocs mode or unit tests that do not exercise video
@@ -659,41 +655,29 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 // Video operations — generate (extract first frame → JPEG → store)
 // ---------------------------------------------------------------------------
 
-// JPEGQuality is the JPEG encoding quality used when re-encoding the extracted
-// first frame. Internal constant — not a config layer, not env-overridable.
-const JPEGQuality = 90
-
-// encodePNGToJPEGAndStore re-encodes pngBytes to JPEG and stores them.
-// Extracted so that attempt() can reuse it after a probe-first download.
-func encodePNGToJPEGAndStore(
+// storeFrame stores the JPEG frame produced by ffmpeg. On failure it fires a
+// best-effort cleanup Delete of the partially-written node; the storage client's
+// inactivity bound is the only time limit. When ctx ended (shutdown) the Delete
+// runs before returning, bounded by releaseTimeout, so it is not lost.
+func storeFrame(
 	ctx context.Context,
 	store storage.Client,
-	pngBytes []byte,
+	jpg []byte,
 	version int,
 	serviceType string,
 	ownerID string,
 	targetNodeID string,
 ) (string, error) {
-	img, err := png.Decode(bytes.NewReader(pngBytes))
+	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg)
 	if err != nil {
-		return "", err
-	}
-	var jpg bytes.Buffer
-	if err := jpeg.Encode(&jpg, img, &jpeg.Options{Quality: JPEGQuality}); err != nil {
-		return "", err
-	}
-
-	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg.Bytes())
-	if err != nil {
-		// Best-effort cleanup: fire a DELETE for the partially-written node so it
-		// does not linger as an orphan in storage. Use a detached context with a
-		// short timeout — the request ctx is about to be cancelled when the handler
-		// returns and must NOT be used here (it would kill the delete immediately).
-		// Swallow any delete error; this is defence-in-depth only.
-		go func() {
-			dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if ctx.Err() != nil {
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 			defer cancel()
 			_ = store.Delete(dctx, targetNodeID, version, serviceType, ownerID)
+			return "", err
+		}
+		go func() {
+			_ = store.Delete(context.Background(), targetNodeID, version, serviceType, ownerID)
 		}()
 		return "", err
 	}
