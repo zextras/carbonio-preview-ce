@@ -70,8 +70,8 @@ func buildFullFlowServer(
 	store := storage.NewDirectClient(cfg.StorageFullAddress, cfg.StorageDownloadAPI, "upload", "delete", 10*time.Second)
 
 	s := New(cfg, store, c)
-	// Use the public Handler(): same handler chain Run serves (render
-	// semaphore + mux + logging middleware), without a real listener or
+	// Use the public Handler(): same handler chain Run serves (mux + body
+	// inactivity deadline + logging middleware), without a real listener or
 	// signal handling. Render init is done once by InitRealRender(t).
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)

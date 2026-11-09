@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,7 +24,7 @@ const fakePDFBytes = "%PDF-1.4 fake"
 // stubPDFSlice replaces pdfSliceFunc for the duration of a test.
 func stubPDFSlice(returnData []byte, returnErr error) (restore func()) {
 	prev := pdfSliceFunc
-	pdfSliceFunc = func(_ chan struct{}, _ []byte, _, _ int) ([]byte, error) {
+	pdfSliceFunc = func(_ context.Context, _ []byte, _, _ int) ([]byte, error) {
 		return returnData, returnErr
 	}
 	return func() { pdfSliceFunc = prev }
@@ -33,7 +34,7 @@ func stubPDFSlice(returnData []byte, returnErr error) (restore func()) {
 func stubPDFRasterize(returnData []byte, returnErr error) (restore func()) {
 	prev := pdfRasterizeFunc
 	pdfRasterizeFunc = func(
-		_ chan struct{}, _ []byte, _, _, _ int, _, _, _ string,
+		_ context.Context, _ []byte, _, _, _ int, _, _, _ string,
 	) ([]byte, error) {
 		return returnData, returnErr
 	}
@@ -44,7 +45,7 @@ func stubPDFRasterize(returnData []byte, returnErr error) (restore func()) {
 func buildPDFMux(cfg *config.Config, store *mockStore) *http.ServeMux {
 	mux := http.NewServeMux()
 	api := newHumaAPI(mux)
-	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: nil, Sem: nil})
+	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: nil})
 	return mux
 }
 

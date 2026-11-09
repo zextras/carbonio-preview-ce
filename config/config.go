@@ -56,8 +56,10 @@ type Config struct {
 	DocumentConversionServiceEndpoint string
 	DocumentConversionConvertAPI      string
 
-	// RenderConcurrency is the maximum number of concurrent render operations
-	// (image, PDF, document; does not apply to video).
+	// RenderConcurrency (N) is the maximum number of render operations (image,
+	// PDF, document and the resize of video previews) running at the same time.
+	// Only CPU work counts: storage transfers, uploads and document conversions
+	// take no slot.
 	// Application-layer key "image-document.max-concurrent-operations" (Consul KV
 	// carbonio-preview/image-document/max-concurrent-operations / env
 	// APPLICATION_CONFIG_IMAGE_DOCUMENT_MAX_CONCURRENT_OPERATIONS). Defaults to
@@ -140,7 +142,7 @@ const (
 	// vipsConcurrency is the libvips internal-threads setting. It is a plain
 	// internal constant (=1), not an operator knob: no registry key, no env var,
 	// no KV path. libvips concurrency above 1 hurts throughput for the
-	// per-request render pattern (concurrency is bounded at the render semaphore).
+	// per-request render pattern (concurrency is bounded by the render slots).
 	vipsConcurrency = 1
 )
 

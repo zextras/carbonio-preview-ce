@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -143,25 +144,8 @@ func (s *Server) Run() {
 	}
 	defer render.PDFClose()
 
-	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
-
-	// Build the public request handler (semaphore + mux + logging).
-	handler := loggingMiddleware(s.buildMux(sem))
-
 	addr := fmt.Sprintf("%s:%s", s.cfg.ServiceIP, s.cfg.ServicePort)
-	// Single-clock design: the per-request context deadline (set by video
-	// handlers via context.WithTimeout(r.Context(), ServiceTimeoutInSeconds))
-	// is the ONE authoritative operation cap. WriteTimeout is 0 so the server
-	// does not race against that per-request ctx with its own independent
-	// clock. ReadTimeout is kept to bound reading the inbound request headers/
-	// body (a separate, harmless concern that does not overlap with the handler
-	// ctx deadline).
-	srv := &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second,
-		WriteTimeout: 0,
-	}
+	srv := s.httpServer(addr)
 
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, syscall.SIGTERM, syscall.SIGINT)
@@ -195,13 +179,25 @@ func (s *Server) Run() {
 	}
 }
 
-// Handler builds and returns the server's HTTP request handler. It does NOT
-// start a listener or perform render initialisation — that remains Run's
-// responsibility. Callers embedding the preview server (or testing it over
-// httptest.Server) must ensure render is initialised before serving requests.
+func (s *Server) httpServer(addr string) *http.Server {
+	// Only inactivity is capped: bodies by withBodyIdleDeadline, headers and idle keep-alives here (no ReadTimeout).
+	timeout := time.Duration(s.cfg.ServiceTimeoutInSeconds) * time.Second
+	return &http.Server{
+		Addr:              addr,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: timeout,
+		IdleTimeout:       timeout,
+		WriteTimeout:      0,
+	}
+}
+
+// Handler builds and returns the server's HTTP request handler (logging +
+// body inactivity deadline + mux). It does NOT start a listener or perform
+// render initialisation — that remains Run's responsibility. Callers embedding
+// the preview server (or testing it over httptest.Server) must ensure render is
+// initialised before serving requests.
 func (s *Server) Handler() http.Handler {
-	sem := render.BuildSemaphore(s.cfg.RenderConcurrency)
-	return loggingMiddleware(s.buildMux(sem))
+	return loggingMiddleware(withBodyIdleDeadline(s.buildMux(), bodyIdleTimeout(s.cfg)))
 }
 
 // buildMux assembles the public HTTP mux with all route groups.
@@ -212,12 +208,12 @@ func (s *Server) Handler() http.Handler {
 // artefact under docs/, so /openapi.json, /openapi.yaml, /docs and friends 404
 // on every install. See apispec.NewAPI.
 //
-// sem is the shared render semaphore (image/PDF/document), sized by the
-// image-document.max-concurrent-operations key. The dedicated video semaphore is built
+// The render slots are sized from the image-document.max-concurrent-operations
+// key and bound only CPU work. The dedicated video semaphore is built
 // here from cfg.VideoConcurrency (APPLICATION key
 // video.max-concurrent-extractions, default runtime.NumCPU()) so a flood of
 // video jobs can never starve image previews, and vice-versa.
-func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	videoSem := make(chan struct{}, s.cfg.VideoConcurrency)
@@ -230,7 +226,7 @@ func (s *Server) buildMux(sem chan struct{}) *http.ServeMux {
 		Cfg:      s.cfg,
 		Store:    s.store,
 		Cache:    s.cache,
-		Sem:      sem,
+		Limits:   newLimits(s.cfg.RenderConcurrency),
 		VideoSem: videoSem,
 		DBGate:   s.dbGate,
 	})
@@ -267,6 +263,48 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
+var bodyIdleTimeout = func(cfg *config.Config) time.Duration {
+	return time.Duration(cfg.ServiceTimeoutInSeconds) * time.Second
+}
+
+func withBodyIdleDeadline(h http.Handler, idle time.Duration) http.Handler {
+	if idle <= 0 {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(idle))
+			orig := r.Body
+			r.Body = &idleDeadlineBody{ReadCloser: orig, rc: rc, idle: idle}
+			defer func() { r.Body = orig }()
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+type idleDeadlineBody struct {
+	io.ReadCloser
+	rc   *http.ResponseController
+	idle time.Duration
+	err  error
+}
+
+func (b *idleDeadlineBody) Read(p []byte) (int, error) {
+	// After EOF net/http's background read runs with a cleared deadline; re-arming it would cancel the request ctx.
+	if b.err != nil {
+		return b.ReadCloser.Read(p)
+	}
+	_ = b.rc.SetReadDeadline(time.Now().Add(b.idle))
+	n, err := b.ReadCloser.Read(p)
+	b.err = err
+	return n, err
 }
 
 // loggingMiddleware wraps h and emits a slog.Debug record for every request

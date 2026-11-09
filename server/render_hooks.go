@@ -24,12 +24,11 @@ import (
 
 // imageThumbnailFunc is the seam for render.ImageThumbnail.
 var imageThumbnailFunc = func(
-	sem chan struct{},
 	data []byte,
 	width, height int,
 	outputFormat, quality, shape, cropMode string,
 ) ([]byte, error) {
-	return render.ImageThumbnail(sem, data, width, height, outputFormat, quality, shape, cropMode)
+	return render.ImageThumbnail(data, width, height, outputFormat, quality, shape, cropMode)
 }
 
 // videoDetectCodecFromFileFunc is the seam for video.DetectCodecFromFile.
@@ -45,18 +44,18 @@ var videoFirstFrameFromFileFunc = func(ctx context.Context, inputPath string) ([
 }
 
 // pdfSliceFunc is the seam for render.PDFSlice.
-var pdfSliceFunc = func(sem chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error) {
-	return render.PDFSlice(sem, data, firstPage, lastPage)
+var pdfSliceFunc = func(ctx context.Context, data []byte, firstPage, lastPage int) ([]byte, error) {
+	return render.PDFSlice(ctx, data, firstPage, lastPage)
 }
 
 // pdfRasterizeFunc is the seam for render.PDFRasterize.
 var pdfRasterizeFunc = func(
-	sem chan struct{},
+	ctx context.Context,
 	data []byte,
 	page, width, height int,
 	outputFormat, quality, shape string,
 ) ([]byte, error) {
-	return render.PDFRasterize(sem, data, page, width, height, outputFormat, quality, shape)
+	return render.PDFRasterize(ctx, data, page, width, height, outputFormat, quality, shape)
 }
 
 // collaboraConvertFunc is the seam for render.CollaboraConvert.

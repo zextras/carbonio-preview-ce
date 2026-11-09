@@ -7,9 +7,13 @@ package apispec
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 )
+
+// uploadReadTimeout turns off huma's per-operation body deadline; the server bounds uploads by inactivity.
+const uploadReadTimeout time.Duration = -1
 
 // ---------------------------------------------------------------------------
 // Handlers — injected handler functions, one per huma operation
@@ -46,18 +50,15 @@ type Handlers struct {
 }
 
 // Register registers all huma-managed operations onto api using the provided
-// Handlers for the actual request logic. Middleware functions (semaphores) are
-// passed explicitly so this package stays free of runtime concerns.
-func Register(api huma.API, h Handlers, semMW, videoSemMW func(huma.Context, func(huma.Context))) {
-	RegisterImageOps(api, h.GetImagePreview, h.GetImageThumbnail, h.PostImagePreview, h.PostImageThumbnail, semMW)
+// Handlers for the actual request logic.
+func Register(api huma.API, h Handlers) {
+	RegisterImageOps(api, h.GetImagePreview, h.GetImageThumbnail, h.PostImagePreview, h.PostImageThumbnail)
 	RegisterHealthOps(api, h.GetHealthLive, h.GetHealthReady, h.GetHealth)
-	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail, semMW)
-	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail, semMW)
+	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail)
+	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail)
 	RegisterVideoOps(api, h.GetVideoPreview, h.GetVideoThumbnail, h.DeleteVideoPreview, h.CopyVideoPreview)
 	// NOTE: the public POST /preview/video/generate/... endpoint has been removed
-	// (spec Q5). Generation runs only via the internal worker. The videoSemMW arg
-	// is kept in the signature for backward-compatibility with callers; it is unused.
-	_ = videoSemMW
+	// (spec Q5). Generation runs only via the internal worker.
 }
 
 // RegisterStubs registers all operations with no-op stub handlers.
@@ -91,9 +92,7 @@ func RegisterStubs(api huma.API) {
 		DeleteVideoPreview: func(_ context.Context, _ *VideoDeleteInput) (*struct{}, error) { return nil, nil },
 		CopyVideoPreview:   func(_ context.Context, _ *VideoCopyInput) (*VideoCopyOutput, error) { return nil, nil },
 	}
-	// RegisterStubs does not need semaphore middleware — stubs never block.
-	noopMW := func(hctx huma.Context, next func(huma.Context)) { next(hctx) }
-	Register(api, h, noopMW, noopMW)
+	Register(api, h)
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +106,6 @@ func RegisterImageOps(
 	getThumbnail func(context.Context, *ImageGetThumbnailInput) (*BinOut, error),
 	postPreview func(context.Context, *ImagePostPreviewInput) (*BinOut, error),
 	postThumbnail func(context.Context, *ImagePostThumbnailInput) (*BinOut, error),
-	semMW func(huma.Context, func(huma.Context)),
 ) {
 	// GET /preview/image/{id}/{version}/{area}/
 	huma.Register(api, huma.Operation{
@@ -120,7 +118,6 @@ func RegisterImageOps(
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
-		Middlewares: huma.Middlewares{semMW},
 	}, getPreview)
 
 	// GET /preview/image/{id}/{version}/{area}/thumbnail/
@@ -134,7 +131,6 @@ func RegisterImageOps(
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
-		Middlewares: huma.Middlewares{semMW},
 	}, getThumbnail)
 
 	// POST /preview/image/{area}/
@@ -148,7 +144,7 @@ func RegisterImageOps(
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
-		Middlewares: huma.Middlewares{semMW},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postPreview)
 
 	// POST /preview/image/{area}/thumbnail/
@@ -162,7 +158,7 @@ func RegisterImageOps(
 		Responses: map[string]*huma.Response{
 			"200": ImageBinaryResponse,
 		},
-		Middlewares: huma.Middlewares{semMW},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postThumbnail)
 }
 
@@ -219,7 +215,6 @@ func RegisterPDFOps(
 	getThumbnail func(context.Context, *PDFGetThumbnailInput) (*BinOut, error),
 	postPreview func(context.Context, *PDFPostPreviewInput) (*BinOut, error),
 	postThumbnail func(context.Context, *PDFPostThumbnailInput) (*BinOut, error),
-	semMW func(huma.Context, func(huma.Context)),
 ) {
 	// GET /preview/pdf/{id}/{version}/
 	huma.Register(api, huma.Operation{
@@ -230,7 +225,6 @@ func RegisterPDFOps(
 		Tags:        []string{"pdf"},
 		Errors:      []int{400, 404, 422, 502, 503},
 		Responses:   map[string]*huma.Response{"200": PDFBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
 	}, getPreview)
 
 	// GET /preview/pdf/{id}/{version}/{area}/thumbnail/
@@ -242,31 +236,30 @@ func RegisterPDFOps(
 		Tags:        []string{"pdf"},
 		Errors:      []int{400, 404, 422, 502, 503},
 		Responses:   map[string]*huma.Response{"200": ImageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
 	}, getThumbnail)
 
 	// POST /preview/pdf/
 	huma.Register(api, huma.Operation{
-		OperationID: "postPdfPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/pdf/",
-		Summary:     "Post PDF Preview",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 422, 503},
-		Responses:   map[string]*huma.Response{"200": PDFBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
+		OperationID:     "postPdfPreview",
+		Method:          http.MethodPost,
+		Path:            "/preview/pdf/",
+		Summary:         "Post PDF Preview",
+		Tags:            []string{"pdf"},
+		Errors:          []int{400, 422, 503},
+		Responses:       map[string]*huma.Response{"200": PDFBinaryResponse},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postPreview)
 
 	// POST /preview/pdf/{area}/thumbnail/
 	huma.Register(api, huma.Operation{
-		OperationID: "postPdfThumbnail",
-		Method:      http.MethodPost,
-		Path:        "/preview/pdf/{area}/thumbnail/",
-		Summary:     "Post PDF Thumbnail",
-		Tags:        []string{"pdf"},
-		Errors:      []int{400, 422, 503},
-		Responses:   map[string]*huma.Response{"200": ImageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
+		OperationID:     "postPdfThumbnail",
+		Method:          http.MethodPost,
+		Path:            "/preview/pdf/{area}/thumbnail/",
+		Summary:         "Post PDF Thumbnail",
+		Tags:            []string{"pdf"},
+		Errors:          []int{400, 422, 503},
+		Responses:       map[string]*huma.Response{"200": ImageBinaryResponse},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postThumbnail)
 }
 
@@ -281,7 +274,6 @@ func RegisterDocumentOps(
 	getThumbnail func(context.Context, *DocGetThumbnailInput) (*BinOut, error),
 	postPreview func(context.Context, *DocPostPreviewInput) (*BinOut, error),
 	postThumbnail func(context.Context, *DocPostThumbnailInput) (*BinOut, error),
-	semMW func(huma.Context, func(huma.Context)),
 ) {
 	// GET /preview/document/{id}/{version}/
 	huma.Register(api, huma.Operation{
@@ -292,7 +284,6 @@ func RegisterDocumentOps(
 		Tags:        []string{"document"},
 		Errors:      []int{400, 404, 422, 502, 503},
 		Responses:   map[string]*huma.Response{"200": PDFBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
 	}, getPreview)
 
 	// GET /preview/document/{id}/{version}/{area}/thumbnail/
@@ -304,31 +295,30 @@ func RegisterDocumentOps(
 		Tags:        []string{"document"},
 		Errors:      []int{400, 404, 422, 502, 503},
 		Responses:   map[string]*huma.Response{"200": ImageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
 	}, getThumbnail)
 
 	// POST /preview/document/
 	huma.Register(api, huma.Operation{
-		OperationID: "postDocumentPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/document/",
-		Summary:     "Post Document Preview",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": PDFBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
+		OperationID:     "postDocumentPreview",
+		Method:          http.MethodPost,
+		Path:            "/preview/document/",
+		Summary:         "Post Document Preview",
+		Tags:            []string{"document"},
+		Errors:          []int{400, 422, 502, 503},
+		Responses:       map[string]*huma.Response{"200": PDFBinaryResponse},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postPreview)
 
 	// POST /preview/document/{area}/thumbnail/
 	huma.Register(api, huma.Operation{
-		OperationID: "postDocumentThumbnail",
-		Method:      http.MethodPost,
-		Path:        "/preview/document/{area}/thumbnail/",
-		Summary:     "Post Document Thumbnail",
-		Tags:        []string{"document"},
-		Errors:      []int{400, 422, 502, 503},
-		Responses:   map[string]*huma.Response{"200": ImageBinaryResponse},
-		Middlewares: huma.Middlewares{semMW},
+		OperationID:     "postDocumentThumbnail",
+		Method:          http.MethodPost,
+		Path:            "/preview/document/{area}/thumbnail/",
+		Summary:         "Post Document Thumbnail",
+		Tags:            []string{"document"},
+		Errors:          []int{400, 422, 502, 503},
+		Responses:       map[string]*huma.Response{"200": ImageBinaryResponse},
+		BodyReadTimeout: uploadReadTimeout,
 	}, postThumbnail)
 }
 

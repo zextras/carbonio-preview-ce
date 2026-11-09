@@ -262,7 +262,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum render operations (image, PDF, document) processed concurrently; does not apply to video. Default: CPU count.",
+			Description:  "Maximum number of render operations (image, PDF, document and the resize of video previews) running at the same time. Only CPU work counts: storage transfers, uploads and document conversions take no slot. Video frame extraction is bounded separately. Default: CPU count.",
 		},
 		{
 			Key:          "document.subprocess-pool-size",

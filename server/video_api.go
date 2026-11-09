@@ -190,6 +190,7 @@ func fireAsyncAttempt(ctx context.Context, deps Deps, worker *VideoWorker, fileI
 // ---------------------------------------------------------------------------
 
 func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.VideoGetPreviewInput) (*apispec.BinOut, error) {
 		// Top-level short-circuit: with no ready DB we cannot even probe the
 		// codec, so return 424 (Failed Dependency) BEFORE the resolve() state
@@ -229,38 +230,35 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 		pid := res.previewID
 
 		key := cacheKey("vid-preview", pid, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, pid, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
-				slog.Warn("getVideoPreview: blob 404 after resolve, re-enqueueing",
-					"file_id", id, "version", input.Version, "err", rerr)
-				if store := deps.videoStore(); store != nil {
-					_ = store.ReenqueueReady(ctx, id, input.Version)
-				}
-				return nil, huma.NewError(http.StatusAccepted, "generating")
+		return served(lim.serve(ctx, deps.Cache, "getVideoPreview", key, func(step runner) (cache.Entry, error) {
+			data, err := step.videoFrame(deps, id, pid, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
-		}
-
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
-		}
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			slog.Warn("getVideoPreview render", "err", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			out, err := step.image(step.slogRenderErr, data, width, height, outputFormat, quality, "rectangular", cropModeFor(crop))
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: out, ContentType: contentTypeForFormat(outputFormat)}, nil
+		}))
 	}
+}
+
+func (r runner) videoFrame(deps Deps, fileID, previewID string, version int, serviceType, ownerID string) ([]byte, error) {
+	data, err := deps.Store.RetrieveData(r.work, previewID, version, serviceType, ownerID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
+			slog.Warn(r.op+": blob 404 after resolve, re-enqueueing",
+				"file_id", fileID, "version", version, "err", err)
+			if store := deps.videoStore(); store != nil {
+				_ = store.ReenqueueReady(r.work, fileID, version)
+			}
+			return nil, huma.NewError(http.StatusAccepted, "generating")
+		}
+		return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
+	}
+	return data, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +266,7 @@ func buildGetVideoPreview(deps Deps, worker *VideoWorker) func(context.Context, 
 // ---------------------------------------------------------------------------
 
 func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context, *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.VideoGetThumbnailInput) (*apispec.BinOut, error) {
 		// Top-level short-circuit: no ready DB ⇒ 424 (Failed Dependency), BEFORE
 		// resolve(). Distinct from 415 (genuinely-unsupported codec).
@@ -305,33 +304,17 @@ func buildGetVideoThumbnail(deps Deps, worker *VideoWorker) func(context.Context
 		pid := res.previewID
 
 		key := cacheKey("vid-thumb", pid, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, pid, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				// Blob disappeared between resolve and serve — move READY row back to PENDING + 202.
-				slog.Warn("getVideoThumbnail: blob 404 after resolve, re-enqueueing",
-					"file_id", id, "version", input.Version, "err", rerr)
-				if store := deps.videoStore(); store != nil {
-					_ = store.ReenqueueReady(ctx, id, input.Version)
-				}
-				return nil, huma.NewError(http.StatusAccepted, "generating")
+		return served(lim.serve(ctx, deps.Cache, "getVideoThumbnail", key, func(step runner) (cache.Entry, error) {
+			data, err := step.videoFrame(deps, id, pid, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
-		}
-
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			slog.Warn("getVideoThumbnail render", "err", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			out, err := step.image(step.slogRenderErr, data, width, height, outputFormat, quality, shape, "center")
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: out, ContentType: contentTypeForFormat(outputFormat)}, nil
+		}))
 	}
 }
 

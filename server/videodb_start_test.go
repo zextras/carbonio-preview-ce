@@ -118,7 +118,7 @@ func TestStartVideoDBAsync_EmptyDSN_NoWorkerNoGate(t *testing.T) {
 	// buildMux constructs s.worker; StartVideoDBAsync itself must not have
 	// started it (StartOnce is idempotent so re-invoking here would only prove
 	// harmlessness, not absence — check the "started" flag directly instead).
-	_ = s.buildMux(nil)
+	_ = s.buildMux()
 	if s.worker != nil && s.worker.started.Load() {
 		t.Error("worker must not be started when DBDSN is empty")
 	}
@@ -145,7 +145,7 @@ func TestStartVideoDBAsync_ValidDSN_EnablesGateAndWorker(t *testing.T) {
 	s := New(cfg, &mockStore{blob: []byte("src")}, cache.New(0))
 	// buildMux constructs s.worker (gate-aware) exactly like production's
 	// srv.Handler()/Run() does before the DB becomes ready.
-	_ = s.buildMux(nil)
+	_ = s.buildMux()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -231,7 +231,7 @@ func TestStartVideoDBAsync_DBReadyBeforeBuildMux_WorkerStillStarts(t *testing.T)
 
 	// ONLY NOW construct the worker, exactly like Run()/Handler() calling
 	// buildMux after the DB already came up.
-	_ = s.buildMux(nil)
+	_ = s.buildMux()
 
 	if s.worker == nil {
 		t.Fatal("worker must exist (constructed by buildMux)")

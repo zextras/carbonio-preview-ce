@@ -81,7 +81,7 @@ func TestMain(m *testing.M) {
 func TestOutputFormat_CoverCrop_PNGInputJPEGOutput(t *testing.T) {
 	data := makePNG(t, 200, 200, true)
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "jpeg", "medium", "rectangular", "center")
+	out, err := ImageThumbnail(data, 100, 100, "jpeg", "medium", "rectangular", "center")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestOutputFormat_CoverCrop_PNGInputJPEGOutput(t *testing.T) {
 func TestOutputFormat_CoverCrop_RGBAPNGInputJPEGOutput(t *testing.T) {
 	data := makePNG(t, 200, 200, false) // partial alpha
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "jpeg", "medium", "rectangular", "center")
+	out, err := ImageThumbnail(data, 100, 100, "jpeg", "medium", "rectangular", "center")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestOutputFormat_CoverCrop_RGBAPNGInputJPEGOutput(t *testing.T) {
 func TestOutputFormat_CoverCrop_PNGInputPNGOutput(t *testing.T) {
 	data := makePNG(t, 200, 200, true)
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "png", "medium", "rectangular", "center")
+	out, err := ImageThumbnail(data, 100, 100, "png", "medium", "rectangular", "center")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestOutputFormat_CoverCrop_PNGInputPNGOutput(t *testing.T) {
 func TestOutputFormat_ScaleFitPad_PNGInputJPEGOutput(t *testing.T) {
 	data := makePNG(t, 1, 1, false) // 1×1 RGBA, the exact production scenario
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "jpeg", "medium", "rectangular", "none")
+	out, err := ImageThumbnail(data, 100, 100, "jpeg", "medium", "rectangular", "none")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestOutputFormat_ScaleFitPad_PNGInputJPEGOutput(t *testing.T) {
 func TestOutputFormat_ScaleFitPad_RGBAPNGInputJPEGOutput(t *testing.T) {
 	data := makePNG(t, 50, 50, false) // partial alpha
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "jpeg", "medium", "rectangular", "none")
+	out, err := ImageThumbnail(data, 100, 100, "jpeg", "medium", "rectangular", "none")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestOutputFormat_ScaleFitPad_RGBAPNGInputJPEGOutput(t *testing.T) {
 func TestOutputFormat_ScaleFitPad_PNGInputPNGOutput(t *testing.T) {
 	data := makePNG(t, 200, 200, true)
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "png", "medium", "rectangular", "none")
+	out, err := ImageThumbnail(data, 100, 100, "png", "medium", "rectangular", "none")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestOutputFormat_ScaleFitPad_PNGInputPNGOutput(t *testing.T) {
 func TestOutputFormat_ScaleFitPad_PNGInputGIFOutput(t *testing.T) {
 	data := makePNG(t, 200, 200, true)
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "gif", "medium", "rectangular", "none")
+	out, err := ImageThumbnail(data, 100, 100, "gif", "medium", "rectangular", "none")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestOutputFormat_ScaleFitPad_PNGInputGIFOutput(t *testing.T) {
 func TestOutputFormat_Dimensions_1x1To100x100(t *testing.T) {
 	data := makePNG(t, 1, 1, false)
 
-	out, err := ImageThumbnail(nil, data, 100, 100, "png", "medium", "rectangular", "none")
+	out, err := ImageThumbnail(data, 100, 100, "png", "medium", "rectangular", "none")
 	if err != nil {
 		t.Fatalf("ImageThumbnail: %v", err)
 	}

@@ -6,6 +6,7 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -16,8 +17,7 @@ import (
 )
 
 // ErrRenderUnavailable is returned when the PDFium subprocess pool cannot
-// provide a worker — e.g. all workers are busy (pool exhaustion), the startup
-// timeout has elapsed, or a worker failed to start.
+// provide a worker — e.g. a worker failed to start or the pool is closed.
 //
 // NOTE: this is a deliberate divergence from the old Python service, which had
 // no pool-timeout concept. Callers should map this to HTTP 503 (Service
@@ -37,6 +37,26 @@ const pdfRasterDPI = 72
 // globalPdfPool is the PDFium instance pool. Initialised by PDFInit.
 // Must not be used before initialisation.
 var globalPdfPool pdfium.Pool
+
+// pdfInstanceWait bounds one pool borrow attempt; getPdfInstance retries until ctx is done.
+var pdfInstanceWait = 5 * time.Second
+
+func getPdfInstance(ctx context.Context) (pdfium.Pdfium, error) {
+	for {
+		attemptCtx, cancel := context.WithTimeout(ctx, pdfInstanceWait)
+		inst, err := globalPdfPool.GetInstanceWithContext(attemptCtx)
+		timedOut := errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
+		cancel()
+		switch {
+		case err == nil:
+			return inst, nil
+		case ctx.Err() != nil:
+			return nil, fmt.Errorf("pdfium worker wait: %w", ctx.Err())
+		case !timedOut:
+			return nil, fmt.Errorf("%w: %w", ErrRenderUnavailable, err)
+		}
+	}
+}
 
 // PDFInit initialises the multi_threaded PDFium subprocess pool.
 // poolSize controls MinIdle/MaxIdle/MaxTotal (all set to the same value).
@@ -73,39 +93,30 @@ func PDFClose() {
 //     vips_image_new_from_memory — no PNG encode/decode round-trip.
 //  3. libvips applies COVER resize + center-crop and encodes the result.
 //
-// Concurrency model:
-//   - semaphore (N_http / workers) gates handler-level processing; pass nil
-//     to skip gating (not recommended in production).
-//   - The PDFium subprocess pool (N_pdf / document.subprocess-pool-size) is
-//     the second gate: GetInstance blocks until a subprocess worker is free or the timeout
-//     fires. The http gate sits in front so the pool is never flooded.
+// Concurrency model: the caller's render slot (server) gates handler-level
+// processing; the PDFium subprocess pool (N_pdf /
+// document.subprocess-pool-size) is the second gate: the call waits for a free
+// subprocess worker for as long as ctx is not done.
 //
 // outputFormat: "jpeg" or "png".
 // quality: "lowest", "low", "medium", "high", "highest".
 // shape: "rounded" or "rectangular" (rounded forces PNG output).
-// Returns ErrRenderUnavailable when the pool cannot supply a worker (timeout,
-// exhaustion, or worker start failure) — callers should map this to HTTP 503.
+// Returns ErrRenderUnavailable when the pool cannot supply a worker (worker
+// start failure, closed pool) — callers should map this to HTTP 503 — and the
+// (wrapped) ctx error when ctx ends while waiting for a free worker.
 func PDFRasterize(
-	semaphore chan struct{},
+	ctx context.Context,
 	data []byte,
 	page, width, height int,
 	outputFormat, quality, shape string,
 ) ([]byte, error) {
-	// N_http gate: bound handler concurrency before touching the subprocess pool.
-	if semaphore != nil {
-		semaphore <- struct{}{}
-		defer func() { <-semaphore }()
-	}
-
 	if globalPdfPool == nil {
 		return nil, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
 
-	inst, err := globalPdfPool.GetInstance(30 * time.Second)
+	inst, err := getPdfInstance(ctx)
 	if err != nil {
-		// Pool exhaustion / timeout / worker start failure → transient, not a
-		// document error; signal caller to return HTTP 503.
-		return nil, fmt.Errorf("%w: %w", ErrRenderUnavailable, err)
+		return nil, err
 	}
 	defer inst.Close()
 
@@ -168,22 +179,14 @@ func PDFRasterize(
 // sliced PDF bytes. firstPage and lastPage are 1-indexed (matching the Python
 // service spec). lastPage == 0 means "last page of the document".
 //
-// Concurrency model:
-//   - semaphore (N_http / workers) gates handler-level processing; pass nil
-//     to skip gating (not recommended in production).
-//   - The PDFium subprocess pool (N_pdf / document.subprocess-pool-size) is
-//     the second gate. The http gate sits in front so the pool is never flooded.
+// Concurrency model: as PDFRasterize — the caller's render slot first, then a
+// PDFium subprocess worker, waited for as long as ctx is not done.
 //
 // Invalid PDFs: returns (nil, error). Callers should map this to HTTP 400.
 // Pool unavailability: returns (nil, ErrRenderUnavailable). Callers should
-// map this to HTTP 503.
-func PDFSlice(semaphore chan struct{}, data []byte, firstPage, lastPage int) ([]byte, error) {
-	// N_http gate: bound handler concurrency before touching the subprocess pool.
-	if semaphore != nil {
-		semaphore <- struct{}{}
-		defer func() { <-semaphore }()
-	}
-
+// map this to HTTP 503. ctx ending while waiting for a worker: returns the
+// (wrapped) ctx error.
+func PDFSlice(ctx context.Context, data []byte, firstPage, lastPage int) ([]byte, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty PDF data")
 	}
@@ -192,11 +195,9 @@ func PDFSlice(semaphore chan struct{}, data []byte, firstPage, lastPage int) ([]
 		return nil, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
 
-	inst, err := globalPdfPool.GetInstance(30 * time.Second)
+	inst, err := getPdfInstance(ctx)
 	if err != nil {
-		// Pool exhaustion / timeout / worker start failure → transient, not a
-		// document error; signal caller to return HTTP 503.
-		return nil, fmt.Errorf("%w: %w", ErrRenderUnavailable, err)
+		return nil, err
 	}
 	defer inst.Close()
 

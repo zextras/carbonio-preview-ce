@@ -438,12 +438,6 @@ func SetVipsConcurrency(n int) {
 	}
 }
 
-// BuildSemaphore creates an in-flight semaphore channel of size n.
-// Callers acquire a slot with `sem <- struct{}{}` and release with `<-sem`.
-func BuildSemaphore(n int) chan struct{} {
-	return make(chan struct{}, n)
-}
-
 // QualityToInt maps the Python ImageQualityEnum string values to JPEG integer
 // quality levels. Returns 50 (medium) for any unrecognised value.
 func QualityToInt(quality string) int {
@@ -652,8 +646,6 @@ func imageDimsVips(buf []byte) (w, h int, err error) {
 // thumbnail/preview. It implements the full image pipeline described in
 // the Python service spec:
 //
-//   - semaphore: pass a channel built with BuildSemaphore to cap concurrency;
-//     pass nil to run without a semaphore (not recommended in production).
 //   - data: raw file bytes (JPEG, PNG, GIF, WebP, TIFF, SVG — anything
 //     libvips/librsvg can decode).
 //   - width, height: target dimensions; 0 means "use original".
@@ -674,16 +666,10 @@ func imageDimsVips(buf []byte) (w, h int, err error) {
 //
 // NOTE: "rounded" shape forces PNG output regardless of outputFormat.
 func ImageThumbnail(
-	semaphore chan struct{},
 	data []byte,
 	width, height int,
 	outputFormat, quality, shape, cropMode string,
 ) ([]byte, error) {
-	if semaphore != nil {
-		semaphore <- struct{}{}
-		defer func() { <-semaphore }()
-	}
-
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty input data")
 	}

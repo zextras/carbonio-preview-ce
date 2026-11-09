@@ -18,7 +18,7 @@ import (
 func buildHealthMux(cfg *config.Config) *http.ServeMux {
 	mux := http.NewServeMux()
 	api := newHumaAPI(mux)
-	registerHealthOps(api, Deps{Cfg: cfg, Store: nil, Cache: nil, Sem: nil})
+	registerHealthOps(api, Deps{Cfg: cfg, Store: nil, Cache: nil})
 	return mux
 }
 

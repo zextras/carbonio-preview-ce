@@ -16,11 +16,9 @@ import (
 )
 
 func registerImageOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
 	apispec.RegisterImageOps(api,
 		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
-		buildPostImagePreview(deps), buildPostImageThumbnail(deps),
-		semMW)
+		buildPostImagePreview(deps), buildPostImageThumbnail(deps))
 }
 
 func registerHealthOps(api huma.API, deps Deps) {
@@ -29,17 +27,13 @@ func registerHealthOps(api huma.API, deps Deps) {
 }
 
 func registerPDFOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
 	apispec.RegisterPDFOps(api,
 		buildGetPDFPreview(deps), buildGetPDFThumbnail(deps),
-		buildPostPDFPreview(deps), buildPostPDFThumbnail(deps),
-		semMW)
+		buildPostPDFPreview(deps), buildPostPDFThumbnail(deps))
 }
 
 func registerDocumentOps(api huma.API, deps Deps) {
-	semMW := semaphoreMiddleware(api, deps.Sem)
 	apispec.RegisterDocumentOps(api,
 		buildGetDocumentPreview(deps), buildGetDocumentThumbnail(deps),
-		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps),
-		semMW)
+		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps))
 }
