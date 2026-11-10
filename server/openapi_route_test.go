@@ -20,7 +20,7 @@ import (
 // and docs path huma could otherwise serve, and on the /redoc page the
 // hand-rolled server/docs.go used to expose.
 func TestBuildMux_NoDocEndpoints(t *testing.T) {
-	mux := New(testCfg(), &mockStore{}, nil).buildMux(nil)
+	mux := New(testCfg(), &mockStore{}, nil).buildMux()
 
 	for _, path := range []string{
 		"/openapi.json",
@@ -41,7 +41,7 @@ func TestBuildMux_NoDocEndpoints(t *testing.T) {
 // TestBuildMux_OperationsStillRouted verifies the production mux still routes
 // the real operations — the doc endpoints are the only thing that went away.
 func TestBuildMux_OperationsStillRouted(t *testing.T) {
-	mux := New(testCfg(), &mockStore{}, nil).buildMux(nil)
+	mux := New(testCfg(), &mockStore{}, nil).buildMux()
 
 	if rec := doRequest(mux, http.MethodGet, "/health/live/"); rec.Code != http.StatusOK {
 		t.Errorf("GET /health/live/: status = %d, want 200", rec.Code)

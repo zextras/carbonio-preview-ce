@@ -160,6 +160,8 @@ type CollaboraMock struct {
 
 	// PDF is the converted PDF returned on success.
 	PDF []byte
+	// PNG is the converted image returned on POST /png (nil: 404).
+	PNG []byte
 	// Status, when non-zero and not 2xx, is written instead of the PDF (used
 	// to drive the 5xx → 502 error flow).
 	Status int
@@ -173,6 +175,7 @@ func NewCollaboraMock(pdf []byte) *CollaboraMock {
 	m := &CollaboraMock{PDF: pdf, Status: http.StatusOK}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pdf", m.handle)
+	mux.HandleFunc("/png", m.handle)
 	m.Server = httptest.NewServer(mux)
 	return m
 }
@@ -199,6 +202,17 @@ func (m *CollaboraMock) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = f.Close()
+
+	if r.URL.Path == "/png" {
+		if m.PNG == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(m.PNG)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.WriteHeader(http.StatusOK)

@@ -19,9 +19,9 @@ func newCacheTestServer(t *testing.T, store *mockStore, maxBytes int64) *http.Se
 	cfg := testCfg()
 	mux := http.NewServeMux()
 	api := newHumaAPI(mux)
-	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
-	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
-	registerDocumentOps(api, Deps{Cfg: cfg, Store: store, Cache: c, Sem: nil})
+	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: c})
+	registerPDFOps(api, Deps{Cfg: cfg, Store: store, Cache: c})
+	registerDocumentOps(api, Deps{Cfg: cfg, Store: store, Cache: c})
 	return mux
 }
 
@@ -229,7 +229,7 @@ func TestDocThumbnailCacheHit_SkipsSecondFetch(t *testing.T) {
 	store := &mockStore{blob: []byte("doc-src")}
 	restoreC := stubCollaboraConvert([]byte("converted-pdf"), nil)
 	defer restoreC()
-	restoreR := stubPDFRasterize([]byte("thumb-bytes"), nil)
+	restoreR := stubImageThumbnail("", "", "", "", []byte("thumb-bytes"), nil)
 	defer restoreR()
 	mux := newCacheTestServer(t, store, 8<<20)
 

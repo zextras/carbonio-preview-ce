@@ -194,7 +194,7 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 
 	// New server with NO WithDB — DB layer disabled.
 	s := New(testCfg(), store, cache.New(8<<20))
-	ts := httptest.NewServer(loggingMiddleware(s.buildMux(nil)))
+	ts := httptest.NewServer(loggingMiddleware(s.buildMux()))
 	defer ts.Close()
 
 	// Image preview still works.

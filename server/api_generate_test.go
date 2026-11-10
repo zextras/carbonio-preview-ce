@@ -7,17 +7,17 @@ package server
 import (
 	"bytes"
 	"image"
-	"image/png"
+	"image/jpeg"
 	"testing"
 )
 
-// tinyPNG returns a minimal valid PNG so the JPEG re-encode step has real input.
+// tinyJPEG returns a minimal valid JPEG standing in for the extracted frame.
 // Shared by the video worker / api / codec tests.
-func tinyPNG(t *testing.T) []byte {
+func tinyJPEG(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
-		t.Fatalf("png.Encode: %v", err)
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
 	}
 	return buf.Bytes()
 }

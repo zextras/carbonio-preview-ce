@@ -89,6 +89,12 @@ func (f *fakeVideoStore) Delete(_ context.Context, _ string, _ int, _ string, _ 
 
 func startVideoPostgres(t *testing.T) *db.Store {
 	t.Helper()
+	store, _ := startVideoPostgresWithDSN(t)
+	return store
+}
+
+func startVideoPostgresWithDSN(t *testing.T) (*db.Store, string) {
+	t.Helper()
 
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not found in PATH — skipping video DB integration tests")
@@ -152,7 +158,7 @@ func startVideoPostgres(t *testing.T) *db.Store {
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	return store
+	return store, dsn
 }
 
 // videoUID generates a unique file_id for a sub-test.
@@ -464,7 +470,7 @@ func TestAttempt_Success_MarksReady(t *testing.T) {
 	// Stub extract to return a minimal PNG.
 	origExtract := videoFirstFrameFromFileFunc
 	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyPNG(t), nil
+		return tinyJPEG(t), nil
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 

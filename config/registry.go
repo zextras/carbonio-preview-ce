@@ -243,13 +243,13 @@ func registerCEKeys() {
 			Key:         "image-document.fetch-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "30",
-			Description: "Timeout (seconds) for fetching the source blob from carbonio-storages.",
+			Description: "Inactivity window (seconds) for carbonio-storages transfers (fetch, upload, delete): a transfer fails after this many seconds without data. Also the upload-body inactivity window and the HTTP server's header and idle-connection timeout.",
 		},
 		{
 			Key:         "document.conversion-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "15",
-			Description: "Timeout (seconds) for the docs-editor (Collabora) conversion call.",
+			Description: "Maximum silence (seconds) while converting a document with Collabora; upload and download do not count while data flows.",
 		},
 		{
 			Key:         "cache-max-mb",
@@ -262,7 +262,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum render operations (image, PDF, document) processed concurrently; does not apply to video. Default: CPU count.",
+			Description:  "Maximum number of render operations (image, PDF, document and the resize of video previews) running at the same time. Only CPU work counts: storage transfers, uploads and document conversions take no slot. Video frame extraction is bounded separately. Default: CPU count.",
 		},
 		{
 			Key:          "document.subprocess-pool-size",
@@ -276,7 +276,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum video first-frame extraction jobs run concurrently (each spawns an ffmpeg subprocess). Default: CPU count.",
+			Description:  "Maximum number of video first-frame extractions (ffmpeg probe and decode, each an ffmpeg subprocess) running at the same time. Source downloads and frame uploads take no slot. Default: CPU count.",
 		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via

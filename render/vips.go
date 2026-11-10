@@ -438,18 +438,12 @@ func SetVipsConcurrency(n int) {
 	}
 }
 
-// BuildSemaphore creates an in-flight semaphore channel of size n.
-// Callers acquire a slot with `sem <- struct{}{}` and release with `<-sem`.
-func BuildSemaphore(n int) chan struct{} {
-	return make(chan struct{}, n)
-}
-
 // QualityToInt maps the Python ImageQualityEnum string values to JPEG integer
 // quality levels. Returns 50 (medium) for any unrecognised value.
 func QualityToInt(quality string) int {
 	switch quality {
 	case "lowest":
-		return 0
+		return 5
 	case "low":
 		return 15
 	case "medium":
@@ -608,6 +602,8 @@ func scaleFitPadVips(buf []byte, w, h int, fmtStr string, jpegQuality int) ([]by
 // SSIM difference is typically < 0.002 on natural images — within the
 // API-identity gate tolerance. Full byte-identity is not achievable due to
 // different rasterisers.
+var roundedMaskFunc = applyRoundedMaskVips
+
 func applyRoundedMaskVips(pngData []byte, width, height int) ([]byte, error) {
 	if len(pngData) == 0 {
 		return nil, fmt.Errorf("empty input buffer")
@@ -652,8 +648,6 @@ func imageDimsVips(buf []byte) (w, h int, err error) {
 // thumbnail/preview. It implements the full image pipeline described in
 // the Python service spec:
 //
-//   - semaphore: pass a channel built with BuildSemaphore to cap concurrency;
-//     pass nil to run without a semaphore (not recommended in production).
 //   - data: raw file bytes (JPEG, PNG, GIF, WebP, TIFF, SVG — anything
 //     libvips/librsvg can decode).
 //   - width, height: target dimensions; 0 means "use original".
@@ -674,16 +668,10 @@ func imageDimsVips(buf []byte) (w, h int, err error) {
 //
 // NOTE: "rounded" shape forces PNG output regardless of outputFormat.
 func ImageThumbnail(
-	semaphore chan struct{},
 	data []byte,
 	width, height int,
 	outputFormat, quality, shape, cropMode string,
 ) ([]byte, error) {
-	if semaphore != nil {
-		semaphore <- struct{}{}
-		defer func() { <-semaphore }()
-	}
-
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty input data")
 	}

@@ -14,15 +14,10 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"image/jpeg"
-	"image/png"
 	"io"
-	"log"
 	"net/http"
-	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -44,12 +39,11 @@ type Deps struct {
 	Cfg   *config.Config
 	Store storage.Client
 	Cache *cache.Cache
-	// Sem is the shared render semaphore (image/PDF/document ops), sized by the
-	// image-document.max-concurrent-operations key.
-	Sem chan struct{}
+	// Limits bounds render (CPU) work and coalesces identical GETs; nil = unlimited (tests).
+	Limits *limits
 	// VideoSem is the DEDICATED video semaphore (capacity =
-	// video.max-concurrent-extractions, default NumCPU). Separate from Sem so a
-	// flood of video jobs cannot starve image previews. nil = unlimited (tests).
+	// video.max-concurrent-extractions, default NumCPU) bounding ffmpeg work
+	// (codec probe and first-frame extraction) only. nil = unlimited (tests).
 	VideoSem chan struct{}
 	// DB is the video_preview database store.  nil means the video DB layer is
 	// disabled (spec-only gendocs mode or unit tests that do not exercise video
@@ -80,22 +74,17 @@ type Deps struct {
 // Server.EnableVideoDB / StartVideoWorker so a transient DB outage at boot never
 // blocks registration. Returns nil only in pure spec-only gendocs mode (no cfg).
 func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
-	semMW := semaphoreMiddleware(api, deps.Sem)
-
 	apispec.RegisterImageOps(api,
 		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
-		buildPostImagePreview(deps), buildPostImageThumbnail(deps),
-		semMW)
+		buildPostImagePreview(deps), buildPostImageThumbnail(deps))
 	apispec.RegisterHealthOps(api,
 		buildGetHealthLive(), buildGetHealthReady(deps), buildGetHealth(deps))
 	apispec.RegisterPDFOps(api,
 		buildGetPDFPreview(deps), buildGetPDFThumbnail(deps),
-		buildPostPDFPreview(deps), buildPostPDFThumbnail(deps),
-		semMW)
+		buildPostPDFPreview(deps), buildPostPDFThumbnail(deps))
 	apispec.RegisterDocumentOps(api,
 		buildGetDocumentPreview(deps), buildGetDocumentThumbnail(deps),
-		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps),
-		semMW)
+		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps))
 
 	// Video GET / DELETE / copy endpoints (Q5: generate endpoint removed).
 	// Build the worker whenever a config is present (spec-only gendocs has none).
@@ -121,70 +110,6 @@ func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 // huma.Config the server runs on. It registers no spec or docs routes.
 func newHumaAPI(mux *http.ServeMux) huma.API {
 	return apispec.NewAPI(mux)
-}
-
-// ---------------------------------------------------------------------------
-// Semaphore middleware (image render ops only)
-// ---------------------------------------------------------------------------
-
-// semBusyWait is the maximum time a request will wait to acquire a render slot
-// before failing fast with 503. It is intentionally short: a request that
-// cannot get a slot quickly is better off being told to retry than blocking
-// until the client's read-timeout (the WSC client abandons at ~15s). The
-// request context deadline still bounds the wait if it is shorter than this.
-const semBusyWait = 2 * time.Second
-
-// semaphoreMiddleware returns a huma middleware that acquires the render
-// semaphore before the handler and releases it AFTER, on every exit path.
-// Pass sem=nil for unlimited concurrency (tests / gendocs).
-//
-// This is the SINGLE acquisition point for the shared render concurrency
-// limiter. The underlying render functions (render.ImageThumbnail,
-// render.PDFSlice, render.PDFRasterize) must be called with a nil semaphore so
-// they do NOT re-acquire — acquiring the same slot twice per request (here AND
-// inside the render call) deadlocks the limiter under burst load and wedges the
-// service until restart.
-//
-// Acquisition is context-aware and bounded:
-//   - If the request context is already cancelled, we do NOT acquire and return
-//     503 immediately (an abandoned request must not take a slot it cannot use).
-//   - If no slot is free within semBusyWait (or the ctx is cancelled first), we
-//     fail fast with 503 "server busy" WITHOUT acquiring, instead of blocking
-//     until the client's read-timeout.
-//   - On success the slot is released via defer, so it is returned on every
-//     normal return, error return, ctx-cancel, and panic.
-func semaphoreMiddleware(api huma.API, sem chan struct{}) func(huma.Context, func(huma.Context)) {
-	return func(hctx huma.Context, next func(huma.Context)) {
-		if sem == nil {
-			next(hctx)
-			return
-		}
-
-		ctx := hctx.Context()
-		// Reject a request whose context is already cancelled before competing
-		// for a slot.
-		if err := ctx.Err(); err != nil {
-			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
-			return
-		}
-
-		timer := time.NewTimer(semBusyWait)
-		defer timer.Stop()
-
-		select {
-		case sem <- struct{}{}:
-			// Acquired: release unconditionally on every exit path.
-			defer func() { <-sem }()
-			next(hctx)
-		case <-ctx.Done():
-			// Client disconnected / deadline exceeded while waiting — never
-			// acquired, so nothing to release.
-			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
-		case <-timer.C:
-			// All slots busy and none freed in time — fail fast, never acquired.
-			_ = huma.WriteErr(api, hctx, http.StatusServiceUnavailable, "server busy, retry")
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +195,7 @@ func validatePages(firstPage, lastPage int) error {
 // ---------------------------------------------------------------------------
 
 func buildGetImagePreview(deps Deps) func(context.Context, *apispec.ImageGetPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.ImageGetPreviewInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -288,35 +214,22 @@ func buildGetImagePreview(deps Deps) func(context.Context, *apispec.ImageGetPrev
 
 		ownerHeader := input.FileOwnerID
 		key := cacheKey("img-preview", id, input.Version, serviceType, width, height, quality, outputFormat, crop, "rectangular", 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getImagePreview", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
-		}
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			log.Printf("getImagePreview render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			out, err := step.image(step.printfRenderErr, data, width, height, outputFormat, quality, "rectangular", cropModeFor(crop))
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: out, ContentType: contentTypeForFormat(outputFormat)}, nil
+		}))
 	}
 }
 
 func buildGetImageThumbnail(deps Deps) func(context.Context, *apispec.ImageGetThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.ImageGetThumbnailInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -335,31 +248,22 @@ func buildGetImageThumbnail(deps Deps) func(context.Context, *apispec.ImageGetTh
 
 		ownerHeader := input.FileOwnerID
 		key := cacheKey("img-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, true, shape, 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getImageThumbnail", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		out, rerr := imageThumbnailFunc(nil, data, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			log.Printf("getImageThumbnail render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
-		ct := contentTypeForFormat(outputFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			out, err := step.image(step.printfRenderErr, data, width, height, outputFormat, quality, shape, "center")
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: out, ContentType: contentTypeForFormat(outputFormat)}, nil
+		}))
 	}
 }
 
 func buildPostImagePreview(deps Deps) func(context.Context, *apispec.ImagePostPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.ImagePostPreviewInput) (*apispec.BinOut, error) {
 		width, height, err := parseArea(input.Area)
 		if err != nil {
@@ -368,7 +272,6 @@ func buildPostImagePreview(deps Deps) func(context.Context, *apispec.ImagePostPr
 		}
 		quality := string(input.Quality)
 		outputFormat := string(input.OutputFormat)
-		crop := input.Crop
 
 		fileData, ferr := readHumaFile(input.RawBody.Data())
 		if ferr != nil {
@@ -376,21 +279,17 @@ func buildPostImagePreview(deps Deps) func(context.Context, *apispec.ImagePostPr
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		cropMode := "none"
-		if crop {
-			cropMode = "center"
+		step := lim.forCaller(ctx, "postImagePreview")
+		out, err := step.image(step.printfRenderErr, fileData, width, height, outputFormat, quality, "rectangular", cropModeFor(input.Crop))
+		if err != nil {
+			return nil, err
 		}
-		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, "rectangular", cropMode)
-		if rerr != nil {
-			log.Printf("postImagePreview render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
-		}
-
 		return &apispec.BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
 	}
 }
 
 func buildPostImageThumbnail(deps Deps) func(context.Context, *apispec.ImagePostThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.ImagePostThumbnailInput) (*apispec.BinOut, error) {
 		width, height, err := parseArea(input.Area)
 		if err != nil {
@@ -407,14 +306,20 @@ func buildPostImageThumbnail(deps Deps) func(context.Context, *apispec.ImagePost
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		out, rerr := imageThumbnailFunc(nil, fileData, width, height, outputFormat, quality, shape, "center")
-		if rerr != nil {
-			log.Printf("postImageThumbnail render: %v", rerr)
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+		step := lim.forCaller(ctx, "postImageThumbnail")
+		out, err := step.image(step.printfRenderErr, fileData, width, height, outputFormat, quality, shape, "center")
+		if err != nil {
+			return nil, err
 		}
-
 		return &apispec.BinOut{ContentType: contentTypeForFormat(outputFormat), Body: out}, nil
 	}
+}
+
+func cropModeFor(crop bool) string {
+	if crop {
+		return "center"
+	}
+	return "none"
 }
 
 // ---------------------------------------------------------------------------
@@ -445,17 +350,15 @@ func buildGetHealth(deps Deps) func(context.Context, *struct{}) (*apispec.Health
 			// gendocs mode — return empty response
 			return &apispec.HealthFullOutput{Body: &apispec.HealthResponse{Ready: true}}, nil
 		}
-		storageHealthURL := cfg.StorageFullAddress + "/" + cfg.StorageHealthCheck
-		docsHealthURL := cfg.DocumentConversionFullServiceAddress
-		storageUp := isDependencyUp(storageHealthURL)
-		docsUp := isDependencyUp(docsHealthURL)
-		resp := &apispec.HealthResponse{
-			Ready: true,
-			Dependencies: []apispec.HealthDependency{
-				{Name: "carbonio-storages", Ready: storageUp, Live: storageUp, Type: "OPTIONAL"},
-				{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"},
-			},
+		docsUp := isDependencyUp(cfg.DocumentConversionFullServiceAddress)
+		var dependencies []apispec.HealthDependency
+		if hc, ok := deps.Store.(storage.HealthChecker); ok {
+			name, url := hc.HealthTarget()
+			up := isDependencyUp(url)
+			dependencies = append(dependencies, apispec.HealthDependency{Name: name, Ready: up, Live: up, Type: "OPTIONAL"})
 		}
+		dependencies = append(dependencies, apispec.HealthDependency{Name: "carbonio-docs-editor", Ready: docsUp, Live: docsUp, Type: "OPTIONAL"})
+		resp := &apispec.HealthResponse{Ready: true, Dependencies: dependencies}
 		return &apispec.HealthFullOutput{Body: resp}, nil
 	}
 }
@@ -465,6 +368,7 @@ func buildGetHealth(deps Deps) func(context.Context, *struct{}) (*apispec.Health
 // ---------------------------------------------------------------------------
 
 func buildGetPDFPreview(deps Deps) func(context.Context, *apispec.PDFGetPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.PDFGetPreviewInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -478,33 +382,22 @@ func buildGetPDFPreview(deps Deps) func(context.Context, *apispec.PDFGetPreviewI
 		serviceType := string(input.ServiceType)
 		ownerHeader := input.FileOwnerID
 		key := cacheKey("pdf-preview", id, input.Version, serviceType, 0, 0, "medium", "jpeg", false, "rectangular", input.FirstPage, input.LastPage, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getPdfPreview", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		sliced, rerr := pdfSliceFunc(nil, data, input.FirstPage, input.LastPage)
-		if rerr != nil {
-			log.Printf("getPdfPreview: PDFSlice: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			sliced, err := step.pdfSlice(data, input.FirstPage, input.LastPage)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
-		}
-
-		deps.Cache.Put(key, cache.Entry{Body: sliced, ContentType: "application/pdf"})
-		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+			return cache.Entry{Body: sliced, ContentType: "application/pdf"}, nil
+		}))
 	}
 }
 
 func buildGetPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFGetThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.PDFGetThumbnailInput) (*apispec.BinOut, error) {
 		id, err := validateUUID(input.ID)
 		if err != nil {
@@ -523,39 +416,22 @@ func buildGetPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFGetThumbn
 		ownerHeader := input.FileOwnerID
 
 		key := cacheKey("pdf-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, false, shape, 1, 0, "en-US", ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getPdfThumbnail", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		out, rerr := pdfRasterizeFunc(nil, data, 0, width, height, outputFormat, quality, shape)
-		if rerr != nil {
-			log.Printf("getPdfThumbnail: PDFRasterize: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			out, err := step.pdfRasterize(data, width, height, outputFormat, quality, shape)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
-		}
-
-		// rounded shape forces PNG
-		actualFormat := outputFormat
-		if shape == "rounded" {
-			actualFormat = "png"
-		}
-		ct := contentTypeForFormat(actualFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			return cache.Entry{Body: out, ContentType: thumbnailContentType(outputFormat, shape)}, nil
+		}))
 	}
 }
 
 func buildPostPDFPreview(deps Deps) func(context.Context, *apispec.PDFPostPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.PDFPostPreviewInput) (*apispec.BinOut, error) {
 		if err := validatePages(input.FirstPage, input.LastPage); err != nil {
 			return nil, err
@@ -567,20 +443,17 @@ func buildPostPDFPreview(deps Deps) func(context.Context, *apispec.PDFPostPrevie
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		sliced, rerr := pdfSliceFunc(nil, fileData, input.FirstPage, input.LastPage)
-		if rerr != nil {
-			log.Printf("postPdfPreview: PDFSlice: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
+		step := lim.forCaller(ctx, "postPdfPreview")
+		sliced, err := step.pdfSlice(fileData, input.FirstPage, input.LastPage)
+		if err != nil {
+			return nil, err
 		}
-
 		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
 	}
 }
 
 func buildPostPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFPostThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.PDFPostThumbnailInput) (*apispec.BinOut, error) {
 		width, height, err := parseArea(input.Area)
 		if err != nil {
@@ -597,21 +470,20 @@ func buildPostPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFPostThum
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		out, rerr := pdfRasterizeFunc(nil, fileData, 0, width, height, outputFormat, quality, shape)
-		if rerr != nil {
-			log.Printf("postPdfThumbnail: PDFRasterize: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
+		step := lim.forCaller(ctx, "postPdfThumbnail")
+		out, err := step.pdfRasterize(fileData, width, height, outputFormat, quality, shape)
+		if err != nil {
+			return nil, err
 		}
-
-		actualFormat := outputFormat
-		if shape == "rounded" {
-			actualFormat = "png"
-		}
-		return &apispec.BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
+		return &apispec.BinOut{ContentType: thumbnailContentType(outputFormat, shape), Body: out}, nil
 	}
+}
+
+func thumbnailContentType(outputFormat, shape string) string {
+	if shape == "rounded" {
+		return contentTypeForFormat("png")
+	}
+	return contentTypeForFormat(outputFormat)
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +491,7 @@ func buildPostPDFThumbnail(deps Deps) func(context.Context, *apispec.PDFPostThum
 // ---------------------------------------------------------------------------
 
 func buildGetDocumentPreview(deps Deps) func(context.Context, *apispec.DocGetPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.DocGetPreviewInput) (*apispec.BinOut, error) {
 		// Document-enable gate (#17)
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentPreview {
@@ -640,41 +513,26 @@ func buildGetDocumentPreview(deps Deps) func(context.Context, *apispec.DocGetPre
 		ownerHeader := input.FileOwnerID
 
 		key := cacheKey("doc-preview", id, input.Version, serviceType, 0, 0, "medium", "jpeg", false, "rectangular", input.FirstPage, input.LastPage, langTag, ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getDocumentPreview", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		docsTimeout := time.Duration(deps.Cfg.ServiceDocsTimeout) * time.Second
-		docsURL := deps.Cfg.DocumentConversionFullConvertAddress + "/pdf"
-		pdfBytes, rerr := collaboraConvertFunc(ctx, data, langTag, docsURL, docsTimeout)
-		if rerr != nil {
-			log.Printf("getDocumentPreview: convert: %v", rerr)
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
-		}
-
-		sliced, rerr := pdfSliceFunc(nil, pdfBytes, input.FirstPage, input.LastPage)
-		if rerr != nil {
-			log.Printf("getDocumentPreview: PDFSlice: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			pdfBytes, err := step.convert(deps.Cfg, data, langTag, "pdf")
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
-		}
-
-		deps.Cache.Put(key, cache.Entry{Body: sliced, ContentType: "application/pdf"})
-		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
+			sliced, err := step.pdfSlice(pdfBytes, input.FirstPage, input.LastPage)
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: sliced, ContentType: "application/pdf"}, nil
+		}))
 	}
 }
 
 func buildGetDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocGetThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.DocGetThumbnailInput) (*apispec.BinOut, error) {
 		// Document-enable gate (#17)
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentThumbnail {
@@ -701,46 +559,26 @@ func buildGetDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocGetT
 		ownerHeader := input.FileOwnerID
 
 		key := cacheKey("doc-thumb", id, input.Version, serviceType, width, height, quality, outputFormat, false, shape, 1, 0, langTag, ownerHeader)
-		if e, ok := deps.Cache.Get(key); ok {
-			return &apispec.BinOut{ContentType: e.ContentType, Body: e.Body}, nil
-		}
-
-		data, rerr := deps.Store.RetrieveData(ctx, id, input.Version, serviceType, ownerHeader)
-		if rerr != nil {
-			if errors.Is(rerr, storage.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		return served(lim.serve(ctx, deps.Cache, "getDocumentThumbnail", key, func(step runner) (cache.Entry, error) {
+			data, err := step.fetch(deps.Store, id, input.Version, serviceType, ownerHeader)
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-		}
-
-		docsTimeout := time.Duration(deps.Cfg.ServiceDocsTimeout) * time.Second
-		docsURL := deps.Cfg.DocumentConversionFullConvertAddress + "/pdf"
-		pdfBytes, rerr := collaboraConvertFunc(ctx, data, langTag, docsURL, docsTimeout)
-		if rerr != nil {
-			log.Printf("getDocumentThumbnail: convert: %v", rerr)
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
-		}
-
-		out, rerr := pdfRasterizeFunc(nil, pdfBytes, 0, width, height, outputFormat, quality, shape)
-		if rerr != nil {
-			log.Printf("getDocumentThumbnail: PDFRasterize: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
+			pageImage, err := step.convert(deps.Cfg, data, langTag, render.SanitizeOutputExtension(outputFormat))
+			if err != nil {
+				return cache.Entry{}, err
 			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
-		}
-
-		actualFormat := outputFormat
-		if shape == "rounded" {
-			actualFormat = "png"
-		}
-		ct := contentTypeForFormat(actualFormat)
-		deps.Cache.Put(key, cache.Entry{Body: out, ContentType: ct})
-		return &apispec.BinOut{ContentType: ct, Body: out}, nil
+			out, err := step.image(step.printfRenderErr, pageImage, width, height, outputFormat, quality, shape, "center")
+			if err != nil {
+				return cache.Entry{}, err
+			}
+			return cache.Entry{Body: out, ContentType: thumbnailContentType(outputFormat, shape)}, nil
+		}))
 	}
 }
 
 func buildPostDocumentPreview(deps Deps) func(context.Context, *apispec.DocPostPreviewInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.DocPostPreviewInput) (*apispec.BinOut, error) {
 		// Document-enable gate: POST preview uses ServiceEnableDocumentPreview
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentPreview {
@@ -760,28 +598,21 @@ func buildPostDocumentPreview(deps Deps) func(context.Context, *apispec.DocPostP
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		docsTimeout := time.Duration(deps.Cfg.ServiceDocsTimeout) * time.Second
-		docsURL := deps.Cfg.DocumentConversionFullConvertAddress + "/pdf"
-		pdfBytes, rerr := collaboraConvertFunc(ctx, fileData, langTag, docsURL, docsTimeout)
-		if rerr != nil {
-			log.Printf("postDocumentPreview: convert: %v", rerr)
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
+		step := lim.forCaller(ctx, "postDocumentPreview")
+		pdfBytes, err := step.convert(deps.Cfg, fileData, langTag, "pdf")
+		if err != nil {
+			return nil, err
 		}
-
-		sliced, rerr := pdfSliceFunc(nil, pdfBytes, input.FirstPage, input.LastPage)
-		if rerr != nil {
-			log.Printf("postDocumentPreview: PDFSlice: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
+		sliced, err := step.pdfSlice(pdfBytes, input.FirstPage, input.LastPage)
+		if err != nil {
+			return nil, err
 		}
-
 		return &apispec.BinOut{ContentType: "application/pdf", Body: sliced}, nil
 	}
 }
 
 func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPostThumbnailInput) (*apispec.BinOut, error) {
+	lim := deps.slotLimits()
 	return func(ctx context.Context, input *apispec.DocPostThumbnailInput) (*apispec.BinOut, error) {
 		// Document-enable gate: POST thumbnail uses ServiceEnableDocumentThumbnail
 		if deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentThumbnail {
@@ -806,28 +637,16 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
-		docsTimeout := time.Duration(deps.Cfg.ServiceDocsTimeout) * time.Second
-		docsURL := deps.Cfg.DocumentConversionFullConvertAddress + "/pdf"
-		pdfBytes, rerr := collaboraConvertFunc(ctx, fileData, langTag, docsURL, docsTimeout)
-		if rerr != nil {
-			log.Printf("postDocumentThumbnail: convert: %v", rerr)
-			return nil, huma.NewError(http.StatusBadGateway, config.Msg.StorageUnavailable)
+		step := lim.forCaller(ctx, "postDocumentThumbnail")
+		pageImage, err := step.convert(deps.Cfg, fileData, langTag, render.SanitizeOutputExtension(outputFormat))
+		if err != nil {
+			return nil, err
 		}
-
-		out, rerr := pdfRasterizeFunc(nil, pdfBytes, 0, width, height, outputFormat, quality, shape)
-		if rerr != nil {
-			log.Printf("postDocumentThumbnail: PDFRasterize: %v", rerr)
-			if errors.Is(rerr, render.ErrRenderUnavailable) {
-				return nil, huma.NewError(http.StatusServiceUnavailable, "PDF rendering temporarily unavailable")
-			}
-			return nil, huma.NewError(http.StatusBadRequest, config.Msg.InputError)
+		out, err := step.image(step.printfRenderErr, pageImage, width, height, outputFormat, quality, shape, "center")
+		if err != nil {
+			return nil, err
 		}
-
-		actualFormat := outputFormat
-		if shape == "rounded" {
-			actualFormat = "png"
-		}
-		return &apispec.BinOut{ContentType: contentTypeForFormat(actualFormat), Body: out}, nil
+		return &apispec.BinOut{ContentType: thumbnailContentType(outputFormat, shape), Body: out}, nil
 	}
 }
 
@@ -835,41 +654,29 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 // Video operations — generate (extract first frame → JPEG → store)
 // ---------------------------------------------------------------------------
 
-// JPEGQuality is the JPEG encoding quality used when re-encoding the extracted
-// first frame. Internal constant — not a config layer, not env-overridable.
-const JPEGQuality = 90
-
-// encodePNGToJPEGAndStore re-encodes pngBytes to JPEG and stores them.
-// Extracted so that attempt() can reuse it after a probe-first download.
-func encodePNGToJPEGAndStore(
+// storeFrame stores the JPEG frame produced by ffmpeg. On failure it fires a
+// best-effort cleanup Delete of the partially-written node; the storage client's
+// inactivity bound is the only time limit. When ctx ended (shutdown) the Delete
+// runs before returning, bounded by releaseTimeout, so it is not lost.
+func storeFrame(
 	ctx context.Context,
 	store storage.Client,
-	pngBytes []byte,
+	jpg []byte,
 	version int,
 	serviceType string,
 	ownerID string,
 	targetNodeID string,
 ) (string, error) {
-	img, err := png.Decode(bytes.NewReader(pngBytes))
+	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg)
 	if err != nil {
-		return "", err
-	}
-	var jpg bytes.Buffer
-	if err := jpeg.Encode(&jpg, img, &jpeg.Options{Quality: JPEGQuality}); err != nil {
-		return "", err
-	}
-
-	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg.Bytes())
-	if err != nil {
-		// Best-effort cleanup: fire a DELETE for the partially-written node so it
-		// does not linger as an orphan in storage. Use a detached context with a
-		// short timeout — the request ctx is about to be cancelled when the handler
-		// returns and must NOT be used here (it would kill the delete immediately).
-		// Swallow any delete error; this is defence-in-depth only.
-		go func() {
-			dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if ctx.Err() != nil {
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 			defer cancel()
 			_ = store.Delete(dctx, targetNodeID, version, serviceType, ownerID)
+			return "", err
+		}
+		go func() {
+			_ = store.Delete(context.Background(), targetNodeID, version, serviceType, ownerID)
 		}()
 		return "", err
 	}

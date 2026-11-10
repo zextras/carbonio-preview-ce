@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // This file covers ONLY the non-pdfium branches of render/pdf.go — the guards
-// that run before any PDFium call (semaphore gate, empty-data guard, pool-nil
-// guard) — plus the pure-Go helpers QualityToInt, SetImageMinRes,
-// SetVipsConcurrency and BuildSemaphore.
+// that run before any PDFium call (empty-data guard, pool-nil guard), the
+// worker borrow loop (getPdfInstance, against a fake pool) — plus the pure-Go
+// helpers QualityToInt, SetImageMinRes and SetVipsConcurrency.
 //
 // The genuinely cgo-pipeline paths are NOT exercised here and stay covered by
 // pdf_e2e_test.go (//go:build cgo, which boots a real single/multi-threaded
@@ -15,14 +15,21 @@
 //     FPDF_CreateNewDocument / FPDF_ImportPagesByIndex / FPDF_SaveAsCopy.
 //   - PDFRasterize: GetInstance success, OpenDocument, RenderPageInDPI, the
 //     libvips RGBA render pipeline and rounded-mask application (pdf.go:120-172).
-// We deliberately do NOT fake pdfium.Pool: the interface is large and a fake
-// would re-implement PDFium. This is the deliberate cgo-only boundary.
+// We deliberately do NOT fake a pdfium.Pdfium instance: the interface is large
+// and a fake would re-implement PDFium. This is the deliberate cgo-only
+// boundary; the small pdfium.Pool interface is faked only to drive the borrow loop.
 
 package render
 
 import (
+	"context"
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	pdfium "github.com/klippa-app/go-pdfium"
 )
 
 // withNilPool sets globalPdfPool to nil for the duration of a test and restores
@@ -39,7 +46,7 @@ func withNilPool(t *testing.T) {
 // pool-nil guard (so it fires even with a nil pool and no worker).
 func TestPDFSlice_EmptyData(t *testing.T) {
 	withNilPool(t)
-	_, err := PDFSlice(nil, nil, 1, 0)
+	_, err := PDFSlice(context.Background(), nil, 1, 0)
 	if err == nil || !strings.Contains(err.Error(), "empty PDF data") {
 		t.Fatalf("want empty-data error, got %v", err)
 	}
@@ -49,29 +56,9 @@ func TestPDFSlice_EmptyData(t *testing.T) {
 // guard) and a nil pool, so it hits the pool-nil guard.
 func TestPDFSlice_PoolNotInitialised(t *testing.T) {
 	withNilPool(t)
-	_, err := PDFSlice(nil, []byte("%PDF-1.4 not really"), 1, 0)
+	_, err := PDFSlice(context.Background(), []byte("%PDF-1.4 not really"), 1, 0)
 	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
 		t.Fatalf("want pool-nil error, got %v", err)
-	}
-}
-
-// TestPDFSlice_SemaphoreGate exercises the semaphore acquire/release path
-// (pdf.go:190-193) with a buffered semaphore that returns a slot immediately;
-// it still hits the empty-data guard so no worker is needed.
-func TestPDFSlice_SemaphoreGate(t *testing.T) {
-	withNilPool(t)
-	sem := BuildSemaphore(1)
-	_, err := PDFSlice(sem, nil, 1, 0)
-	if err == nil || !strings.Contains(err.Error(), "empty PDF data") {
-		t.Fatalf("want empty-data error, got %v", err)
-	}
-	// The slot must have been released (deferred <-sem), so the channel is empty
-	// again and a fresh acquire would not block.
-	select {
-	case sem <- struct{}{}:
-		<-sem
-	default:
-		t.Error("semaphore slot was not released by PDFSlice")
 	}
 }
 
@@ -79,50 +66,147 @@ func TestPDFSlice_SemaphoreGate(t *testing.T) {
 // the first guard reached with a nil pool is the pool-nil guard.
 func TestPDFRasterize_PoolNotInitialised(t *testing.T) {
 	withNilPool(t)
-	_, err := PDFRasterize(nil, []byte("data"), 0, 100, 100, "jpeg", "medium", "rectangular")
+	_, err := PDFRasterize(context.Background(), []byte("data"), 0, 100, 100, "jpeg", "medium", "rectangular")
 	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
 		t.Fatalf("want pool-nil error, got %v", err)
 	}
 }
 
-// TestPDFRasterize_SemaphoreGate exercises the semaphore acquire/release path
-// (pdf.go:103-106); it still hits the pool-nil guard so no worker is needed.
-func TestPDFRasterize_SemaphoreGate(t *testing.T) {
-	withNilPool(t)
-	sem := BuildSemaphore(1)
-	_, err := PDFRasterize(sem, []byte("data"), 0, 100, 100, "jpeg", "medium", "rectangular")
-	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
-		t.Fatalf("want pool-nil error, got %v", err)
+type fakePool struct {
+	calls  atomic.Int32
+	borrow func(ctx context.Context, call int32) (pdfium.Pdfium, error)
+}
+
+func (p *fakePool) GetInstance(time.Duration) (pdfium.Pdfium, error) {
+	panic("not used: getPdfInstance borrows with a context")
+}
+
+func (p *fakePool) GetInstanceWithContext(ctx context.Context) (pdfium.Pdfium, error) {
+	return p.borrow(ctx, p.calls.Add(1))
+}
+
+func (p *fakePool) Close() error { return nil }
+
+type fakeInstance struct{ pdfium.Pdfium }
+
+func withFakePool(t *testing.T, p *fakePool) {
+	t.Helper()
+	prev := globalPdfPool
+	globalPdfPool = p
+	t.Cleanup(func() { globalPdfPool = prev })
+}
+
+func withPdfInstanceWait(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := pdfInstanceWait
+	pdfInstanceWait = d
+	t.Cleanup(func() { pdfInstanceWait = prev })
+}
+
+func TestGetPdfInstance_RetriesAfterBorrowTimeout(t *testing.T) {
+	withPdfInstanceWait(t, time.Millisecond)
+	want := &fakeInstance{}
+	p := &fakePool{borrow: func(ctx context.Context, call int32) (pdfium.Pdfium, error) {
+		if call < 3 {
+			<-ctx.Done()
+			return nil, errors.New("Timeout waiting for idle object")
+		}
+		return want, nil
+	}}
+	withFakePool(t, p)
+
+	got, err := getPdfInstance(context.Background())
+	if err != nil {
+		t.Fatalf("getPdfInstance: %v", err)
 	}
-	select {
-	case sem <- struct{}{}:
-		<-sem
-	default:
-		t.Error("semaphore slot was not released by PDFRasterize")
+	if got != want {
+		t.Errorf("instance=%v, want the one borrowed on the third attempt", got)
+	}
+	if n := p.calls.Load(); n != 3 {
+		t.Errorf("borrow attempts=%d, want 3", n)
+	}
+}
+
+func TestGetPdfInstance_CtxDoneWhileWaiting(t *testing.T) {
+	entered := make(chan struct{})
+	p := &fakePool{borrow: func(ctx context.Context, _ int32) (pdfium.Pdfium, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, errors.New("Timeout waiting for idle object")
+	}}
+	withFakePool(t, p)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := getPdfInstance(ctx)
+		errCh <- err
+	}()
+	<-entered
+	cancel()
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrRenderUnavailable) {
+		t.Fatalf("err=%v, want context.Canceled and not ErrRenderUnavailable", err)
+	}
+	if n := p.calls.Load(); n != 1 {
+		t.Errorf("borrow attempts=%d, want 1 (no retry once ctx is done)", n)
+	}
+}
+
+func TestGetPdfInstance_DoneCtxStillTakesFreeWorker(t *testing.T) {
+	want := &fakeInstance{}
+	withFakePool(t, &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
+		return want, nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := getPdfInstance(ctx)
+	if err != nil || got != want {
+		t.Fatalf("got=%v err=%v, want the free worker", got, err)
+	}
+}
+
+func TestGetPdfInstance_NonTimeoutErrorNotRetried(t *testing.T) {
+	closed := errors.New("pool is closed")
+	p := &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
+		return nil, closed
+	}}
+	withFakePool(t, p)
+
+	_, err := getPdfInstance(context.Background())
+	if !errors.Is(err, ErrRenderUnavailable) || !errors.Is(err, closed) {
+		t.Fatalf("err=%v, want ErrRenderUnavailable wrapping the pool error", err)
+	}
+	if n := p.calls.Load(); n != 1 {
+		t.Errorf("borrow attempts=%d, want 1", n)
+	}
+}
+
+func TestPDFSliceAndRasterize_PoolUnavailable(t *testing.T) {
+	withFakePool(t, &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
+		return nil, errors.New("worker failed to start")
+	}})
+
+	if _, err := PDFSlice(context.Background(), []byte("%PDF"), 1, 0); !errors.Is(err, ErrRenderUnavailable) {
+		t.Errorf("PDFSlice err=%v, want ErrRenderUnavailable", err)
+	}
+	if _, err := PDFRasterize(context.Background(), []byte("%PDF"), 0, 10, 10, "jpeg", "medium", "rectangular"); !errors.Is(err, ErrRenderUnavailable) {
+		t.Errorf("PDFRasterize err=%v, want ErrRenderUnavailable", err)
 	}
 }
 
 // TestQualityToInt covers every named level plus the default arm.
 func TestQualityToInt(t *testing.T) {
 	cases := map[string]int{
-		"lowest": 0, "low": 15, "medium": 50, "high": 80, "highest": 95,
+		"lowest": 5, "low": 15, "medium": 50, "high": 80, "highest": 95,
 		"": 50, "garbage": 50, // default arm
 	}
 	for in, want := range cases {
 		if got := QualityToInt(in); got != want {
 			t.Errorf("QualityToInt(%q)=%d, want %d", in, got, want)
 		}
-	}
-}
-
-// TestBuildSemaphore verifies the channel capacity equals n.
-func TestBuildSemaphore(t *testing.T) {
-	sem := BuildSemaphore(3)
-	if cap(sem) != 3 {
-		t.Errorf("cap=%d, want 3", cap(sem))
-	}
-	if len(sem) != 0 {
-		t.Errorf("len=%d, want 0 (empty)", len(sem))
 	}
 }
 

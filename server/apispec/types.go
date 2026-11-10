@@ -290,7 +290,7 @@ type DocGetPreviewInput struct {
 	ServiceType ServiceType `query:"service_type" required:"true"            doc:"Service that owns the resource"`
 	FirstPage   int         `query:"first_page"   default:"1" doc:"First page (1-based, default 1)"`
 	LastPage    int         `query:"last_page"    default:"0" doc:"Last page (0 = all, default 0)"`
-	LangTag     string      `query:"lang_tag"     default:"en-US" doc:"Language tag for conversion (default en-US)"`
+	LangTag     string      `query:"lang_tag"     default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion (default en-US)"`
 	FileOwnerID string      `header:"fileownerid"               doc:"File owner ID" required:"false"`
 }
 
@@ -303,7 +303,7 @@ type DocGetThumbnailInput struct {
 	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
 	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
 	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string      `query:"lang_tag"                      default:"en-US" doc:"Language tag for conversion"`
+	LangTag      string      `query:"lang_tag"                      default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
 	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
 }
 
@@ -320,7 +320,7 @@ type DocPostFiles struct {
 type DocPostPreviewInput struct {
 	FirstPage int    `query:"first_page" default:"1"     doc:"First page (1-based, default 1)"`
 	LastPage  int    `query:"last_page"  default:"0"     doc:"Last page (0 = all, default 0)"`
-	LangTag   string `query:"lang_tag"   default:"en-US" doc:"Language tag for conversion"`
+	LangTag   string `query:"lang_tag"   default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
 	RawBody   huma.MultipartFormFiles[DocPostFiles]
 }
 
@@ -330,7 +330,7 @@ type DocPostThumbnailInput struct {
 	Quality      Quality   `query:"quality"       default:"medium"            doc:"Output quality"`
 	OutputFormat ImageType `query:"output_format" default:"jpeg"              doc:"Output image format"`
 	Shape        Shape     `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string    `query:"lang_tag"                      default:"en-US" doc:"Language tag for conversion"`
+	LangTag      string    `query:"lang_tag"                      default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
 	RawBody      huma.MultipartFormFiles[DocPostFiles]
 }
 

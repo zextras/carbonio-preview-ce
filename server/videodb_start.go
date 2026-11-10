@@ -42,7 +42,8 @@ const (
 // background goroutine that retries opening the pool and running migrations
 // with capped exponential backoff (initial 1s, max 60s) until it succeeds or
 // ctx is cancelled; on success it calls s.EnableVideoDB (flips the readiness
-// gate + starts the video worker) and closes the pool when ctx is done.
+// gate + starts the video worker). The pool is closed by Run on shutdown, after
+// the worker's jobs have returned their rows to PENDING.
 //
 // Both CE's and Advanced's main should call this right after server.New,
 // instead of hand-rolling the DSN-empty check and the retry loop themselves.
@@ -62,13 +63,21 @@ func (s *Server) StartVideoDBAsync(ctx context.Context, cfg *config.Config) {
 	// race that previously caused a FATAL + systemd restart loop) is absorbed
 	// and self-heals with no crash. On success the video DB is enabled and the
 	// worker started; the pool is closed on shutdown.
-	go s.initVideoDBWithRetry(ctx, cfg)
+	ctx, cancel := context.WithCancel(ctx)
+	s.videoMu.Lock()
+	s.videoCancel = cancel
+	s.videoMu.Unlock()
+	s.videoInit.Add(1)
+	go func() {
+		defer s.videoInit.Done()
+		s.initVideoDBWithRetry(ctx, cfg)
+	}()
 }
 
 // initVideoDBWithRetry opens the video-preview DB pool and runs migrations,
 // retrying with capped exponential backoff until it succeeds or ctx is
 // cancelled. On success it enables the video DB on the server (flips the
-// readiness gate + starts the worker) and closes the pool when ctx is done.
+// readiness gate + starts the worker) and records the pool for stopVideo.
 //
 // It NEVER exits the process: a persistently-unreachable DB simply means video
 // previews stay disabled (424) while everything else keeps serving.
@@ -80,12 +89,10 @@ func (s *Server) initVideoDBWithRetry(ctx context.Context, cfg *config.Config) {
 		store, err := openAndMigrateVideoDB(ctx, cfg)
 		if err == nil {
 			slog.Info("video-preview DB ready; enabling video previews", "attempts", attempt)
+			s.videoMu.Lock()
+			s.videoStore = store
+			s.videoMu.Unlock()
 			s.EnableVideoDB(ctx, store)
-			// Close the pool on shutdown.
-			go func() {
-				<-ctx.Done()
-				store.Close()
-			}()
 			return
 		}
 

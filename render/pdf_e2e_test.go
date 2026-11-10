@@ -7,6 +7,7 @@
 package render
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
@@ -57,8 +58,8 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDF fixture: %d bytes", len(pdfData))
 
-	// Exercise PDFSlice (nil semaphore = no gating in test).
-	sliced, err := PDFSlice(nil, pdfData, 1, 0)
+	// Exercise PDFSlice.
+	sliced, err := PDFSlice(context.Background(), pdfData, 1, 0)
 	if err != nil {
 		t.Fatalf("PDFSlice: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	t.Logf("PDFSlice: ok, %d bytes", len(sliced))
 
 	// Exercise PDFRasterize.
-	rendered, err := PDFRasterize(nil, pdfData, 0, 100, 100, "jpeg", "medium", "rectangular")
+	rendered, err := PDFRasterize(context.Background(), pdfData, 0, 100, 100, "jpeg", "medium", "rectangular")
 	if err != nil {
 		t.Fatalf("PDFRasterize: %v", err)
 	}
@@ -77,12 +78,23 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDFRasterize: ok, %d bytes", len(rendered))
 
+	prevMask := roundedMaskFunc
+	roundedMaskFunc = func([]byte, int, int) ([]byte, error) { return nil, fmt.Errorf("mask failed") }
+	unmasked, err := PDFRasterize(context.Background(), pdfData, 0, 100, 100, "png", "medium", "rounded")
+	roundedMaskFunc = prevMask
+	if err != nil {
+		t.Fatalf("PDFRasterize with failing mask: %v", err)
+	}
+	if len(unmasked) < 8 || string(unmasked[1:4]) != "PNG" {
+		t.Fatalf("mask failure must return the unmasked PNG, got %d bytes", len(unmasked))
+	}
+
 	// Correctness-after-many-calls: run 20 sequential PDFSlice calls and assert
 	// each produces valid non-empty output. This verifies that closing documents
 	// via defer does not break handle reuse across repeated pool borrows.
 	const repeatN = 20
 	for i := range repeatN {
-		got, err := PDFSlice(nil, pdfData, 1, 0)
+		got, err := PDFSlice(context.Background(), pdfData, 1, 0)
 		if err != nil {
 			t.Fatalf("PDFSlice repeat %d/%d: %v", i+1, repeatN, err)
 		}
@@ -136,7 +148,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 					return
 				default:
 				}
-				data, err := PDFSlice(nil, pdfData, 1, 0)
+				data, err := PDFSlice(context.Background(), pdfData, 1, 0)
 				if err != nil {
 					errCh <- err
 					return

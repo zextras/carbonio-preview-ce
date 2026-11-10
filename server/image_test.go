@@ -73,7 +73,6 @@ func stubImageThumbnail(
 ) (restore func()) {
 	prev := imageThumbnailFunc
 	imageThumbnailFunc = func(
-		_ chan struct{},
 		_ []byte,
 		_, _ int,
 		gotFmt, gotQuality, gotShape, gotCropMode string,
@@ -188,7 +187,7 @@ func assertStringDetail(t *testing.T, rec *httptest.ResponseRecorder, wantStatus
 func buildImageHumaMux(cfg *config.Config, store storage.Client) *http.ServeMux {
 	mux := http.NewServeMux()
 	api := newHumaAPI(mux)
-	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: nil, Sem: nil})
+	registerImageOps(api, Deps{Cfg: cfg, Store: store, Cache: nil})
 	return mux
 }
 
@@ -377,7 +376,7 @@ func TestImageGetThumbnail_ShapeRounded(t *testing.T) {
 	store := &mockStore{blob: []byte(fakeImgBytes)}
 	prev := imageThumbnailFunc
 	imageThumbnailFunc = func(
-		_ chan struct{}, _ []byte, _, _ int,
+		_ []byte, _, _ int,
 		_, _, gotShape, _ string,
 	) ([]byte, error) {
 		if gotShape != "rounded" {
