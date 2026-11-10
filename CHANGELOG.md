@@ -1,3 +1,9 @@
+## [4.1.0](https://github.com/zextras/carbonio-preview-ce/compare/v4.0.1...v4.1.0) (2026-11-10)
+
+### Features
+
+* preview bugs and performance review ([#216](https://github.com/zextras/carbonio-preview-ce/issues/216)) ([c43bfa5](https://github.com/zextras/carbonio-preview-ce/commit/c43bfa548278084527fa6853148540eda19183e3))
+
 ## [4.0.1](https://github.com/zextras/carbonio-preview-ce/compare/v4.0.0...v4.0.1) (2026-11-03)
 
 ### Bug Fixes
