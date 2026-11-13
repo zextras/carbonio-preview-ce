@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 library(
-    identifier: 'jenkins-lib-common@v5.0.8',
+    identifier: 'jenkins-lib-common@feat/repo-sanity-alignment',
     retriever: modernSCM([$class: 'GitSCMSource',
         credentialsId: 'jenkins-integration-with-github-account',
         remote: 'git@github.com:zextras/jenkins-lib-common.git'])
@@ -14,6 +14,7 @@ dt3_pipeline(
     repoName: 'carbonio-preview-ce',
     mavenPublish: ['sdk'],
     nonJavaSdkPublish: true,
+    goTest: true,
     goGenerate: [
         paths: ['docs/'],
     ],

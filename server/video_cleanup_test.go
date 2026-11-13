@@ -273,6 +273,9 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 }
 
 func TestGetVideoPreview_Ready_TouchesLastAccessOnlyWhenOlderThanOneDay(t *testing.T) {
+	if !haveRealRender {
+		t.Skip("thumbnailing needs cgo (libvips)")
+	}
 	st, dsn := startVideoPostgresWithDSN(t)
 	ctx := context.Background()
 

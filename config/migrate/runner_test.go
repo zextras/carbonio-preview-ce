@@ -84,6 +84,7 @@ func TestRunDropInEnvEntries_MkdirAllFails(t *testing.T) {
 // drop-in parent directory read-only AFTER MkdirAll would have succeeded: we
 // pre-create the parent dir, chmod it 0555, so CreateTemp inside it fails.
 func TestRunDropInEnvEntries_CreateTempFails(t *testing.T) {
+	skipIfRoot(t)
 	withCleanRegistry(t, func() {
 		dir := t.TempDir()
 		parent := filepath.Join(dir, "ro")
@@ -173,6 +174,7 @@ func TestRunDropInEnvEntries_RenameFails(t *testing.T) {
 // because the read-only ancestor cannot be written). The save warning path must
 // not panic and must leave the run otherwise complete.
 func TestRun_PropertiesSaveError(t *testing.T) {
+	skipIfRoot(t)
 	withCleanRegistry(t, func() {
 		dir := t.TempDir()
 		// Read-only directory; the properties file targets a missing sub-dir
@@ -225,6 +227,7 @@ func TestRun_PropertiesSaveError(t *testing.T) {
 // after load so the rename fails (rename needs write permission on the dir). The
 // warning path must not panic.
 func TestRun_IniSaveError(t *testing.T) {
+	skipIfRoot(t)
 	withCleanRegistry(t, func() {
 		dir := t.TempDir()
 		iniDir := filepath.Join(dir, "inidir")
@@ -514,6 +517,7 @@ func TestConsulKvStore_Delete_TransportError(t *testing.T) {
 // sees the file as absent (ENOENT) so construction succeeds, but MkdirAll inside
 // Save() cannot create the sub-directory under the read-only ancestor.
 func TestPropertiesStore_Save_MkdirError(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	roDir := filepath.Join(dir, "ro")
 	if err := os.MkdirAll(roDir, 0o755); err != nil {
@@ -540,6 +544,7 @@ func TestPropertiesStore_Save_MkdirError(t *testing.T) {
 // the parent directory exists but is read-only, so creating the file fails
 // after MkdirAll (which is a no-op on an existing dir) succeeds.
 func TestPropertiesStore_Save_CreateError(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	roDir := filepath.Join(dir, "ro")
 	if err := os.MkdirAll(roDir, 0o755); err != nil {

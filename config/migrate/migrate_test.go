@@ -46,6 +46,15 @@ func withCleanRegistry(t *testing.T, f func()) {
 	setsMu.Unlock()
 }
 
+// skipIfRoot skips tests that rely on file permissions to force an I/O error:
+// root bypasses them.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Getuid() == 0 {
+		t.Skip("running as root — permission test not meaningful")
+	}
+}
+
 // writeFile creates a temp file with the given content.
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
