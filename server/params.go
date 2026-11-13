@@ -11,6 +11,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -82,6 +83,12 @@ func contentTypeForFormat(fmt string) string {
 	default:
 		return "image/jpeg"
 	}
+}
+
+// isFullSizeGIF reports a full-size GIF preview, served as stored because re-encoding keeps only the first frame.
+func isFullSizeGIF(width, height int, outputFormat string, data []byte) bool {
+	return width == 0 && height == 0 && outputFormat == "gif" &&
+		(bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")))
 }
 
 // ---------------------------------------------------------------------------

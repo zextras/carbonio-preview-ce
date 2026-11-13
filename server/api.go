@@ -219,6 +219,9 @@ func buildGetImagePreview(deps Deps) func(context.Context, *apispec.ImageGetPrev
 			if err != nil {
 				return cache.Entry{}, err
 			}
+			if isFullSizeGIF(width, height, outputFormat, data) {
+				return cache.Entry{Body: data, ContentType: contentTypeForFormat(outputFormat)}, nil
+			}
 			out, err := step.image(step.printfRenderErr, data, width, height, outputFormat, quality, "rectangular", cropModeFor(crop))
 			if err != nil {
 				return cache.Entry{}, err
@@ -279,6 +282,9 @@ func buildPostImagePreview(deps Deps) func(context.Context, *apispec.ImagePostPr
 				&huma.ErrorDetail{Message: config.Msg.FileNotValid, Location: "body.file"})
 		}
 
+		if isFullSizeGIF(width, height, outputFormat, fileData) {
+			return &apispec.BinOut{ContentType: contentTypeForFormat(outputFormat), Body: fileData}, nil
+		}
 		step := lim.forCaller(ctx, "postImagePreview")
 		out, err := step.image(step.printfRenderErr, fileData, width, height, outputFormat, quality, "rectangular", cropModeFor(input.Crop))
 		if err != nil {
