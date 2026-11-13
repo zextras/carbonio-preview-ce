@@ -28,7 +28,10 @@ package server
 import (
 	"bytes"
 	"image"
+	"image/color"
+	"image/gif"
 	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -144,6 +147,54 @@ func TestFullFlow(t *testing.T) {
 		}
 		if len(body) == 0 {
 			t.Error("empty rendered body")
+		}
+	})
+
+	t.Run("image_preview_full_size_gif_is_original", func(t *testing.T) {
+		original := animatedGIFFixture(t)
+		storages := testsupport.NewStoragesMock("download", original, "image/gif")
+		t.Cleanup(storages.Close)
+		collabora := testsupport.NewCollaboraMock(fx.pdf)
+		t.Cleanup(collabora.Close)
+		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
+
+		code, ct, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/0x0/?service_type=files&quality=high&output_format=gif")
+		if code != http.StatusOK {
+			t.Fatalf("status=%d, want 200", code)
+		}
+		if ct != "image/gif" {
+			t.Errorf("Content-Type=%q, want image/gif", ct)
+		}
+		if !bytes.Equal(body, original) {
+			t.Fatalf("body differs from the stored GIF (len %d vs %d, prefix=%X)", len(body), len(original), firstN(body, 8))
+		}
+		anim, err := gif.DecodeAll(bytes.NewReader(body))
+		if err != nil || len(anim.Image) != 5 {
+			t.Fatalf("decoded frames: %v err=%v, want 5", anim, err)
+		}
+	})
+
+	t.Run("image_thumbnail_gif_stays_static", func(t *testing.T) {
+		original := animatedGIFFixture(t)
+		storages := testsupport.NewStoragesMock("download", original, "image/gif")
+		t.Cleanup(storages.Close)
+		collabora := testsupport.NewCollaboraMock(fx.pdf)
+		t.Cleanup(collabora.Close)
+		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
+
+		code, _, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/80x80/thumbnail/?service_type=chats&quality=high&output_format=gif&shape=rectangular")
+		if code != http.StatusOK {
+			t.Fatalf("status=%d, want 200", code)
+		}
+		if bytes.Equal(body, original) {
+			t.Fatal("thumbnail returned the original GIF")
+		}
+		c, _, err := image.DecodeConfig(bytes.NewReader(body))
+		if err != nil || c.Width != 80 || c.Height != 80 {
+			t.Fatalf("decoded %+v err=%v, want 80x80", c, err)
+		}
+		if anim, err := gif.DecodeAll(bytes.NewReader(body)); err == nil && len(anim.Image) != 1 {
+			t.Errorf("thumbnail frames=%d, want a static image", len(anim.Image))
 		}
 	})
 
@@ -327,6 +378,23 @@ func TestFullFlow(t *testing.T) {
 			t.Errorf("Content-Type=%q, want application/json", ct)
 		}
 	})
+}
+
+func animatedGIFFixture(t *testing.T) []byte {
+	t.Helper()
+	colors := []color.RGBA{
+		{R: 255, A: 255}, {G: 255, A: 255}, {B: 255, A: 255}, {R: 255, G: 255, A: 255}, {R: 255, B: 255, A: 255},
+	}
+	anim := &gif.GIF{}
+	for _, c := range colors {
+		anim.Image = append(anim.Image, image.NewPaletted(image.Rect(0, 0, 200, 150), color.Palette{c}))
+		anim.Delay = append(anim.Delay, 20)
+	}
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, anim); err != nil {
+		t.Fatalf("gif.EncodeAll: %v", err)
+	}
+	return buf.Bytes()
 }
 
 // firstN returns the first n bytes (or all of b if shorter), for diagnostics.
