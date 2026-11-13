@@ -1,3 +1,9 @@
+## [4.1.1](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.0...v4.1.1) (2026-11-13)
+
+### Bug Fixes
+
+* CO-4736 - serve full-size GIF previews as stored to keep the animation ([#217](https://github.com/zextras/carbonio-preview-ce/issues/217)) ([e2ae523](https://github.com/zextras/carbonio-preview-ce/commit/e2ae523b242ceda06c071bf19d6d943924bb17c7))
+
 ## [4.1.0](https://github.com/zextras/carbonio-preview-ce/compare/v4.0.1...v4.1.0) (2026-11-10)
 
 ### Features
