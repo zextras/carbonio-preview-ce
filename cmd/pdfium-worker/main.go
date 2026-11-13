@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build cgo
+
 // Command carbonio-preview-pdfium-worker is the PDFium subprocess worker binary
 // used by the carbonio-preview-ce service.
 //

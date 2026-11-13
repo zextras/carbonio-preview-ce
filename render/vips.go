@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+//go:build cgo
+
 // Package render implements the image/PDF/document processing pipeline.
 // It wraps libvips (via CGO) for image transformations and go-pdfium for PDF
 // rendering. The benchmark reference is
@@ -435,25 +437,6 @@ func DisableVipsCache() {
 func SetVipsConcurrency(n int) {
 	if n > 0 {
 		C.vips_concurrency_set(C.int(n))
-	}
-}
-
-// QualityToInt maps the Python ImageQualityEnum string values to JPEG integer
-// quality levels. Returns 50 (medium) for any unrecognised value.
-func QualityToInt(quality string) int {
-	switch quality {
-	case "lowest":
-		return 5
-	case "low":
-		return 15
-	case "medium":
-		return 50
-	case "high":
-		return 80
-	case "highest":
-		return 95
-	default:
-		return 50
 	}
 }
 
