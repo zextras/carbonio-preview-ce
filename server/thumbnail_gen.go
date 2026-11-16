@@ -291,41 +291,29 @@ func sourceFailure(ctx context.Context, err error) *jobFailure {
 func (w *AsyncWorker) runVideo(ctx context.Context, rows []db.Thumbnail) (render.Pair, *jobFailure) {
 	row := rows[0]
 
-	// The download runs under a separate child context scoped ONLY to the copy
-	// phase: an idleReadCloser fires dlCancel if no bytes arrive for
-	// readIdleTimeout, abandoning a stalled download. The probe/extract stages
-	// run under ctx and are bounded by extractCeiling.
-	dlCtx, dlCancel := context.WithCancel(ctx)
-	idleTimer := time.AfterFunc(readIdleTimeout, dlCancel)
-	rc, err := w.deps.Store.RetrieveDataStreaming(dlCtx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
+	rc, _, err := openSource(ctx, w.deps.Store, row.FileID, row.Version, row.ServiceType, row.OwnerID, readIdleTimeout)
 	if err != nil {
-		idleTimer.Stop()
-		dlCancel()
 		return render.Pair{}, sourceFailure(ctx, err)
 	}
 
 	tmp, err := os.CreateTemp("", "carbonio-preview-worker-*.bin")
 	if err != nil {
 		rc.Close()
-		idleTimer.Stop()
-		dlCancel()
 		return render.Pair{}, failure(failConnectivity, err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
-	guard := newIdleReadCloser(rc, readIdleTimeout, idleTimer)
 	// Stream the source into a SPARSE temp file: only the head (frame-0 sample
 	// + faststart moov) and the tail (trailing moov/index) are retained; the
 	// middle is discarded so a multi-GB source costs ~head+tail of temp disk,
 	// not its full size. The full body is still transferred (storage origin
 	// does not honor HTTP Range), and the idle-read watchdog + heartbeat still
-	// see byte progress through `guard`. If head+tail is insufficient, the
+	// see byte progress through the reader. If head+tail is insufficient, the
 	// probe/extract below fail and the job is treated exactly like a corrupt
 	// file (no full-download fallback — deliberate).
-	_, copyErr := video.StreamToSparseTemp(tmp, guard)
-	guard.Close()
-	dlCancel()
+	_, copyErr := video.StreamToSparseTemp(tmp, rc)
+	rc.Close()
 	if syncErr := tmp.Sync(); syncErr != nil && copyErr == nil {
 		copyErr = syncErr
 	}
@@ -570,6 +558,19 @@ func (r runner) imagePair(data []byte) (render.Pair, error) {
 		return render.Pair{}, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
 	}
 	return pair, nil
+}
+
+func (r runner) fullImage(data []byte) (render.Rendition, error) {
+	if err := r.slot(r.l.render); err != nil {
+		return render.Rendition{}, err
+	}
+	defer r.l.render.release()
+	out, err := fullImageFunc(data)
+	if err != nil {
+		slog.Warn(r.op+" render", "err", err)
+		return render.Rendition{}, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+	return out, nil
 }
 
 func (r runner) pdfRenditions(data []byte) (map[string]produced, error) {

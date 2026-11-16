@@ -51,18 +51,19 @@ type Client interface {
 	RetrieveData(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (Blob, error)
 
 	// RetrieveDataStreaming fetches the same blob as RetrieveData but returns a
-	// streaming body the caller reads incrementally. Closing the returned
-	// ReadCloser (or cancelling ctx) aborts the in-flight HTTP transfer. Used by
-	// the video path to avoid buffering whole videos in memory.
+	// streaming body the caller reads incrementally, with the body length in
+	// bytes (-1 when unknown). Closing the returned ReadCloser (or cancelling
+	// ctx) aborts the in-flight HTTP transfer. Used by video thumbnails and
+	// passthrough previews to avoid buffering whole blobs in memory.
 	//
 	// Timeout design: the storage http.Client carries NO total-request timeout.
 	// Nothing but ctx bounds this call: the caller is responsible for stall
-	// protection (the video worker arms an idle watchdog before the call and
+	// protection (the callers arm an idle watchdog before the call and
 	// resets it on every body read). Cancelling ctx aborts both the in-flight
 	// header wait and the body read.
 	//
 	// Same error contract as RetrieveData (ErrNotFound / ErrUnavailable).
-	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, error)
+	RetrieveDataStreaming(ctx context.Context, fileID string, version int, serviceType string, ownerID string) (io.ReadCloser, int64, error)
 
 	// StoreData writes data as the content of storage node nodeID (version) in the
 	// given serviceType namespace, on the storage server that owns ownerID. The

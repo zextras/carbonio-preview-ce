@@ -12,9 +12,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/zextras/carbonio-preview-ce/v4/config"
+	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
+
+func registerHealthOps(api huma.API, deps Deps) {
+	apispec.RegisterHealthOps(api, buildGetHealthLive(), buildGetHealthReady(deps), buildGetHealth(deps))
+}
 
 // buildHealthMux creates a huma-routed mux for health operations (test helper).
 func buildHealthMux(cfg *config.Config) *http.ServeMux {

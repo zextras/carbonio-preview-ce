@@ -22,9 +22,6 @@ type Messages struct {
 	DocsEditorUnavailable string
 
 	// [validation]
-	HeightOrWidthNotInserted  string
-	NumberOfPagesNotValid     string
-	HeightWidthNotValid       string
 	IDNotValid                string
 	VersionNotValid           string
 	FormatNotSupported        string
@@ -52,9 +49,6 @@ func hardcodedMessages() Messages {
 		InputError:            "Some values in the query were not correct.",
 		DocsEditorUnavailable: "Carbonio-docs-editor is currently unavailable, document preview service is currently offline.",
 
-		HeightOrWidthNotInserted:  "Height or width not found, example of valid input: 120x250.",
-		NumberOfPagesNotValid:     "Pages must be at least 1.",
-		HeightWidthNotValid:       "Height or width values must be integers >= 0.",
 		IDNotValid:                "Id is not in a valid format, UUID1 to UUID4 are supported.",
 		VersionNotValid:           "Version is not valid, the accepted values are > 0.",
 		FormatNotSupported:        "Format not supported.",
@@ -112,9 +106,6 @@ func overrideMessages(cfg *ini.File, m *Messages) {
 	m.InputError = msgStr(cfg, secHard, "input_error", m.InputError)
 	m.DocsEditorUnavailable = msgStr(cfg, secHard, "carbonio_docs_editor_not_running", m.DocsEditorUnavailable)
 
-	m.HeightOrWidthNotInserted = msgStr(cfg, secVal, "height_or_width_not_inserted_error", m.HeightOrWidthNotInserted)
-	m.NumberOfPagesNotValid = msgStr(cfg, secVal, "number_of_pages_not_valid_error", m.NumberOfPagesNotValid)
-	m.HeightWidthNotValid = msgStr(cfg, secVal, "height_or_width_not_valid_error", m.HeightWidthNotValid)
 	m.IDNotValid = msgStr(cfg, secVal, "id_not_valid_error", m.IDNotValid)
 	m.VersionNotValid = msgStr(cfg, secVal, "version_not_valid_error", m.VersionNotValid)
 	m.FormatNotSupported = msgStr(cfg, secVal, "format_not_supported_error", m.FormatNotSupported)

@@ -30,14 +30,7 @@ var pdfPairFunc = render.PDFPage1Pair
 
 var animatedGIFFunc = render.AnimatedGIF
 
-// imageThumbnailFunc is the seam for render.ImageThumbnail.
-var imageThumbnailFunc = func(
-	data []byte,
-	width, height int,
-	outputFormat, quality, shape, cropMode string,
-) ([]byte, error) {
-	return render.ImageThumbnail(data, width, height, outputFormat, quality, shape, cropMode)
-}
+var fullImageFunc = render.FullImage
 
 // videoDetectCodecFromFileFunc is the seam for video.DetectCodecFromFile.
 // Tests override it to avoid spawning ffprobe/ffmpeg.
@@ -49,21 +42,6 @@ var videoDetectCodecFromFileFunc = func(ctx context.Context, inputPath string) (
 // Tests override it so probe and extract can be stubbed independently.
 var videoFirstFrameFromFileFunc = func(ctx context.Context, inputPath string) ([]byte, error) {
 	return video.ExtractFirstFrameJPEGFromFile(ctx, inputPath)
-}
-
-// pdfSliceFunc is the seam for render.PDFSlice.
-var pdfSliceFunc = func(ctx context.Context, data []byte, firstPage, lastPage int) ([]byte, error) {
-	return render.PDFSlice(ctx, data, firstPage, lastPage)
-}
-
-// pdfRasterizeFunc is the seam for render.PDFRasterize.
-var pdfRasterizeFunc = func(
-	ctx context.Context,
-	data []byte,
-	page, width, height int,
-	outputFormat, quality, shape string,
-) ([]byte, error) {
-	return render.PDFRasterize(ctx, data, page, width, height, outputFormat, quality, shape)
 }
 
 // collaboraConvertFunc is the seam for render.CollaboraConvert.

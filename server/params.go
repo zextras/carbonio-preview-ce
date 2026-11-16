@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package server implements the HTTP server for carbonio-preview-ce.
-// It registers all four router groups (image, pdf, document, health).
+// It registers the thumbnail, preview and health operations.
 // The process model is a single Go binary with an embedded PDFium subprocess
 // pool: libvips runs in-process via CGO, while PDFium rendering is delegated
 // to a pool of carbonio-preview-pdfium-worker subprocesses managed by
@@ -11,23 +11,15 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/zextras/carbonio-preview-ce/v4/config"
 )
-
-// areaRegex matches the {area} path segment: two non-negative integers
-// separated by "x", e.g. "100x200" or "0x0".
-var areaRegex = regexp.MustCompile(`^[0-9]+x[0-9]+$`)
 
 // ---------------------------------------------------------------------------
 // JSON error shapes (FastAPI-compatible)
@@ -73,49 +65,6 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	}
 }
 
-// contentTypeForFormat returns the Content-Type for the given image format string.
-func contentTypeForFormat(fmt string) string {
-	switch fmt {
-	case "png":
-		return "image/png"
-	case "gif":
-		return "image/gif"
-	default:
-		return "image/jpeg"
-	}
-}
-
-// isFullSizeGIF reports a full-size GIF preview, served as stored because re-encoding keeps only the first frame.
-func isFullSizeGIF(width, height int, outputFormat string, data []byte) bool {
-	return width == 0 && height == 0 && outputFormat == "gif" &&
-		(bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")))
-}
-
-// ---------------------------------------------------------------------------
-// Parameter parsers
-// ---------------------------------------------------------------------------
-
-// parseArea parses the area path segment (e.g. "100x200") into width and height.
-// Returns a validation error (422) on invalid format.
-func parseArea(area string) (width, height int, err error) {
-	if !areaRegex.MatchString(area) {
-		return 0, 0, fmt.Errorf("%s", config.Msg.HeightOrWidthNotInserted)
-	}
-	parts := strings.SplitN(area, "x", 2)
-	w, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, fmt.Errorf("%s", config.Msg.HeightWidthNotValid)
-	}
-	h, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, 0, fmt.Errorf("%s", config.Msg.HeightWidthNotValid)
-	}
-	if w < 0 || h < 0 {
-		return 0, 0, fmt.Errorf("%s", config.Msg.HeightWidthNotValid)
-	}
-	return w, h, nil
-}
-
 // parseID validates and normalises a UUID path segment (UUID1–UUID4).
 // Returns the canonical lower-case UUID string, or an error.
 func parseID(id string) (string, error) {
@@ -128,30 +77,4 @@ func parseID(id string) (string, error) {
 		return "", fmt.Errorf("%s", config.Msg.IDNotValid)
 	}
 	return u.String(), nil
-}
-
-// cacheKey builds a stable, collision-resistant cache key from the already
-// parsed/defaulted request parameters. It uses the REQUESTED area (raw width/
-// height), never the post-ConvertRequestedSize values, so it is computable
-// before the storages fetch. ownerID is "" for CE (DirectClient) and the
-// fileownerid header value for ADV (PowerStore routing).
-//
-// The leading kind discriminator prevents cross-route aliasing; route-specific
-// fields take their parsed default for routes that do not use them, so the
-// format is uniform across all six GET handlers.
-func cacheKey(
-	kind string, // "img-preview" | "img-thumb" | "pdf-preview" | "pdf-thumb" | "doc-preview" | "doc-thumb"
-	nodeID string, version int, serviceType string,
-	width, height int,
-	quality, outputFormat string,
-	crop bool, shape string,
-	firstPage, lastPage int,
-	langTag, ownerID string,
-) string {
-	return fmt.Sprintf(
-		"%s|%s|%d|%s|%d|%d|%s|%s|%t|%s|%d|%d|%s|%s",
-		kind, nodeID, version, serviceType,
-		width, height, quality, outputFormat,
-		crop, shape, firstPage, lastPage, langTag, ownerID,
-	)
 }

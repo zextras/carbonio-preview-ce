@@ -48,8 +48,8 @@ func (s *eofStore) RetrieveData(context.Context, string, int, string, string) (s
 	return []byte("blob"), nil
 }
 
-func (s *eofStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, error) {
-	return eofReader{Reader: strings.NewReader("video"), sig: s.eof}, nil
+func (s *eofStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, int64, error) {
+	return eofReader{Reader: strings.NewReader("video"), sig: s.eof}, int64(len("video")), nil
 }
 
 func (s *eofStore) StoreData(_ context.Context, nodeID string, _ int, _ string, _ string, _ []byte) (string, error) {

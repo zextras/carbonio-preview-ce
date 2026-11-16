@@ -28,15 +28,15 @@ func (f *fakeVideoStore) RetrieveData(_ context.Context, _ string, _ int, _ stri
 	return f.blob, nil
 }
 
-func (f *fakeVideoStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, error) {
+func (f *fakeVideoStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, int64, error) {
 	if f.retrieveErr != nil {
-		return nil, f.retrieveErr
+		return nil, 0, f.retrieveErr
 	}
 	b := f.blob
 	if b == nil {
 		b = []byte("fake-video-stream")
 	}
-	return io.NopCloser(strings.NewReader(string(b))), nil
+	return io.NopCloser(strings.NewReader(string(b))), int64(len(b)), nil
 }
 
 func (f *fakeVideoStore) StoreData(_ context.Context, nodeID string, _ int, _ string, _ string, _ []byte) (string, error) {

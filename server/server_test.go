@@ -30,41 +30,38 @@ import (
 
 // TestBuildMux_RoutesWired constructs a Server with New, builds the real mux,
 // wraps it in loggingMiddleware, and serves it over an httptest.Server. It
-// asserts that an image-preview route (with stubbed render + a mockStore) and
-// the health/live route are both wired and reachable.
+// asserts that the preview, thumbnail (sync, stubbed render) and health/live
+// routes are wired and reachable.
 func TestBuildMux_RoutesWired(t *testing.T) {
 	store := &mockStore{blob: []byte("src")}
-	restore := stubImageThumbnail("jpeg", "", "", "", []byte("rendered-out"), nil)
-	defer restore()
+	stubRender(t, func([]byte) ([]byte, error) { return []byte("rendered-out"), nil })
 
 	s := New(testCfg(), store, cache.New(8<<20))
 	mux := s.buildMux()
 	ts := httptest.NewServer(loggingMiddleware(mux))
 	defer ts.Close()
 
-	// Image preview route (drives the real handler + cache.Put through buildMux).
-	resp, err := http.Get(ts.URL + "/preview/image/" + validUUID + "/1/100x100/?service_type=files")
-	if err != nil {
-		t.Fatalf("GET image preview: %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("image preview status=%d, want 200", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
-		t.Errorf("image preview Content-Type=%q, want image/jpeg", ct)
-	}
-	if string(body) != "rendered-out" {
-		t.Errorf("image preview body=%q, want rendered-out", string(body))
+	get := func(path string) (*http.Response, string) {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, string(body)
 	}
 
-	// Health live route is wired and always returns 200.
-	hresp, err := http.Get(ts.URL + "/health/live/")
-	if err != nil {
-		t.Fatalf("GET health live: %v", err)
+	resp, body := get("/preview/" + validUUID + "/1?service_type=files&mime=image/png")
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/png" || body != "src" {
+		t.Errorf("preview: %d %q %q, want 200 image/png src", resp.StatusCode, resp.Header.Get("Content-Type"), body)
 	}
-	hresp.Body.Close()
+
+	resp, body = get(imageURL(1))
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/jpeg" || body != "rendered-out" {
+		t.Errorf("thumbnail: %d %q %q, want 200 image/jpeg rendered-out", resp.StatusCode, resp.Header.Get("Content-Type"), body)
+	}
+
+	hresp, _ := get("/health/live/")
 	if hresp.StatusCode != http.StatusOK {
 		t.Errorf("health live status=%d, want 200", hresp.StatusCode)
 	}
@@ -102,8 +99,7 @@ func TestLoggingMiddleware_CapturesNon200(t *testing.T) {
 	ts := httptest.NewServer(loggingMiddleware(mux))
 	defer ts.Close()
 
-	// DELETE on an image route → 405 (the image router writes 405 directly).
-	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/preview/image/"+validUUID+"/1/100x100/?service_type=files", nil)
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+"/preview/"+validUUID+"/1?service_type=files&mime=image/png", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +115,6 @@ func TestLoggingMiddleware_CapturesNon200(t *testing.T) {
 
 // TestLoggingMiddleware_Captures404 drives an unmatched path through the
 // wrapper, covering the WriteHeader status-capture for a 404 response.
-// Note: huma registers trailing-slash patterns as subtree matches in Go 1.22
-// ServeMux, so extra segments under /preview/image/... now route to the handler.
 // We use a path prefix that has no registered route at all.
 func TestLoggingMiddleware_Captures404(t *testing.T) {
 	store := &mockStore{}
@@ -164,7 +158,7 @@ func TestHandler_BodyBoundedByInactivityNotTotalTime(t *testing.T) {
 	raw := body.Bytes()
 
 	t.Run("upload trickled slower than the window in total succeeds", func(t *testing.T) {
-		conn := startRequest(t, addr, http.MethodPost, "/preview/image/100x100/", ct, len(raw))
+		conn := startRequest(t, addr, http.MethodPost, postImageURL, ct, len(raw))
 		const chunks = 8
 		step := (len(raw) + chunks - 1) / chunks
 		for off := 0; off < len(raw); off += step {
@@ -180,7 +174,7 @@ func TestHandler_BodyBoundedByInactivityNotTotalTime(t *testing.T) {
 
 	t.Run("upload stalled longer than the window fails", func(t *testing.T) {
 		before := renders.Load()
-		conn := startRequest(t, addr, http.MethodPost, "/preview/image/100x100/", ct, len(raw))
+		conn := startRequest(t, addr, http.MethodPost, postImageURL, ct, len(raw))
 		if _, err := conn.Write(raw[:len(raw)/2]); err != nil {
 			t.Fatalf("write: %v", err)
 		}

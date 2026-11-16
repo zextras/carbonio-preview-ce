@@ -41,15 +41,15 @@ func (s *stageStore) Delete(ctx context.Context, _ string, _ int, _, _ string) e
 	return nil
 }
 
-func (s *stageStore) RetrieveDataStreaming(ctx context.Context, id string, version int, st, owner string) (io.ReadCloser, error) {
+func (s *stageStore) RetrieveDataStreaming(ctx context.Context, id string, version int, st, owner string) (io.ReadCloser, int64, error) {
 	if id == s.hdrID {
 		close(s.hdrStarted)
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	}
 	if id == s.dlID {
 		close(s.dlStarted)
-		return ctxReader{ctx}, nil
+		return ctxReader{ctx}, -1, nil
 	}
 	return s.eofStore.RetrieveDataStreaming(ctx, id, version, st, owner)
 }

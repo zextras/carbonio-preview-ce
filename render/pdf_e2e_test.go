@@ -58,51 +58,29 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDF fixture: %d bytes", len(pdfData))
 
-	// Exercise PDFSlice.
-	sliced, err := PDFSlice(context.Background(), pdfData, 1, 0)
+	pair, err := PDFPage1Pair(context.Background(), pdfData)
 	if err != nil {
-		t.Fatalf("PDFSlice: %v", err)
+		t.Fatalf("PDFPage1Pair: %v", err)
 	}
-	if len(sliced) == 0 {
-		t.Fatal("PDFSlice returned empty bytes")
+	if len(pair.M.Body) == 0 || len(pair.S.Body) == 0 {
+		t.Fatal("PDFPage1Pair returned an empty rendition")
 	}
-	t.Logf("PDFSlice: ok, %d bytes", len(sliced))
+	t.Logf("PDFPage1Pair: ok, M %d bytes, S %d bytes", len(pair.M.Body), len(pair.S.Body))
 
-	// Exercise PDFRasterize.
-	rendered, err := PDFRasterize(context.Background(), pdfData, 0, 100, 100, "jpeg", "medium", "rectangular")
-	if err != nil {
-		t.Fatalf("PDFRasterize: %v", err)
-	}
-	if len(rendered) == 0 {
-		t.Fatal("PDFRasterize returned empty bytes")
-	}
-	t.Logf("PDFRasterize: ok, %d bytes", len(rendered))
-
-	prevMask := roundedMaskFunc
-	roundedMaskFunc = func([]byte, int, int) ([]byte, error) { return nil, fmt.Errorf("mask failed") }
-	unmasked, err := PDFRasterize(context.Background(), pdfData, 0, 100, 100, "png", "medium", "rounded")
-	roundedMaskFunc = prevMask
-	if err != nil {
-		t.Fatalf("PDFRasterize with failing mask: %v", err)
-	}
-	if len(unmasked) < 8 || string(unmasked[1:4]) != "PNG" {
-		t.Fatalf("mask failure must return the unmasked PNG, got %d bytes", len(unmasked))
-	}
-
-	// Correctness-after-many-calls: run 20 sequential PDFSlice calls and assert
-	// each produces valid non-empty output. This verifies that closing documents
+	// Correctness-after-many-calls: run 20 sequential calls and assert each
+	// produces valid non-empty output. This verifies that closing documents
 	// via defer does not break handle reuse across repeated pool borrows.
 	const repeatN = 20
 	for i := range repeatN {
-		got, err := PDFSlice(context.Background(), pdfData, 1, 0)
+		got, err := PDFPage1Pair(context.Background(), pdfData)
 		if err != nil {
-			t.Fatalf("PDFSlice repeat %d/%d: %v", i+1, repeatN, err)
+			t.Fatalf("PDFPage1Pair repeat %d/%d: %v", i+1, repeatN, err)
 		}
-		if len(got) == 0 {
-			t.Fatalf("PDFSlice repeat %d/%d: empty result", i+1, repeatN)
+		if len(got.M.Body) == 0 {
+			t.Fatalf("PDFPage1Pair repeat %d/%d: empty result", i+1, repeatN)
 		}
 	}
-	t.Logf("PDFSlice x%d sequential calls: all ok (handle-close reuse verified)", repeatN)
+	t.Logf("PDFPage1Pair x%d sequential calls: all ok (handle-close reuse verified)", repeatN)
 
 	// Kill one worker subprocess to test auto-respawn.
 	myPID := os.Getpid()
@@ -127,7 +105,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	// hand-rolled relay had), but it self-heals on demand rather than eagerly.
 	//
 	// To prove BOTH guarantees we drive SUSTAINED concurrent load: more
-	// goroutines than poolSize hammering PDFSlice keeps >= poolSize borrows
+	// goroutines than poolSize hammering PDFPage1Pair keeps >= poolSize borrows
 	// in flight at once, which forces the pool to instantiate up to MaxTotal
 	// live workers again. We assert (a) every call succeeds (resilience) and
 	// (b) the live worker count climbs back to poolSize (on-demand respawn).
@@ -148,13 +126,13 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 					return
 				default:
 				}
-				data, err := PDFSlice(context.Background(), pdfData, 1, 0)
+				got, err := PDFPage1Pair(context.Background(), pdfData)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				if len(data) == 0 {
-					errCh <- fmt.Errorf("empty PDFSlice result")
+				if len(got.M.Body) == 0 {
+					errCh <- fmt.Errorf("empty PDFPage1Pair result")
 					return
 				}
 			}
@@ -171,7 +149,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 		case err := <-errCh:
 			close(stop)
 			wg.Wait()
-			t.Fatalf("PDFSlice failed under post-kill load: %v", err)
+			t.Fatalf("PDFPage1Pair failed under post-kill load: %v", err)
 		default:
 		}
 		if len(findChildPIDs(t, myPID)) >= poolSize {
@@ -185,7 +163,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	// drain any late error
 	select {
 	case err := <-errCh:
-		t.Fatalf("PDFSlice failed under post-kill load: %v", err)
+		t.Fatalf("PDFPage1Pair failed under post-kill load: %v", err)
 	default:
 	}
 	current := findChildPIDs(t, myPID)

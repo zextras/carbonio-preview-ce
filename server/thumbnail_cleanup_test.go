@@ -55,11 +55,11 @@ func (s *scriptedStore) RetrieveData(context.Context, string, int, string, strin
 	return []byte("blob"), nil
 }
 
-func (s *scriptedStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, error) {
+func (s *scriptedStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, int64, error) {
 	if s.retrieveErr != nil {
-		return nil, s.retrieveErr
+		return nil, 0, s.retrieveErr
 	}
-	return io.NopCloser(strings.NewReader(s.body)), nil
+	return io.NopCloser(strings.NewReader(s.body)), int64(len(s.body)), nil
 }
 
 func (s *scriptedStore) StoreData(_ context.Context, nodeID string, _ int, _ string, _ string, _ []byte) (string, error) {

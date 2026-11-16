@@ -110,60 +110,47 @@ func TestFullFlow(t *testing.T) {
 		doc:  testsupport.LoadFixture(testsupport.FixtureDoc),
 	}
 
-	// ---- image preview ----
-	t.Run("image_preview", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.jpeg, "image/jpeg")
+	previewURL := func(ts *httptest.Server, mime string) string {
+		return ts.URL + "/preview/" + validUUID + "/1?service_type=files&mime=" + mime
+	}
+	thumbURL := func(ts *httptest.Server, size, mime string) string {
+		return ts.URL + "/thumbnail/" + validUUID + "/1/" + size + "?service_type=files&mime=" + mime
+	}
+	start := func(t *testing.T, blob []byte, contentType string, c *cache.Cache) (*httptest.Server, *testsupport.StoragesMock, *testsupport.CollaboraMock) {
+		t.Helper()
+		storages := testsupport.NewStoragesMock("download", blob, contentType)
 		t.Cleanup(storages.Close)
 		collabora := testsupport.NewCollaboraMock(fx.pdf)
 		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
+		return buildFullFlowServer(t, storages, collabora, c), storages, collabora
+	}
 
-		code, ct, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/100x100/?service_type=files")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if ct != "image/jpeg" {
-			t.Errorf("Content-Type=%q, want image/jpeg", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty rendered body")
+	t.Run("image_preview_is_passthrough", func(t *testing.T) {
+		ts, _, _ := start(t, fx.jpeg, "image/jpeg", cache.New(0))
+		code, ct, body := getBody(t, previewURL(ts, "image/jpeg"))
+		if code != http.StatusOK || ct != "image/jpeg" || !bytes.Equal(body, fx.jpeg) {
+			t.Fatalf("status=%d ct=%q identical=%v, want 200 image/jpeg byte-identical", code, ct, bytes.Equal(body, fx.jpeg))
 		}
 	})
 
-	// ---- image thumbnail (PNG output) ----
-	t.Run("image_thumbnail_png", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.png, "image/png")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/50x50/thumbnail/?service_type=files&output_format=png")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
+	t.Run("image_thumbnail_alpha_png_is_png", func(t *testing.T) {
+		src := pngOf(t, 1000, 600, true)
+		ts, _, _ := start(t, src, "image/png", cache.New(0))
+		code, ct, body := getBody(t, thumbURL(ts, "s", "image/png"))
+		if code != http.StatusOK || ct != "image/png" {
+			t.Fatalf("status=%d ct=%q, want 200 image/png", code, ct)
 		}
-		if ct != "image/png" {
-			t.Errorf("Content-Type=%q, want image/png", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty rendered body")
+		if w, h, f := decodeInfo(t, body); f != "png" || max(w, h) > 320 {
+			t.Fatalf("decoded %dx%d %s, want a PNG with long side <= 320", w, h, f)
 		}
 	})
 
-	t.Run("image_preview_full_size_gif_is_original", func(t *testing.T) {
+	t.Run("gif_preview_is_passthrough", func(t *testing.T) {
 		original := animatedGIFFixture(t)
-		storages := testsupport.NewStoragesMock("download", original, "image/gif")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/0x0/?service_type=files&quality=high&output_format=gif")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if ct != "image/gif" {
-			t.Errorf("Content-Type=%q, want image/gif", ct)
+		ts, _, _ := start(t, original, "image/gif", cache.New(0))
+		code, ct, body := getBody(t, previewURL(ts, "image/gif"))
+		if code != http.StatusOK || ct != "image/gif" {
+			t.Fatalf("status=%d ct=%q, want 200 image/gif", code, ct)
 		}
 		if !bytes.Equal(body, original) {
 			t.Fatalf("body differs from the stored GIF (len %d vs %d, prefix=%X)", len(body), len(original), firstN(body, 8))
@@ -174,130 +161,55 @@ func TestFullFlow(t *testing.T) {
 		}
 	})
 
-	t.Run("image_thumbnail_gif_stays_static", func(t *testing.T) {
-		original := animatedGIFFixture(t)
-		storages := testsupport.NewStoragesMock("download", original, "image/gif")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
+	t.Run("gif_thumbnails", func(t *testing.T) {
+		ts, _, _ := start(t, gifOf(t, 600, 400, 1), "image/gif", cache.New(0))
+		code, ct, body := getBody(t, thumbURL(ts, "s", "image/gif"))
+		if code != http.StatusOK || (ct != "image/jpeg" && ct != "image/png") {
+			t.Fatalf("static GIF thumbnail: status=%d ct=%q, want 200 jpeg or png", code, ct)
+		}
+		if w, h, _ := decodeInfo(t, body); max(w, h) != 320 {
+			t.Errorf("static GIF thumbnail %dx%d, want long side 320", w, h)
+		}
 
-		code, _, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/80x80/thumbnail/?service_type=chats&quality=high&output_format=gif&shape=rectangular")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if bytes.Equal(body, original) {
-			t.Fatal("thumbnail returned the original GIF")
-		}
-		c, _, err := image.DecodeConfig(bytes.NewReader(body))
-		if err != nil || c.Width != 80 || c.Height != 80 {
-			t.Fatalf("decoded %+v err=%v, want 80x80", c, err)
-		}
-		if anim, err := gif.DecodeAll(bytes.NewReader(body)); err == nil && len(anim.Image) != 1 {
-			t.Errorf("thumbnail frames=%d, want a static image", len(anim.Image))
+		ts, _, _ = start(t, animatedGIFFixture(t), "image/gif", cache.New(0))
+		if code, _, _ := getBody(t, thumbURL(ts, "m", "image/gif")+"&digest=x"); code != http.StatusFailedDependency {
+			t.Errorf("animated GIF thumbnail without a DB: status=%d, want 424", code)
 		}
 	})
 
-	// ---- pdf preview ----
-	t.Run("pdf_preview", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.pdf, "application/pdf")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/pdf/"+validUUID+"/1/?service_type=files")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if ct != "application/pdf" {
-			t.Errorf("Content-Type=%q, want application/pdf", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty sliced PDF body")
-		}
-		if !bytes.HasPrefix(body, []byte("%PDF")) {
-			t.Errorf("body does not look like a PDF (prefix=%q)", firstN(body, 8))
+	t.Run("pdf_preview_is_passthrough", func(t *testing.T) {
+		ts, _, _ := start(t, fx.pdf, "application/pdf", cache.New(0))
+		code, ct, body := getBody(t, previewURL(ts, "application/pdf"))
+		if code != http.StatusOK || ct != "application/pdf" || !bytes.Equal(body, fx.pdf) {
+			t.Fatalf("status=%d ct=%q identical=%v, want 200 application/pdf byte-identical", code, ct, bytes.Equal(body, fx.pdf))
 		}
 	})
 
-	// ---- pdf thumbnail ----
 	t.Run("pdf_thumbnail", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.pdf, "application/pdf")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/pdf/"+validUUID+"/1/100x100/thumbnail/?service_type=files")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
+		ts, _, _ := start(t, fx.pdf, "application/pdf", cache.New(0))
+		code, ct, body := getBody(t, thumbURL(ts, "m", "application/pdf"))
+		if code != http.StatusOK || ct != "image/jpeg" {
+			t.Fatalf("status=%d ct=%q, want 200 image/jpeg", code, ct)
 		}
-		if ct != "image/jpeg" {
-			t.Errorf("Content-Type=%q, want image/jpeg (default output_format)", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty rasterized thumbnail body")
+		if w, h, _ := decodeInfo(t, body); max(w, h) != 1280 {
+			t.Errorf("M thumbnail %dx%d, want long side 1280", w, h)
 		}
 	})
 
-	// ---- document preview (real Collabora mock → real PDF render) ----
-	t.Run("document_preview", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.doc, "application/octet-stream")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/document/"+validUUID+"/1/?service_type=files")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if ct != "application/pdf" {
-			t.Errorf("Content-Type=%q, want application/pdf", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty document-preview body")
+	t.Run("document_preview_is_pdf", func(t *testing.T) {
+		ts, _, collabora := start(t, fx.doc, "application/octet-stream", cache.New(0))
+		code, ct, body := getBody(t, previewURL(ts, docxMime))
+		if code != http.StatusOK || ct != "application/pdf" || !bytes.HasPrefix(body, []byte("%PDF")) {
+			t.Fatalf("status=%d ct=%q prefix=%q, want 200 application/pdf", code, ct, firstN(body, 8))
 		}
 		if collabora.Hits() != 1 {
 			t.Errorf("collabora hits=%d, want 1", collabora.Hits())
 		}
 	})
 
-	// ---- document thumbnail (real Collabora mock → real PDF rasterize) ----
-	t.Run("document_thumbnail", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.doc, "application/octet-stream")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		collabora.PNG = fx.png
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
-
-		code, ct, body := getBody(t, ts.URL+"/preview/document/"+validUUID+"/1/100x100/thumbnail/?service_type=files")
-		if code != http.StatusOK {
-			t.Fatalf("status=%d, want 200", code)
-		}
-		if ct != "image/jpeg" {
-			t.Errorf("Content-Type=%q, want image/jpeg (default output_format)", ct)
-		}
-		if len(body) == 0 {
-			t.Error("empty document-thumbnail body")
-		}
-		cfgImg, format, err := image.DecodeConfig(bytes.NewReader(body))
-		if err != nil || format != "jpeg" || cfgImg.Width != 80 || cfgImg.Height != 80 {
-			t.Errorf("thumbnail decode: cfg=%+v format=%q err=%v, want 80x80 jpeg", cfgImg, format, err)
-		}
-	})
-
-	// ---- cache-hit full flow: image (same GET twice → storages hit once) ----
-	t.Run("cache_hit_image", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.jpeg, "image/jpeg")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(8<<20))
-
-		url := ts.URL + "/preview/image/" + validUUID + "/1/100x100/?service_type=files"
+	t.Run("cache_hit_thumbnail", func(t *testing.T) {
+		ts, storages, _ := start(t, fx.jpeg, "image/jpeg", cache.New(8<<20))
+		url := thumbURL(ts, "m", "image/jpeg")
 		c1, ct1, b1 := getBody(t, url)
 		c2, ct2, b2 := getBody(t, url)
 		if c1 != http.StatusOK || c2 != http.StatusOK {
@@ -306,37 +218,23 @@ func TestFullFlow(t *testing.T) {
 		if storages.Hits() != 1 {
 			t.Errorf("storages hits=%d, want 1 (second served from real cache)", storages.Hits())
 		}
-		if ct1 != ct2 {
-			t.Errorf("content-type differs: %q vs %q", ct1, ct2)
-		}
-		if !bytes.Equal(b1, b2) {
-			t.Error("cached body differs from first render")
+		if ct1 != ct2 || !bytes.Equal(b1, b2) {
+			t.Error("cached thumbnail differs from the first")
 		}
 	})
 
-	// ---- cache-hit full flow: pdf (same GET twice → storages hit once) ----
-	t.Run("cache_hit_pdf", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.pdf, "application/pdf")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(8<<20))
-
-		url := ts.URL + "/preview/pdf/" + validUUID + "/1/?service_type=files"
-		c1, _, b1 := getBody(t, url)
-		c2, _, b2 := getBody(t, url)
-		if c1 != http.StatusOK || c2 != http.StatusOK {
-			t.Fatalf("status: first=%d second=%d, want 200/200", c1, c2)
+	t.Run("previews_are_never_cached", func(t *testing.T) {
+		ts, storages, _ := start(t, fx.pdf, "application/pdf", cache.New(8<<20))
+		for i := 0; i < 2; i++ {
+			if code, _, _ := getBody(t, previewURL(ts, "application/pdf")); code != http.StatusOK {
+				t.Fatalf("GET %d: status=%d", i, code)
+			}
 		}
-		if storages.Hits() != 1 {
-			t.Errorf("storages hits=%d, want 1 (second served from real cache)", storages.Hits())
-		}
-		if !bytes.Equal(b1, b2) {
-			t.Error("cached PDF body differs from first slice")
+		if storages.Hits() != 2 {
+			t.Errorf("storages hits=%d, want 2", storages.Hits())
 		}
 	})
 
-	// ---- error: storages 404 → handler not-found (404) ----
 	t.Run("error_storages_404", func(t *testing.T) {
 		storages := testsupport.NewStoragesMock("download", nil, "")
 		storages.Status = http.StatusNotFound
@@ -345,32 +243,25 @@ func TestFullFlow(t *testing.T) {
 		t.Cleanup(collabora.Close)
 		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
 
-		// Verified against image.go:149-151 and pdf.go:141-143: storage
-		// ErrNotFound maps to errNotFound → HTTP 404 with {"detail": ItemNotFound}.
-		code, ct, body := getBody(t, ts.URL+"/preview/image/"+validUUID+"/1/100x100/?service_type=files")
-		if code != http.StatusNotFound {
-			t.Fatalf("status=%d, want 404", code)
-		}
-		if !hasPrefix(ct, "application/json") {
-			t.Errorf("Content-Type=%q, want application/json", ct)
-		}
-		if !bytes.Contains(body, []byte(config.Msg.ItemNotFound)) {
-			t.Errorf("body=%q does not contain ItemNotFound message %q", body, config.Msg.ItemNotFound)
+		for _, url := range []string{previewURL(ts, "image/jpeg"), thumbURL(ts, "m", "image/jpeg")} {
+			code, ct, body := getBody(t, url)
+			if code != http.StatusNotFound {
+				t.Fatalf("%s: status=%d, want 404", url, code)
+			}
+			if !hasPrefix(ct, "application/json") {
+				t.Errorf("Content-Type=%q, want application/json", ct)
+			}
+			if !bytes.Contains(body, []byte(config.Msg.ItemNotFound)) {
+				t.Errorf("body=%q does not contain ItemNotFound message %q", body, config.Msg.ItemNotFound)
+			}
 		}
 	})
 
-	// ---- error: Collabora 5xx → 502 ----
 	t.Run("error_collabora_5xx", func(t *testing.T) {
-		storages := testsupport.NewStoragesMock("download", fx.doc, "application/octet-stream")
-		t.Cleanup(storages.Close)
-		collabora := testsupport.NewCollaboraMock(fx.pdf)
+		ts, _, collabora := start(t, fx.doc, "application/octet-stream", cache.New(0))
 		collabora.Status = http.StatusInternalServerError
-		t.Cleanup(collabora.Close)
-		ts := buildFullFlowServer(t, storages, collabora, cache.New(0))
 
-		// Verified against document.go:167-172: a Collabora failure maps to
-		// errDetail(StatusBadGateway) → HTTP 502.
-		code, ct, _ := getBody(t, ts.URL+"/preview/document/"+validUUID+"/1/?service_type=files")
+		code, ct, _ := getBody(t, previewURL(ts, docxMime))
 		if code != http.StatusBadGateway {
 			t.Fatalf("status=%d, want 502", code)
 		}

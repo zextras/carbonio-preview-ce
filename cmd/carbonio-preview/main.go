@@ -46,7 +46,6 @@ import (
 	// the Advanced binary import config/migrate for the framework alone,
 	// without inheriting CE's migrations).
 	_ "github.com/zextras/carbonio-preview-ce/v4/config/migrate/cemig"
-	"github.com/zextras/carbonio-preview-ce/v4/render"
 	"github.com/zextras/carbonio-preview-ce/v4/server"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
@@ -66,11 +65,6 @@ func main() {
 	}
 
 	cfg := &config.App
-
-	// Propagate the configured minimum resolution to the render package so that
-	// ConvertRequestedSize applies the operator-configured IMAGE_MIN_RES value
-	// (default 80) instead of the package default.
-	render.SetImageMinRes(cfg.ImageMinimumResolution)
 
 	// Build the storage client.
 	// CE uses DirectClient: a single-endpoint HTTP client to carbonio-storages.

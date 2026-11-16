@@ -231,13 +231,13 @@ func registerCEKeys() {
 			Key:         "document.enable-preview",
 			Namespace:   NamespaceApplication,
 			Default:     "true",
-			Description: "Whether full-page document preview is enabled.",
+			Description: "Whether office document previews (conversion to PDF) are enabled.",
 		},
 		{
 			Key:         "document.enable-thumbnail",
 			Namespace:   NamespaceApplication,
 			Default:     "false",
-			Description: "Whether document thumbnail generation is enabled.",
+			Description: "Whether office document thumbnails are enabled.",
 		},
 		{
 			Key:         "image-document.fetch-timeout-seconds",
@@ -255,14 +255,14 @@ func registerCEKeys() {
 			Key:         "cache-max-mb",
 			Namespace:   NamespaceApplication,
 			Default:     "256",
-			Description: "Size budget (MiB) of the global rendered-output cache shared by all preview types (image, PDF, document, video); 0 disables it.",
+			Description: "Size budget (MiB) of the in-memory thumbnail cache (S/M thumbnails and pending animated GIF frames); previews are never cached; 0 disables it.",
 		},
 		{
 			Key:          "image-document.max-concurrent-operations",
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum number of render operations (image, PDF, document and the resize of video previews) running at the same time. Only CPU work counts: storage transfers, uploads and document conversions take no slot. Video frame extraction is bounded separately. Default: CPU count.",
+			Description:  "Maximum number of render operations (libvips and PDFium calls of thumbnails and image conversions) running at the same time. Only CPU work counts: storage transfers, uploads and document conversions take no slot. ffmpeg runs and Collabora conversions of asynchronous thumbnails are bounded separately. Default: CPU count.",
 		},
 		{
 			Key:          "document.subprocess-pool-size",

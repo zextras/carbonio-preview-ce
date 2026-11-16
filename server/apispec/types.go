@@ -59,120 +59,6 @@ func (ServiceType) Schema(huma.Registry) *huma.Schema {
 		string(ServiceTypeFiles), string(ServiceTypeChats))
 }
 
-// Quality represents the image rendering quality.
-type Quality string
-
-const (
-	QualityLowest  Quality = "lowest"
-	QualityLow     Quality = "low"
-	QualityMedium  Quality = "medium"
-	QualityHigh    Quality = "high"
-	QualityHighest Quality = "highest"
-)
-
-// Schema implements huma.SchemaProvider.
-func (Quality) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Output image quality",
-		string(QualityLowest), string(QualityLow), string(QualityMedium),
-		string(QualityHigh), string(QualityHighest))
-}
-
-// Shape represents the image thumbnail border shape.
-type Shape string
-
-const (
-	ShapeRounded     Shape = "rounded"
-	ShapeRectangular Shape = "rectangular"
-)
-
-// Schema implements huma.SchemaProvider.
-func (Shape) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Thumbnail border shape",
-		string(ShapeRounded), string(ShapeRectangular))
-}
-
-// ImageType represents the output image format.
-type ImageType string
-
-const (
-	ImageTypeJPEG ImageType = "jpeg"
-	ImageTypePNG  ImageType = "png"
-	ImageTypeGIF  ImageType = "gif"
-)
-
-// Schema implements huma.SchemaProvider.
-func (ImageType) Schema(huma.Registry) *huma.Schema {
-	return enumStringSchema("Output image format",
-		string(ImageTypeJPEG), string(ImageTypePNG), string(ImageTypeGIF))
-}
-
-// ---------------------------------------------------------------------------
-// Binary output type shared by all image operations
-// ---------------------------------------------------------------------------
-
-// BinOut is the output struct for operations that return binary image data.
-// The ContentType header is set per-request by the handler.
-type BinOut struct {
-	ContentType string `header:"Content-Type"`
-	Body        []byte
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — image GET
-// ---------------------------------------------------------------------------
-
-// ImageGetPreviewInput holds all path + query params for GET image preview.
-// Fields are listed inline (not embedded) to avoid huma's embedded struct skipping.
-type ImageGetPreviewInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the image (UUID1–UUID4)"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the image (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Crop         bool        `query:"crop"          default:"false"             doc:"Crop to fill (true) or scale to fit (false)"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
-}
-
-// ImageGetThumbnailInput holds all path + query params for GET image thumbnail.
-type ImageGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the image (UUID1–UUID4)"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the image (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — image POST (multipart)
-// ---------------------------------------------------------------------------
-
-// ImagePostFiles is the multipart body schema for POST image operations.
-type ImagePostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"Image file to process"`
-}
-
-// ImagePostPreviewInput holds path + query params + multipart body for POST preview.
-type ImagePostPreviewInput struct {
-	Area         string    `path:"area" pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	Quality      Quality   `query:"quality"       default:"medium" doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"   doc:"Output image format"`
-	Crop         bool      `query:"crop"          default:"false"  doc:"Crop to fill (true) or scale to fit (false)"`
-	RawBody      huma.MultipartFormFiles[ImagePostFiles]
-}
-
-// ImagePostThumbnailInput holds path + query params + multipart body for POST thumbnail.
-type ImagePostThumbnailInput struct {
-	Area         string    `path:"area" pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	Quality      Quality   `query:"quality"       default:"medium" doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"   doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular" doc:"Thumbnail border shape"`
-	RawBody      huma.MultipartFormFiles[ImagePostFiles]
-}
-
 // ---------------------------------------------------------------------------
 // Health output structs
 // ---------------------------------------------------------------------------
@@ -203,136 +89,7 @@ type HealthFullOutput struct {
 	Body *HealthResponse
 }
 
-// ---------------------------------------------------------------------------
-// Binary response schema helper
-// ---------------------------------------------------------------------------
-
 var imageBinaryResponseSchema = &huma.Schema{Type: "string", Format: "binary"}
-
-// ImageBinaryResponse defines the 200 response for image operations with
-// multiple possible content types.
-var ImageBinaryResponse = &huma.Response{
-	Description: "Successful Response — binary image data",
-	Content: map[string]*huma.MediaType{
-		"image/jpeg": {Schema: imageBinaryResponseSchema},
-		"image/png":  {Schema: imageBinaryResponseSchema},
-		"image/gif":  {Schema: imageBinaryResponseSchema},
-	},
-}
-
-// PDFBinaryResponse defines the 200 response for PDF operations.
-var PDFBinaryResponse = &huma.Response{
-	Description: "Successful Response — PDF bytes",
-	Content: map[string]*huma.MediaType{
-		"application/pdf": {Schema: imageBinaryResponseSchema},
-	},
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — PDF GET
-// ---------------------------------------------------------------------------
-
-// PDFGetPreviewInput holds all path + query params for GET PDF preview.
-type PDFGetPreviewInput struct {
-	ID          string      `path:"id"            format:"uuid"              doc:"UUID of the PDF"`
-	Version     int         `path:"version"       minimum:"0"                doc:"Version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true"            doc:"Service that owns the resource"`
-	FirstPage   int         `query:"first_page"   default:"1" doc:"First page (1-based, default 1)"`
-	LastPage    int         `query:"last_page"    default:"0" doc:"Last page (0 = all, default 0)"`
-	FileOwnerID string      `header:"fileownerid"             doc:"File owner ID" required:"false"`
-}
-
-// PDFGetThumbnailInput holds all path + query params for GET PDF thumbnail.
-type PDFGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the PDF"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — PDF POST
-// ---------------------------------------------------------------------------
-
-// PDFPostFiles is the multipart body schema for POST PDF operations.
-type PDFPostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"PDF file to process"`
-}
-
-// PDFPostPreviewInput holds query params + multipart body for POST PDF preview.
-type PDFPostPreviewInput struct {
-	FirstPage int `query:"first_page" default:"1" doc:"First page (1-based, default 1)"`
-	LastPage  int `query:"last_page"  default:"0" doc:"Last page (0 = all, default 0)"`
-	RawBody   huma.MultipartFormFiles[PDFPostFiles]
-}
-
-// PDFPostThumbnailInput holds path + query params + multipart body for POST PDF thumbnail.
-type PDFPostThumbnailInput struct {
-	Area         string    `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	Quality      Quality   `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	RawBody      huma.MultipartFormFiles[PDFPostFiles]
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — Document GET
-// ---------------------------------------------------------------------------
-
-// DocGetPreviewInput holds all path + query params for GET document preview.
-type DocGetPreviewInput struct {
-	ID          string      `path:"id"            format:"uuid"              doc:"UUID of the document"`
-	Version     int         `path:"version"       minimum:"0"                doc:"Version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true"            doc:"Service that owns the resource"`
-	FirstPage   int         `query:"first_page"   default:"1" doc:"First page (1-based, default 1)"`
-	LastPage    int         `query:"last_page"    default:"0" doc:"Last page (0 = all, default 0)"`
-	LangTag     string      `query:"lang_tag"     default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion (default en-US)"`
-	FileOwnerID string      `header:"fileownerid"               doc:"File owner ID" required:"false"`
-}
-
-// DocGetThumbnailInput holds all path + query params for GET document thumbnail.
-type DocGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the document"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version (non-negative)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string      `query:"lang_tag"                      default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID" required:"false"`
-}
-
-// ---------------------------------------------------------------------------
-// Input structs — Document POST
-// ---------------------------------------------------------------------------
-
-// DocPostFiles is the multipart body schema for POST document operations.
-type DocPostFiles struct {
-	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"Document file to process"`
-}
-
-// DocPostPreviewInput holds query params + multipart body for POST document preview.
-type DocPostPreviewInput struct {
-	FirstPage int    `query:"first_page" default:"1"     doc:"First page (1-based, default 1)"`
-	LastPage  int    `query:"last_page"  default:"0"     doc:"Last page (0 = all, default 0)"`
-	LangTag   string `query:"lang_tag"   default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
-	RawBody   huma.MultipartFormFiles[DocPostFiles]
-}
-
-// DocPostThumbnailInput holds path + query params + multipart body for POST document thumbnail.
-type DocPostThumbnailInput struct {
-	Area         string    `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels"`
-	Quality      Quality   `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape     `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	LangTag      string    `query:"lang_tag"                      default:"en-US" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for conversion"`
-	RawBody      huma.MultipartFormFiles[DocPostFiles]
-}
 
 // ---------------------------------------------------------------------------
 // Thumbnails
@@ -405,5 +162,36 @@ var ThumbnailAccepted = &huma.Response{
 	Content: map[string]*huma.MediaType{
 		"image/jpeg": {Schema: imageBinaryResponseSchema},
 		"image/png":  {Schema: imageBinaryResponseSchema},
+	},
+}
+
+type PreviewGetInput struct {
+	ID          string      `path:"id" format:"uuid" doc:"UUID of the file (UUID1-UUID4)"`
+	Version     int         `path:"version" minimum:"0" doc:"Version of the file (non-negative integer)"`
+	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
+	Mime        string      `query:"mime" required:"true" maxLength:"255" doc:"MIME type of the file as recorded by the caller"`
+	Lang        string      `query:"lang" default:"en-US" maxLength:"35" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for office conversions"`
+	FileOwnerID string      `header:"fileownerid" required:"false" doc:"File owner ID for Advanced storage routing"`
+}
+
+type PreviewPostInput struct {
+	Mime    string `query:"mime" required:"true" maxLength:"255" doc:"MIME type of the uploaded file"`
+	Lang    string `query:"lang" default:"en-US" maxLength:"35" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for office conversions"`
+	RawBody huma.MultipartFormFiles[UploadFiles]
+}
+
+// Body writes the status and the payload itself, so a source can be streamed without buffering it.
+type PreviewOutput struct {
+	ContentType   string `header:"Content-Type"`
+	ContentLength string `header:"Content-Length"`
+	Body          func(huma.Context)
+}
+
+var PreviewOK = &huma.Response{
+	Description: "Successful Response — the file itself (images, PDF, video) or its conversion to JPEG, PNG or PDF",
+	Content: map[string]*huma.MediaType{
+		"image/*":         {Schema: imageBinaryResponseSchema},
+		"video/*":         {Schema: imageBinaryResponseSchema},
+		"application/pdf": {Schema: imageBinaryResponseSchema},
 	},
 }

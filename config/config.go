@@ -25,22 +25,15 @@ import (
 // Field names follow the Python "flat key" naming used in AppConfig.
 type Config struct {
 	// carbonio.preview.*
-	// ServiceName, ServiceImageName, ServicePDFName, ServiceDocumentName, and
-	// ServiceHealthName are hardcoded by design: routes are not operator-configurable.
+	// ServiceName and ServiceHealthName are hardcoded by design: routes are not operator-configurable.
 	ServiceName                    string
 	ServiceIP                      string
 	ServicePort                    string
 	ServiceTimeoutInSeconds        int
 	ServiceDocsTimeout             int
-	ServiceImageName               string
 	ServiceHealthName              string
-	ServicePDFName                 string
-	ServiceDocumentName            string
 	ServiceEnableDocumentPreview   bool
 	ServiceEnableDocumentThumbnail bool
-
-	// image_constants.* — hardcoded constant; not operator-configurable.
-	ImageMinimumResolution int
 
 	// carbonio.storages.* — endpoint paths are hardcoded constants.
 	StorageDownloadAPI string
@@ -138,7 +131,6 @@ const (
 	storageHealthCheck           = "health/live"
 	documentConversionEndpoint   = "services/docs/editor"
 	documentConversionConvertAPI = "cool/convert-to"
-	imageMinimumResolution       = 80
 
 	// vipsConcurrency is the libvips internal-threads setting. It is a plain
 	// internal constant (=1), not an operator knob: no registry key, no env var,
@@ -202,9 +194,6 @@ func Load() error {
 
 	// ── Hardcoded route constants (not operator-configurable by design) ────────
 	c.ServiceName = "preview"
-	c.ServiceImageName = "image"
-	c.ServicePDFName = "pdf"
-	c.ServiceDocumentName = "document"
 	c.ServiceHealthName = "health"
 
 	// ── Networking layer ───────────────────────────────────────────────────────
@@ -321,7 +310,6 @@ func Load() error {
 	c.StorageHealthCheck = storageHealthCheck
 	c.DocumentConversionServiceEndpoint = documentConversionEndpoint
 	c.DocumentConversionConvertAPI = documentConversionConvertAPI
-	c.ImageMinimumResolution = imageMinimumResolution
 
 	// ── libvips internal-threads (plain internal constant; not a knob) ────────
 	c.VIPSConcurrency = vipsConcurrency

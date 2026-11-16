@@ -356,7 +356,7 @@ func TestRetrieveDataStreaming_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
-	rc, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
+	rc, size, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
 	if err != nil {
 		t.Fatalf("RetrieveDataStreaming: %v", err)
 	}
@@ -364,6 +364,9 @@ func TestRetrieveDataStreaming_HappyPath(t *testing.T) {
 	got, _ := io.ReadAll(rc)
 	if string(got) != string(want) {
 		t.Fatalf("got %q want %q", got, want)
+	}
+	if size != int64(len(want)) {
+		t.Errorf("size = %d, want Content-Length %d", size, len(want))
 	}
 }
 
@@ -373,7 +376,7 @@ func TestRetrieveDataStreaming_404(t *testing.T) {
 	}))
 	defer srv.Close()
 	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
-	_, err := client.RetrieveDataStreaming(context.Background(), "x", 1, "files", "")
+	_, _, err := client.RetrieveDataStreaming(context.Background(), "x", 1, "files", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
@@ -415,11 +418,14 @@ func TestRetrieveDataStreaming_ExceedsFetchTimeout_NotAborted(t *testing.T) {
 	const fetchTimeout = 80 * time.Millisecond
 	client := NewDirectClient(srv.URL, "download", "upload", "delete", fetchTimeout)
 
-	rc, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
+	rc, size, err := client.RetrieveDataStreaming(context.Background(), "node-1", 1, "files", "")
 	if err != nil {
 		t.Fatalf("RetrieveDataStreaming: %v", err)
 	}
 	defer rc.Close()
+	if size != -1 {
+		t.Errorf("chunked response size = %d, want -1", size)
+	}
 
 	start := time.Now()
 	got, err := io.ReadAll(rc)
@@ -454,7 +460,7 @@ func TestRetrieveDataStreaming_CtxCancel_AbortsDespiteUnboundedTimeout(t *testin
 	client := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	rc, err := client.RetrieveDataStreaming(ctx, "node-1", 1, "files", "")
+	rc, _, err := client.RetrieveDataStreaming(ctx, "node-1", 1, "files", "")
 	if err != nil {
 		t.Fatalf("RetrieveDataStreaming: %v", err)
 	}

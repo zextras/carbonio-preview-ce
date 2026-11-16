@@ -21,6 +21,13 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/video"
 )
 
+func TestMain(m *testing.M) {
+	if err := InitVips("carbonio-preview-test"); err != nil {
+		panic("InitVips failed: " + err.Error())
+	}
+	m.Run()
+}
+
 func noisyRGBA(w, h int) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {

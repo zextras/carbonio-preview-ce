@@ -121,11 +121,11 @@ func (c *controllableStore) RetrieveData(_ context.Context, _ string, _ int, _ s
 	return []byte("fake-blob"), nil
 }
 
-func (c *controllableStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, error) {
+func (c *controllableStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.readers) == 0 {
-		return io.NopCloser(strings.NewReader("fake-video")), nil
+		return io.NopCloser(strings.NewReader("fake-video")), -1, nil
 	}
 	rc := c.readers[0]
 	if len(c.readers) > 1 {
@@ -133,7 +133,7 @@ func (c *controllableStore) RetrieveDataStreaming(_ context.Context, _ string, _
 	} else {
 		// keep the last one for repeated calls
 	}
-	return rc, nil
+	return rc, -1, nil
 }
 
 func (c *controllableStore) StoreData(_ context.Context, nodeID string, _ int, _ string, _ string, _ []byte) (string, error) {
@@ -707,9 +707,9 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 
 type headerBlockingStore struct{ controllableStore }
 
-func (*headerBlockingStore) RetrieveDataStreaming(ctx context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, error) {
+func (*headerBlockingStore) RetrieveDataStreaming(ctx context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, int64, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return nil, 0, ctx.Err()
 }
 
 func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {

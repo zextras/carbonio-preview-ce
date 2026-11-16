@@ -100,16 +100,12 @@ func TestDefaults(t *testing.T) {
 		{"PDFWorkers", App.PDFWorkers, runtime.NumCPU()},
 		{"VIPSConcurrency", App.VIPSConcurrency, 1},
 		// hardcoded constants
-		{"ImageMinimumResolution", App.ImageMinimumResolution, 80},
 		{"StorageDownloadAPI", App.StorageDownloadAPI, "download"},
 		{"StorageHealthCheck", App.StorageHealthCheck, "health/live"},
 		{"DocumentConversionServiceEndpoint", App.DocumentConversionServiceEndpoint, "services/docs/editor"},
 		{"DocumentConversionConvertAPI", App.DocumentConversionConvertAPI, "cool/convert-to"},
 		// hardcoded routes
 		{"ServiceName", App.ServiceName, "preview"},
-		{"ServiceImageName", App.ServiceImageName, "image"},
-		{"ServicePDFName", App.ServicePDFName, "pdf"},
-		{"ServiceDocumentName", App.ServiceDocumentName, "document"},
 		{"ServiceHealthName", App.ServiceHealthName, "health"},
 	}
 	for _, tt := range tests {
@@ -206,18 +202,12 @@ func TestHardcodedRoutes(t *testing.T) {
 		t.Fatalf("Load(): %v", err)
 	}
 	routes := map[string]string{
-		"ServiceName":         App.ServiceName,
-		"ServiceImageName":    App.ServiceImageName,
-		"ServicePDFName":      App.ServicePDFName,
-		"ServiceDocumentName": App.ServiceDocumentName,
-		"ServiceHealthName":   App.ServiceHealthName,
+		"ServiceName":       App.ServiceName,
+		"ServiceHealthName": App.ServiceHealthName,
 	}
 	want := map[string]string{
-		"ServiceName":         "preview",
-		"ServiceImageName":    "image",
-		"ServicePDFName":      "pdf",
-		"ServiceDocumentName": "document",
-		"ServiceHealthName":   "health",
+		"ServiceName":       "preview",
+		"ServiceHealthName": "health",
 	}
 	for k, v := range routes {
 		if v != want[k] {
@@ -578,9 +568,6 @@ func TestMessages(t *testing.T) {
 		{"ItemNotFound", m.ItemNotFound, "Requested item was not found in the storage."},
 		{"InputError", m.InputError, "Some values in the query were not correct."},
 		{"DocsEditorUnavailable", m.DocsEditorUnavailable, "Carbonio-docs-editor is currently unavailable, document preview service is currently offline."},
-		{"HeightOrWidthNotInserted", m.HeightOrWidthNotInserted, "Height or width not found, example of valid input: 120x250."},
-		{"NumberOfPagesNotValid", m.NumberOfPagesNotValid, "Pages must be at least 1."},
-		{"HeightWidthNotValid", m.HeightWidthNotValid, "Height or width values must be integers >= 0."},
 		{"IDNotValid", m.IDNotValid, "Id is not in a valid format, UUID1 to UUID4 are supported."},
 		{"VersionNotValid", m.VersionNotValid, "Version is not valid, the accepted values are > 0."},
 		{"FormatNotSupported", m.FormatNotSupported, "Format not supported."},
@@ -607,8 +594,8 @@ storage_unavailable_string = OVERRIDDEN storage unavailable
 carbonio_docs_editor_not_running = OVERRIDDEN docs editor unavailable
 
 [validation]
-number_of_pages_not_valid_error = OVERRIDDEN pages not valid
-height_or_width_not_valid_error = OVERRIDDEN hw not valid
+id_not_valid_error = OVERRIDDEN id not valid
+format_not_supported_error = OVERRIDDEN format not supported
 `
 	dir := t.TempDir()
 	iniPath := filepath.Join(dir, "messages.ini")
@@ -629,11 +616,11 @@ height_or_width_not_valid_error = OVERRIDDEN hw not valid
 	if m.DocsEditorUnavailable != "OVERRIDDEN docs editor unavailable" {
 		t.Errorf("DocsEditorUnavailable = %q, want overridden value", m.DocsEditorUnavailable)
 	}
-	if m.NumberOfPagesNotValid != "OVERRIDDEN pages not valid" {
-		t.Errorf("NumberOfPagesNotValid = %q, want overridden value", m.NumberOfPagesNotValid)
+	if m.IDNotValid != "OVERRIDDEN id not valid" {
+		t.Errorf("IDNotValid = %q, want overridden value", m.IDNotValid)
 	}
-	if m.HeightWidthNotValid != "OVERRIDDEN hw not valid" {
-		t.Errorf("HeightWidthNotValid = %q, want overridden value", m.HeightWidthNotValid)
+	if m.FormatNotSupported != "OVERRIDDEN format not supported" {
+		t.Errorf("FormatNotSupported = %q, want overridden value", m.FormatNotSupported)
 	}
 	// Unoverridden field must stay default.
 	if m.ItemNotFound != "Requested item was not found in the storage." {

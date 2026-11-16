@@ -61,7 +61,7 @@ func (c *DirectClient) HealthTarget() (string, string) {
 //     included) for this long. There is no total time or size limit.
 //
 // RetrieveDataStreaming is not covered by idle: stall protection is the
-// caller's (the video worker's watchdog).
+// caller's (see server.openSource).
 func NewDirectClient(storageBaseURL, downloadAPI, uploadAPI, deleteAPI string, idle time.Duration) *DirectClient {
 	return &DirectClient{
 		downloadURL: storageBaseURL + "/" + downloadAPI,
@@ -165,8 +165,9 @@ func readBody(resp *http.Response) ([]byte, error) {
 }
 
 // RetrieveDataStreaming is the streaming variant of RetrieveData. It performs
-// the identical GET but returns resp.Body so the caller can read a prefix and
-// close early. The body MUST be closed by the caller.
+// the identical GET but returns resp.Body and its Content-Length (-1 when
+// unknown) so the caller can read a prefix and close early. The body MUST be
+// closed by the caller.
 //
 // Not bounded by the inactivity helper: only ctx (and the caller's watchdog) stops it.
 func (c *DirectClient) RetrieveDataStreaming(
@@ -175,28 +176,28 @@ func (c *DirectClient) RetrieveDataStreaming(
 	version int,
 	serviceType string,
 	_ string, // ownerID ignored in CE
-) (io.ReadCloser, error) {
+) (io.ReadCloser, int64, error) {
 	reqURL, err := buildURL(c.downloadURL, fileID, version, serviceType)
 	if err != nil {
-		return nil, fmt.Errorf("%w: building URL: %v", ErrUnavailable, err)
+		return nil, 0, fmt.Errorf("%w: building URL: %v", ErrUnavailable, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
+		return nil, 0, fmt.Errorf("%w: creating request: %v", ErrUnavailable, err)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
 		resp.Body.Close()
-		return nil, ErrNotFound
+		return nil, 0, ErrNotFound
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
-		return resp.Body, nil
+		return resp.Body, resp.ContentLength, nil
 	default:
 		resp.Body.Close()
-		return nil, fmt.Errorf("%w: storage returned HTTP %d", ErrUnavailable, resp.StatusCode)
+		return nil, 0, fmt.Errorf("%w: storage returned HTTP %d", ErrUnavailable, resp.StatusCode)
 	}
 }
 

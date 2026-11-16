@@ -194,15 +194,3 @@ func isRetryableErr(err error) bool {
 	var r *retryableError
 	return errors.As(err, &r)
 }
-
-// SanitizeOutputExtension replicates the Python _sanitize_output_extension
-// logic: JPEG/PNG (any case) are replaced with "png" before sending to
-// LibreOffice. "pdf" and other extensions are passed through unchanged.
-func SanitizeOutputExtension(ext string) string {
-	switch ext {
-	case "jpeg", "JPEG", "jpg", "JPG", "png", "PNG", "gif", "GIF":
-		return "png"
-	default:
-		return ext
-	}
-}

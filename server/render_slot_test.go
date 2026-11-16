@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
@@ -75,8 +76,10 @@ func waitFlightDone(t *testing.T, f *flight) {
 	}
 }
 
-func imagePreviewKey(version int) string {
-	return cacheKey("img-preview", validUUID, version, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "")
+const webpMime = "image/webp"
+
+func thumbnailTestKey(version int) string {
+	return thumbKey(cacheTagThumbnail, "files", "", validUUID, version, "m", "")
 }
 
 func swap[T any](t *testing.T, p *T, v T) {
@@ -132,7 +135,7 @@ func (s *gatedStore) RetrieveData(ctx context.Context, _ string, version int, _,
 	return []byte("src"), nil
 }
 
-func (s *gatedStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, error) {
+func (s *gatedStore) RetrieveDataStreaming(context.Context, string, int, string, string) (io.ReadCloser, int64, error) {
 	panic("not used")
 }
 
@@ -156,16 +159,33 @@ func waitFetch(t *testing.T, s *gatedStore, version int) {
 
 func slotMux(lim *limits, store storage.Client, c *cache.Cache) *http.ServeMux {
 	mux := http.NewServeMux()
-	api := newHumaAPI(mux)
-	deps := Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim}
-	registerImageOps(api, deps)
-	registerPDFOps(api, deps)
-	registerDocumentOps(api, deps)
+	RegisterOperations(newHumaAPI(mux), Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim})
 	return mux
 }
 
 func imageURL(version int) string {
-	return "/preview/image/" + validUUID + "/" + strconv.Itoa(version) + "/100x100/?service_type=files"
+	return "/thumbnail/" + validUUID + "/" + strconv.Itoa(version) + "/m?service_type=files&mime=" + webpMime
+}
+
+func pdfURL(version int) string {
+	return "/thumbnail/" + validUUID + "/" + strconv.Itoa(version) + "/m?service_type=files&mime=application/pdf"
+}
+
+const (
+	postImageURL = "/thumbnail/m?mime=" + webpMime
+	postDocURL   = "/thumbnail/m?mime=" + docxMime
+	postPDFURL   = "/thumbnail/m?mime=application/pdf"
+	fakePDFBytes = "%PDF-fake"
+)
+
+func thumbnailHandler(deps Deps) func(context.Context, *apispec.ThumbnailGetInput) (*apispec.ThumbnailOutput, error) {
+	return buildGetThumbnail(deps, nil)
+}
+
+func thumbnailInput(version int) *apispec.ThumbnailGetInput {
+	return &apispec.ThumbnailGetInput{
+		ID: validUUID, Version: version, Size: "m", ServiceType: "files", Mime: webpMime, Lang: "en-US",
+	}
 }
 
 func serveAsync(h http.Handler, req *http.Request) <-chan *httptest.ResponseRecorder {
@@ -191,8 +211,13 @@ func waitRec(t *testing.T, ch <-chan *httptest.ResponseRecorder) *httptest.Respo
 
 func stubRender(t *testing.T, f func(data []byte) ([]byte, error)) {
 	t.Helper()
-	swap(t, &imageThumbnailFunc, func(data []byte, _, _ int, _, _, _, _ string) ([]byte, error) {
-		return f(data)
+	swap(t, &imagePairFunc, func(data []byte) (render.Pair, error) {
+		out, err := f(data)
+		if err != nil {
+			return render.Pair{}, err
+		}
+		r := render.Rendition{Body: out, ContentType: "image/jpeg"}
+		return render.Pair{S: r, M: r}, nil
 	})
 }
 
@@ -338,7 +363,7 @@ func TestRenderSlot_PostCancelledWhileQueuedNeverHoldsSlot(t *testing.T) {
 		return []byte(fakePDFBytes), nil
 	})
 	var rasterized atomic.Int32
-	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
+	stubRender(t, func([]byte) ([]byte, error) {
 		rasterized.Add(1)
 		return []byte("jpeg"), nil
 	})
@@ -347,7 +372,7 @@ func TestRenderSlot_PostCancelledWhileQueuedNeverHoldsSlot(t *testing.T) {
 	lim.render <- struct{}{}
 	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc"))
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x100/thumbnail/", body).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodPost, postDocURL, body).WithContext(ctx)
 	req.Header.Set("Content-Type", ct)
 	done := serveAsync(mux, req)
 
@@ -384,7 +409,7 @@ func TestRenderSlot_PostWithDoneCtxTakesNoFreeSlot(t *testing.T) {
 	body, ct := buildMultipart(t, "file", "img.jpg", []byte("img"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/", body).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodPost, postImageURL, body).WithContext(ctx)
 	req.Header.Set("Content-Type", ct)
 
 	rec := waitRec(t, serveAsync(mux, req))
@@ -397,13 +422,13 @@ func TestRenderSlot_PostWithDoneCtxTakesNoFreeSlot(t *testing.T) {
 }
 
 func TestRenderSlot_PdfiumWaitEndedByCtxIsServerBusy(t *testing.T) {
-	swap(t, &pdfSliceFunc, func(context.Context, []byte, int, int) ([]byte, error) {
-		return nil, fmt.Errorf("pdfium worker wait: %w", context.Canceled)
+	swap(t, &pdfPairFunc, func(context.Context, []byte) (render.Pair, error) {
+		return render.Pair{}, fmt.Errorf("pdfium worker wait: %w", context.Canceled)
 	})
 	mux := slotMux(newLimits(1), newGatedStore(), nil)
 
 	body, ct := buildMultipart(t, "file", "doc.pdf", []byte(fakePDFBytes))
-	req := httptest.NewRequest(http.MethodPost, "/preview/pdf/", body)
+	req := httptest.NewRequest(http.MethodPost, postPDFURL, body)
 	req.Header.Set("Content-Type", ct)
 	rec := waitRec(t, serveAsync(mux, req))
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "server busy, retry") {
@@ -418,22 +443,21 @@ func TestRenderSlot_HeldOnlyAroundRenderCall(t *testing.T) {
 		convertSaw = len(lim.render)
 		return []byte(fakePDFBytes), nil
 	})
-	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
+	stubRender(t, func([]byte) ([]byte, error) {
 		rasterSaw = len(lim.render)
 		return []byte("jpeg"), nil
 	})
 	mux := slotMux(lim, newGatedStore(), nil)
 
-	get := "/preview/document/" + validUUID + "/1/100x100/thumbnail/?service_type=files"
-	if rec := waitRec(t, serveAsync(mux, httptest.NewRequest(http.MethodGet, get, nil))); rec.Code != http.StatusOK {
+	if rec := waitRec(t, serveAsync(mux, httptest.NewRequest(http.MethodGet, imageURL(1), nil))); rec.Code != http.StatusOK {
 		t.Fatalf("GET: got %d %s", rec.Code, rec.Body.String())
 	}
-	if convertSaw != 0 || rasterSaw != 1 {
-		t.Errorf("GET render slots held: convert=%d raster=%d, want 0/1", convertSaw, rasterSaw)
+	if rasterSaw != 1 {
+		t.Errorf("GET render slots held during the render: %d, want 1", rasterSaw)
 	}
 
 	body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc"))
-	req := httptest.NewRequest(http.MethodPost, "/preview/document/100x100/thumbnail/", body)
+	req := httptest.NewRequest(http.MethodPost, postDocURL, body)
 	req.Header.Set("Content-Type", ct)
 	if rec := waitRec(t, serveAsync(mux, req)); rec.Code != http.StatusOK {
 		t.Fatalf("POST: got %d %s", rec.Code, rec.Body.String())
@@ -443,13 +467,6 @@ func TestRenderSlot_HeldOnlyAroundRenderCall(t *testing.T) {
 	}
 	if len(lim.render) != 0 {
 		t.Errorf("render slots still held after both requests: %d", len(lim.render))
-	}
-}
-
-func imagePreviewInput(version int) *apispec.ImageGetPreviewInput {
-	return &apispec.ImageGetPreviewInput{
-		ID: validUUID, Version: version, Area: "100x100", ServiceType: "files",
-		Quality: "medium", OutputFormat: "jpeg",
 	}
 }
 
@@ -463,19 +480,19 @@ func TestFlight_ConcurrentIdenticalRequestsFetchOnce(t *testing.T) {
 		return []byte("rendered"), nil
 	})
 	lim := newLimits(1)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Limits: lim})
 
 	type result struct {
-		out *apispec.BinOut
+		out *apispec.ThumbnailOutput
 		err error
 	}
 	results := make(chan result, n)
 	for i := 0; i < n; i++ {
 		go func() {
-			out, err := handler(context.Background(), imagePreviewInput(1))
+			out, err := handler(context.Background(), thumbnailInput(1))
 			results <- result{out, err}
 		}()
-		waitWaiters(t, lim, imagePreviewKey(1), i+1)
+		waitWaiters(t, lim, thumbnailTestKey(1), i+1)
 	}
 	close(gate)
 
@@ -499,15 +516,15 @@ func TestFlight_ErrorSharedByAllWaiters(t *testing.T) {
 	store.err = storage.ErrNotFound
 	gate := store.gate(1)
 	lim := newLimits(0)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Limits: lim})
 
 	errs := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			_, err := handler(context.Background(), imagePreviewInput(1))
+			_, err := handler(context.Background(), thumbnailInput(1))
 			errs <- err
 		}()
-		waitWaiters(t, lim, imagePreviewKey(1), i+1)
+		waitWaiters(t, lim, thumbnailTestKey(1), i+1)
 	}
 	close(gate)
 
@@ -528,16 +545,16 @@ func TestFlight_AllWaitersLeaveDuringFetch_WorkCompletesAndFillsCache(t *testing
 	stubRender(t, func([]byte) ([]byte, error) { return []byte("rendered"), nil })
 	c := cache.New(1 << 20)
 	lim := newLimits(1)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := handler(ctx, imagePreviewInput(1))
+		_, err := handler(ctx, thumbnailInput(1))
 		errCh <- err
 	}()
 	waitFetch(t, store, 1)
-	f := lim.flightFor(t, imagePreviewKey(1))
+	f := lim.flightFor(t, thumbnailTestKey(1))
 	cancel()
 	if got := statusOf(t, <-errCh); got != http.StatusServiceUnavailable {
 		t.Fatalf("disconnected waiter: status %d, want 503", got)
@@ -548,7 +565,7 @@ func TestFlight_AllWaitersLeaveDuringFetch_WorkCompletesAndFillsCache(t *testing
 		t.Fatalf("fetch ctx was cancelled with the waiter: %v", err)
 	}
 	waitFlightDone(t, f)
-	if e, ok := c.Get(imagePreviewKey(1)); !ok || string(e.Body) != "rendered" {
+	if e, ok := c.Get(thumbnailTestKey(1)); !ok || string(e.Body) != "rendered" {
 		t.Fatalf("cache not filled by the abandoned in-progress work: %v %q", ok, e.Body)
 	}
 	if len(lim.render) != 0 {
@@ -556,7 +573,7 @@ func TestFlight_AllWaitersLeaveDuringFetch_WorkCompletesAndFillsCache(t *testing
 	}
 	assertNoFlights(t, lim)
 
-	out, err := handler(context.Background(), imagePreviewInput(1))
+	out, err := handler(context.Background(), thumbnailInput(1))
 	if err != nil || string(out.Body) != "rendered" {
 		t.Fatalf("follow-up: out=%v err=%v", out, err)
 	}
@@ -575,16 +592,16 @@ func TestFlight_AllWaitersLeaveDuringRender_WorkCompletesAndFillsCache(t *testin
 	})
 	c := cache.New(1 << 20)
 	lim := newLimits(1)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: newGatedStore(), Cache: c, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: newGatedStore(), Cache: c, Limits: lim})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := handler(ctx, imagePreviewInput(1))
+		_, err := handler(ctx, thumbnailInput(1))
 		errCh <- err
 	}()
 	<-entered
-	f := lim.flightFor(t, imagePreviewKey(1))
+	f := lim.flightFor(t, thumbnailTestKey(1))
 	cancel()
 	if got := statusOf(t, <-errCh); got != http.StatusServiceUnavailable {
 		t.Fatalf("disconnected waiter: status %d, want 503", got)
@@ -592,7 +609,7 @@ func TestFlight_AllWaitersLeaveDuringRender_WorkCompletesAndFillsCache(t *testin
 
 	close(release)
 	waitFlightDone(t, f)
-	if _, ok := c.Get(imagePreviewKey(1)); !ok {
+	if _, ok := c.Get(thumbnailTestKey(1)); !ok {
 		t.Fatal("cache not filled by the abandoned in-progress render")
 	}
 	if len(lim.render) != 0 {
@@ -610,17 +627,17 @@ func TestFlight_AllWaitersLeaveWhileQueuedForRender_NeverRenders(t *testing.T) {
 		return []byte("rendered"), nil
 	})
 	c := cache.New(1 << 20)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Cache: c, Limits: lim})
 
 	lim.render <- struct{}{}
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := handler(ctx, imagePreviewInput(1))
+		_, err := handler(ctx, thumbnailInput(1))
 		errCh <- err
 	}()
 	waitFetch(t, store, 1)
-	f := lim.flightFor(t, imagePreviewKey(1))
+	f := lim.flightFor(t, thumbnailTestKey(1))
 	cancel()
 	if got := statusOf(t, <-errCh); got != http.StatusServiceUnavailable {
 		t.Fatalf("disconnected waiter: status %d, want 503", got)
@@ -634,7 +651,7 @@ func TestFlight_AllWaitersLeaveWhileQueuedForRender_NeverRenders(t *testing.T) {
 		t.Errorf("render slots held=%d, want 1 (only the test's)", len(lim.render))
 	}
 	<-lim.render
-	if _, ok := c.Get(imagePreviewKey(1)); ok {
+	if _, ok := c.Get(thumbnailTestKey(1)); ok {
 		t.Error("abandoned work filled the cache")
 	}
 	assertNoFlights(t, lim)
@@ -644,27 +661,27 @@ func TestFlight_JoinerKeepsFlightAlive(t *testing.T) {
 	lim := newLimits(1)
 	store := newGatedStore()
 	stubRender(t, func([]byte) ([]byte, error) { return []byte("rendered"), nil })
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Limits: lim})
 
 	lim.render <- struct{}{}
 	ctxA, cancelA := context.WithCancel(context.Background())
 	errA := make(chan error, 1)
 	go func() {
-		_, err := handler(ctxA, imagePreviewInput(1))
+		_, err := handler(ctxA, thumbnailInput(1))
 		errA <- err
 	}()
-	waitWaiters(t, lim, imagePreviewKey(1), 1)
+	waitWaiters(t, lim, thumbnailTestKey(1), 1)
 
 	type result struct {
-		out *apispec.BinOut
+		out *apispec.ThumbnailOutput
 		err error
 	}
 	resB := make(chan result, 1)
 	go func() {
-		out, err := handler(context.Background(), imagePreviewInput(1))
+		out, err := handler(context.Background(), thumbnailInput(1))
 		resB <- result{out, err}
 	}()
-	waitWaiters(t, lim, imagePreviewKey(1), 2)
+	waitWaiters(t, lim, thumbnailTestKey(1), 2)
 
 	cancelA()
 	if got := statusOf(t, <-errA); got != http.StatusServiceUnavailable {
@@ -702,32 +719,32 @@ func TestFlight_LateCallerAfterAbandonmentIsServed(t *testing.T) {
 	store := newGatedStore()
 	gate := store.gate(1)
 	stubRender(t, func([]byte) ([]byte, error) { return []byte("rendered"), nil })
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Limits: lim})
 
 	lim.render <- struct{}{}
 	ctxA, cancelA := context.WithCancel(context.Background())
 	errA := make(chan error, 1)
 	go func() {
-		_, err := handler(ctxA, imagePreviewInput(1))
+		_, err := handler(ctxA, thumbnailInput(1))
 		errA <- err
 	}()
 	waitFetch(t, store, 1)
-	abandoned := lim.flightFor(t, imagePreviewKey(1))
+	abandoned := lim.flightFor(t, thumbnailTestKey(1))
 	cancelA()
 	if got := statusOf(t, <-errA); got != http.StatusServiceUnavailable {
 		t.Fatalf("leaving caller: status %d, want 503", got)
 	}
 
 	type result struct {
-		out *apispec.BinOut
+		out *apispec.ThumbnailOutput
 		err error
 	}
 	resB := make(chan result, 1)
 	go func() {
-		out, err := handler(context.Background(), imagePreviewInput(1))
+		out, err := handler(context.Background(), thumbnailInput(1))
 		resB <- result{out, err}
 	}()
-	waitWaiters(t, lim, imagePreviewKey(1), 1)
+	waitWaiters(t, lim, thumbnailTestKey(1), 1)
 
 	close(gate)
 	waitFlightDone(t, abandoned)
@@ -744,61 +761,13 @@ func TestFlight_LateCallerAfterAbandonmentIsServed(t *testing.T) {
 	assertNoFlights(t, lim)
 }
 
-func TestFlight_DocumentAbandonedDuringConversionFillsCache(t *testing.T) {
-	lim := newLimits(1)
-	c := cache.New(1 << 20)
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	convertCtxErr := make(chan error, 1)
-	swap(t, &collaboraConvertFunc, func(ctx context.Context, _ []byte, _ string, _ string, _ time.Duration) ([]byte, error) {
-		close(entered)
-		<-release
-		convertCtxErr <- ctx.Err()
-		return []byte(fakePDFBytes), nil
-	})
-	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
-		return []byte("jpeg"), nil
-	})
-	handler := buildGetDocumentThumbnail(Deps{Cfg: testCfg(), Store: newGatedStore(), Cache: c, Limits: lim})
-	key := cacheKey("doc-thumb", validUUID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := handler(ctx, &apispec.DocGetThumbnailInput{
-			ID: validUUID, Version: 1, Area: "100x100", ServiceType: "files",
-			Quality: "medium", OutputFormat: "jpeg", Shape: "rectangular",
-		})
-		errCh <- err
-	}()
-	<-entered
-	f := lim.flightFor(t, key)
-	cancel()
-	if got := statusOf(t, <-errCh); got != http.StatusServiceUnavailable {
-		t.Fatalf("disconnected waiter: status %d, want 503", got)
-	}
-
-	close(release)
-	if err := <-convertCtxErr; err != nil {
-		t.Fatalf("Collabora call was cancelled with the waiter: %v", err)
-	}
-	waitFlightDone(t, f)
-	if e, ok := c.Get(key); !ok || string(e.Body) != "jpeg" {
-		t.Fatalf("cache not filled by the abandoned conversion: %v %q", ok, e.Body)
-	}
-	if len(lim.render) != 0 {
-		t.Errorf("render slots still held=%d", len(lim.render))
-	}
-	assertNoFlights(t, lim)
-}
-
 func TestServe_DoneCallerStartsNoFlight(t *testing.T) {
 	lim := newLimits(1)
 	store := newGatedStore()
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: store, Limits: lim})
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: store, Limits: lim})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := handler(ctx, imagePreviewInput(1))
+	_, err := handler(ctx, thumbnailInput(1))
 	if got := statusOf(t, err); got != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503", got)
 	}
@@ -813,7 +782,7 @@ func TestJoin_RechecksCacheUnderLock(t *testing.T) {
 	c := cache.New(1 << 20)
 	want := cache.Entry{Body: []byte("cached"), ContentType: "image/jpeg"}
 	c.Put("k", want)
-	f, got, cached := lim.join(context.Background(), c, "getImagePreview", "k", func(runner) (cache.Entry, error) {
+	f, got, cached := lim.join(context.Background(), c, "getThumbnail", "k", func(runner) (cache.Entry, error) {
 		t.Error("work started for a cached key")
 		return cache.Entry{}, nil
 	})
@@ -826,8 +795,8 @@ func TestJoin_RechecksCacheUnderLock(t *testing.T) {
 func TestFlight_PanicBecomes500AndReleasesSlots(t *testing.T) {
 	stubRender(t, func([]byte) ([]byte, error) { panic("boom") })
 	lim := newLimits(1)
-	handler := buildGetImagePreview(Deps{Cfg: testCfg(), Store: newGatedStore(), Limits: lim})
-	_, err := handler(context.Background(), imagePreviewInput(1))
+	handler := thumbnailHandler(Deps{Cfg: testCfg(), Store: newGatedStore(), Limits: lim})
+	_, err := handler(context.Background(), thumbnailInput(1))
 	if got := statusOf(t, err); got != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500", got)
 	}
@@ -916,17 +885,17 @@ func TestRenderSlot_RenderCallsNeverExceedN(t *testing.T) {
 		cur.Add(-1)
 	}
 	stubRender(t, func([]byte) ([]byte, error) { enter(); return []byte("rendered"), nil })
-	swap(t, &pdfRasterizeFunc, func(context.Context, []byte, int, int, int, string, string, string) ([]byte, error) {
+	swap(t, &pdfPairFunc, func(context.Context, []byte) (render.Pair, error) {
 		enter()
-		return []byte("jpeg"), nil
+		r := render.Rendition{Body: []byte("jpeg"), ContentType: "image/jpeg"}
+		return render.Pair{S: r, M: r}, nil
 	})
 	mux := slotMux(lim, newGatedStore(), nil)
 
 	var done []<-chan *httptest.ResponseRecorder
 	for i := 1; i <= perOp; i++ {
 		done = append(done, serveAsync(mux, httptest.NewRequest(http.MethodGet, imageURL(i), nil)))
-		pdf := "/preview/pdf/" + validUUID + "/" + strconv.Itoa(i) + "/100x100/thumbnail/?service_type=files"
-		done = append(done, serveAsync(mux, httptest.NewRequest(http.MethodGet, pdf, nil)))
+		done = append(done, serveAsync(mux, httptest.NewRequest(http.MethodGet, pdfURL(perOp+i), nil)))
 	}
 	waitSignals(t, entered, n, "render calls entered")
 	waitParkedN(t, lim, 2*perOp-n)
@@ -961,7 +930,7 @@ func TestRenderSlot_UploadBodiesAreReadWithoutSlot(t *testing.T) {
 			<-sig.read
 			read <- struct{}{}
 		}()
-		req := httptest.NewRequest(http.MethodPost, "/preview/image/100x100/", sig)
+		req := httptest.NewRequest(http.MethodPost, postImageURL, sig)
 		req.Header.Set("Content-Type", ct)
 		done[i] = serveAsync(mux, req)
 	}
@@ -986,16 +955,14 @@ func TestRenderSlot_CollaboraConversionsAreNotGated(t *testing.T) {
 		<-release
 		return []byte(fakePDFBytes), nil
 	})
-	swap(t, &imageThumbnailFunc, func([]byte, int, int, string, string, string, string) ([]byte, error) {
-		return []byte("jpeg"), nil
-	})
+	stubRender(t, func([]byte) ([]byte, error) { return []byte("jpeg"), nil })
 	mux := slotMux(lim, newGatedStore(), nil)
 
 	lim.render <- struct{}{}
 	done := make([]<-chan *httptest.ResponseRecorder, k)
 	for i := range done {
 		body, ct := buildMultipart(t, "file", "doc.docx", []byte("doc"))
-		req := httptest.NewRequest(http.MethodPost, "/preview/document/100x100/thumbnail/", body)
+		req := httptest.NewRequest(http.MethodPost, postDocURL, body)
 		req.Header.Set("Content-Type", ct)
 		done[i] = serveAsync(mux, req)
 	}

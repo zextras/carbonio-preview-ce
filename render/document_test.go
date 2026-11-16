@@ -288,20 +288,6 @@ func TestCollaboraConvert_TransportErrorRetries(t *testing.T) {
 	}
 }
 
-// TestSanitizeOutputExtension covers the jpeg/png/gif→png mapping and pass-through.
-func TestSanitizeOutputExtension(t *testing.T) {
-	cases := map[string]string{
-		"jpeg": "png", "JPEG": "png", "jpg": "png", "JPG": "png",
-		"png": "png", "PNG": "png", "gif": "png", "GIF": "png",
-		"pdf": "pdf", "docx": "docx", "": "",
-	}
-	for in, want := range cases {
-		if got := SanitizeOutputExtension(in); got != want {
-			t.Errorf("SanitizeOutputExtension(%q)=%q, want %q", in, got, want)
-		}
-	}
-}
-
 // TestIsRetryableErr_WalksChain verifies isRetryableErr finds *retryableError
 // through %w wrapping and rejects a plain error.
 func TestIsRetryableErr_WalksChain(t *testing.T) {

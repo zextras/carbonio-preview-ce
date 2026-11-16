@@ -99,12 +99,12 @@ func (m *memStore) RetrieveData(_ context.Context, id string, version int, servi
 	return m.get(id, version, serviceType, owner)
 }
 
-func (m *memStore) RetrieveDataStreaming(_ context.Context, id string, version int, serviceType, owner string) (io.ReadCloser, error) {
+func (m *memStore) RetrieveDataStreaming(_ context.Context, id string, version int, serviceType, owner string) (io.ReadCloser, int64, error) {
 	b, err := m.get(id, version, serviceType, owner)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return io.NopCloser(bytes.NewReader(b)), nil
+	return io.NopCloser(bytes.NewReader(b)), int64(len(b)), nil
 }
 
 func (m *memStore) StoreData(_ context.Context, id string, version int, serviceType, owner string, data []byte) (string, error) {

@@ -2,19 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// This file covers ONLY the non-pdfium branches of render/pdf.go — the guards
-// that run before any PDFium call (empty-data guard, pool-nil guard), the
-// worker borrow loop (getPdfInstance, against a fake pool) — plus the pure-Go
-// helpers QualityToInt, SetImageMinRes and SetVipsConcurrency.
+// This file covers ONLY the non-pdfium branches of render/pdf.go — the pool-nil
+// guard, the worker borrow loop (getPdfInstance, against a fake pool), the DPI
+// helper — plus SetVipsConcurrency.
 //
-// The genuinely cgo-pipeline paths are NOT exercised here and stay covered by
-// pdf_e2e_test.go (//go:build cgo, which boots a real single/multi-threaded
-// PDFium worker). Those e2e-only branches are:
-//   - PDFSlice: GetInstance success, OpenDocument, FPDF_GetPageCount, the page-
-//     range arithmetic and whole-doc shortcut (pdf.go:241-242),
-//     FPDF_CreateNewDocument / FPDF_ImportPagesByIndex / FPDF_SaveAsCopy.
-//   - PDFRasterize: GetInstance success, OpenDocument, RenderPageInDPI, the
-//     libvips RGBA render pipeline and rounded-mask application (pdf.go:120-172).
+// The genuinely cgo-pipeline path (PDFPage1Pair: OpenDocument, page size,
+// RenderPageInDPI and the libvips renditions) is NOT exercised here and stays
+// covered by pdf_e2e_test.go (//go:build cgo, which boots a real multi-threaded
+// PDFium worker).
 // We deliberately do NOT fake a pdfium.Pdfium instance: the interface is large
 // and a fake would re-implement PDFium. This is the deliberate cgo-only
 // boundary; the small pdfium.Pool interface is faked only to drive the borrow loop.
@@ -40,36 +35,6 @@ func withNilPool(t *testing.T) {
 	prev := globalPdfPool
 	globalPdfPool = nil
 	t.Cleanup(func() { globalPdfPool = prev })
-}
-
-// TestPDFSlice_EmptyData hits the empty-data guard, which runs before the
-// pool-nil guard (so it fires even with a nil pool and no worker).
-func TestPDFSlice_EmptyData(t *testing.T) {
-	withNilPool(t)
-	_, err := PDFSlice(context.Background(), nil, 1, 0)
-	if err == nil || !strings.Contains(err.Error(), "empty PDF data") {
-		t.Fatalf("want empty-data error, got %v", err)
-	}
-}
-
-// TestPDFSlice_PoolNotInitialised passes non-empty data (to clear the empty-data
-// guard) and a nil pool, so it hits the pool-nil guard.
-func TestPDFSlice_PoolNotInitialised(t *testing.T) {
-	withNilPool(t)
-	_, err := PDFSlice(context.Background(), []byte("%PDF-1.4 not really"), 1, 0)
-	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
-		t.Fatalf("want pool-nil error, got %v", err)
-	}
-}
-
-// TestPDFRasterize_PoolNotInitialised: PDFRasterize has no empty-data guard, so
-// the first guard reached with a nil pool is the pool-nil guard.
-func TestPDFRasterize_PoolNotInitialised(t *testing.T) {
-	withNilPool(t)
-	_, err := PDFRasterize(context.Background(), []byte("data"), 0, 100, 100, "jpeg", "medium", "rectangular")
-	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
-		t.Fatalf("want pool-nil error, got %v", err)
-	}
 }
 
 type fakePool struct {
@@ -181,53 +146,6 @@ func TestGetPdfInstance_NonTimeoutErrorNotRetried(t *testing.T) {
 	}
 	if n := p.calls.Load(); n != 1 {
 		t.Errorf("borrow attempts=%d, want 1", n)
-	}
-}
-
-func TestPDFSliceAndRasterize_PoolUnavailable(t *testing.T) {
-	withFakePool(t, &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
-		return nil, errors.New("worker failed to start")
-	}})
-
-	if _, err := PDFSlice(context.Background(), []byte("%PDF"), 1, 0); !errors.Is(err, ErrRenderUnavailable) {
-		t.Errorf("PDFSlice err=%v, want ErrRenderUnavailable", err)
-	}
-	if _, err := PDFRasterize(context.Background(), []byte("%PDF"), 0, 10, 10, "jpeg", "medium", "rectangular"); !errors.Is(err, ErrRenderUnavailable) {
-		t.Errorf("PDFRasterize err=%v, want ErrRenderUnavailable", err)
-	}
-}
-
-// TestQualityToInt covers every named level plus the default arm.
-func TestQualityToInt(t *testing.T) {
-	cases := map[string]int{
-		"lowest": 5, "low": 15, "medium": 50, "high": 80, "highest": 95,
-		"": 50, "garbage": 50, // default arm
-	}
-	for in, want := range cases {
-		if got := QualityToInt(in); got != want {
-			t.Errorf("QualityToInt(%q)=%d, want %d", in, got, want)
-		}
-	}
-}
-
-// TestSetImageMinRes covers both the positive (applied) and non-positive
-// (no-op) branches of SetImageMinRes, restoring the global afterwards.
-func TestSetImageMinRes(t *testing.T) {
-	prev := ImageMinRes
-	t.Cleanup(func() { ImageMinRes = prev })
-
-	SetImageMinRes(123)
-	if ImageMinRes != 123 {
-		t.Errorf("ImageMinRes=%d, want 123", ImageMinRes)
-	}
-	// Non-positive is a no-op: the value must stay at 123.
-	SetImageMinRes(0)
-	if ImageMinRes != 123 {
-		t.Errorf("after SetImageMinRes(0) ImageMinRes=%d, want 123 (no-op)", ImageMinRes)
-	}
-	SetImageMinRes(-5)
-	if ImageMinRes != 123 {
-		t.Errorf("after SetImageMinRes(-5) ImageMinRes=%d, want 123 (no-op)", ImageMinRes)
 	}
 }
 

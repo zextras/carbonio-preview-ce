@@ -31,7 +31,6 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"runtime/debug"
 	"strconv"
@@ -80,34 +79,6 @@ var heartbeatInterval = 60 * time.Second
 //
 // This is a package variable so tests can override it without config/KV knobs.
 var extractCeiling = 120 * time.Second
-
-// idleReadCloser wraps a ReadCloser and resets a timer on every successful
-// read.  The timer is armed by the caller before the response wait and fires
-// dlCancel when no bytes arrive for readIdleTimeout.
-// Call Close to stop the timer and release resources.
-type idleReadCloser struct {
-	rc      io.ReadCloser
-	timer   *time.Timer
-	timeout time.Duration
-}
-
-func newIdleReadCloser(rc io.ReadCloser, timeout time.Duration, timer *time.Timer) *idleReadCloser {
-	timer.Reset(timeout)
-	return &idleReadCloser{rc: rc, timer: timer, timeout: timeout}
-}
-
-func (irc *idleReadCloser) Read(p []byte) (n int, err error) {
-	n, err = irc.rc.Read(p)
-	if n > 0 {
-		irc.timer.Reset(irc.timeout)
-	}
-	return n, err
-}
-
-func (irc *idleReadCloser) Close() error {
-	irc.timer.Stop()
-	return irc.rc.Close()
-}
 
 // ---------------------------------------------------------------------------
 // Constants (ported from VideoPreviewWorker.java + VideoPreviewServiceImpl.java)
