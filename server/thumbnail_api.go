@@ -22,11 +22,15 @@ import (
 const (
 	retryAfterSeconds = 3
 	cacheTagThumbnail = "t"
+	cacheTagInterim   = "g"
 )
 
 var touchEvery = 24 * time.Hour
 
-type acceptedError struct{}
+type acceptedError struct {
+	body        []byte
+	contentType string
+}
 
 func (acceptedError) Error() string { return "thumbnail generating" }
 
@@ -46,7 +50,11 @@ func thumbKey(tag, serviceType, owner, id string, version int, size, digest stri
 }
 
 func (q thumbRequest) key(tag string) string {
-	return thumbKey(tag, q.serviceType, q.owner, q.id, q.version, q.size, q.digest)
+	return q.keyFor(tag, q.size)
+}
+
+func (q thumbRequest) keyFor(tag, size string) string {
+	return thumbKey(tag, q.serviceType, q.owner, q.id, q.version, size, q.digest)
 }
 
 func errFormatNotSupported() error {
@@ -57,15 +65,15 @@ func errDependencyDown() error {
 	return huma.NewError(http.StatusFailedDependency, config.Msg.GenericErrorStorage)
 }
 
-func asyncThumbnail(p pipeline) bool {
-	return p.thumbnail && (p.kind == kindOffice || p.kind == kindVideo)
+func asyncKind(k kind) bool {
+	return k == kindOffice || k == kindVideo
 }
 
 func buildGetThumbnail(deps Deps, worker *AsyncWorker) func(context.Context, *apispec.ThumbnailGetInput) (*apispec.ThumbnailOutput, error) {
 	lim := deps.slotLimits()
 	return func(ctx context.Context, in *apispec.ThumbnailGetInput) (*apispec.ThumbnailOutput, error) {
 		p, ok := pipelineFor(in.Mime)
-		if !ok || !asyncThumbnail(p) {
+		if !ok || !p.thumbnail {
 			return nil, errFormatNotSupported()
 		}
 		id, err := validateUUID(in.ID)
@@ -92,8 +100,10 @@ func buildGetThumbnail(deps Deps, worker *AsyncWorker) func(context.Context, *ap
 		if errors.As(err, &acc) {
 			return &apispec.ThumbnailOutput{
 				Status:       http.StatusAccepted,
+				ContentType:  acc.contentType,
 				CacheControl: "no-store",
 				RetryAfter:   strconv.Itoa(retryAfterSeconds),
+				Body:         acc.body,
 			}, nil
 		}
 		if err != nil {

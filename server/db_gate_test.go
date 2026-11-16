@@ -19,12 +19,14 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
 )
 
 // statusOf extracts the HTTP status carried by a huma error.
@@ -103,22 +105,25 @@ func TestIsDBConnError(t *testing.T) {
 
 func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 	store := &mockStore{blob: []byte("src")}
-	restore := stubImageThumbnail("jpeg", "", "", "", []byte("rendered-out"), nil)
-	defer restore()
+	prevPair, prevProbe := imagePairFunc, probeFunc
+	imagePairFunc = func([]byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
+	probeFunc = func([]byte) (render.Info, error) { return render.Info{Width: 4000, Height: 3000, Pages: 1}, nil }
+	defer func() { imagePairFunc, probeFunc = prevPair, prevProbe }()
 
 	// New server with NO WithDB — DB layer disabled.
 	s := New(testCfg(), store, cache.New(8<<20))
 	ts := httptest.NewServer(loggingMiddleware(s.buildMux()))
 	defer ts.Close()
 
-	// Image preview still works.
-	iresp, err := http.Get(ts.URL + "/preview/image/" + validUUID + "/1/100x100/?service_type=files")
+	// Image thumbnail is generated without the DB.
+	iresp, err := http.Get(ts.URL + "/thumbnail/" + validUUID + "/1/m?service_type=files&mime=image/jpeg")
 	if err != nil {
-		t.Fatalf("GET image preview: %v", err)
+		t.Fatalf("GET image thumbnail: %v", err)
 	}
+	ibody, _ := io.ReadAll(iresp.Body)
 	iresp.Body.Close()
-	if iresp.StatusCode != http.StatusOK {
-		t.Errorf("image preview status=%d, want 200 (must be unaffected by absent DB)", iresp.StatusCode)
+	if iresp.StatusCode != http.StatusOK || string(ibody) != string(stubM.Body) {
+		t.Errorf("image thumbnail status=%d body=%q, want 200 %q (must be unaffected by absent DB)", iresp.StatusCode, ibody, stubM.Body)
 	}
 
 	// Video thumbnail → 424.

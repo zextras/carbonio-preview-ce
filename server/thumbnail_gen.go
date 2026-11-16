@@ -9,13 +9,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
+	"github.com/zextras/carbonio-preview-ce/v4/config"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 	"github.com/zextras/carbonio-preview-ce/v4/render"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
@@ -48,7 +53,7 @@ func failure(kind failKind, err error) *jobFailure { return &jobFailure{kind: ki
 //  3. connectivity failure (source download, temp file, blob upload,
 //     Collabora unreachable)                            → rows deleted, no attempt counted.
 //  4. video codec not in the supported list             → MarkUnsupported (terminal until the list grows).
-//  5. render failure (probe, extraction, Collabora error, vips) → ReleaseWithAttempt, MarkFailed at the cap.
+//  5. render failure (probe, extraction, GIF resize, Collabora error, vips) → ReleaseWithAttempt, MarkFailed at the cap.
 //  6. success                                           → blobs uploaded under the row's owner, MarkReady.
 //
 // The heartbeat refreshes claimed_at for the whole attempt, whatever the kind.
@@ -71,13 +76,21 @@ func (w *AsyncWorker) attempt(ctx context.Context, rows []db.Thumbnail) {
 	stopHB := w.startHeartbeat(ctx, first.FileID, first.Version)
 	defer stopHB()
 
-	var pair render.Pair
+	var outs map[string]produced
 	var fail *jobFailure
 	switch kind(first.Kind) {
 	case kindVideo:
-		pair, fail = w.runVideo(ctx, rows)
+		var pair render.Pair
+		if pair, fail = w.runVideo(ctx, rows); fail == nil {
+			outs = fromPair(pair)
+		}
 	case kindOffice:
-		pair, fail = w.runOffice(ctx, rows)
+		var pair render.Pair
+		if pair, fail = w.runOffice(ctx, rows); fail == nil {
+			outs = fromPair(pair)
+		}
+	case kindGIF:
+		outs, fail = w.runGIF(ctx, rows)
 	default:
 		fail = failure(failContent, fmt.Errorf("unsupported job kind %q", first.Kind))
 	}
@@ -88,7 +101,7 @@ func (w *AsyncWorker) attempt(ctx context.Context, rows []db.Thumbnail) {
 		w.settleFailure(ctx, rows, fail)
 		return
 	}
-	w.finish(ctx, rows, pair)
+	w.finish(ctx, rows, outs)
 }
 
 func (w *AsyncWorker) startHeartbeat(ctx context.Context, fileID string, version int) func() {
@@ -149,15 +162,19 @@ func (w *AsyncWorker) settleFailure(ctx context.Context, rows []db.Thumbnail, f 
 // finish uploads the claimed renditions and marks the rows READY. Blobs that
 // no row ended up referencing (upload failure, rows deleted meanwhile) are
 // deleted at once.
-func (w *AsyncWorker) finish(ctx context.Context, rows []db.Thumbnail, pair render.Pair) {
+func (w *AsyncWorker) finish(ctx context.Context, rows []db.Thumbnail, outs map[string]produced) {
 	first := rows[0]
 	done := make([]db.Thumbnail, 0, len(rows))
 	for _, row := range rows {
-		rend := pair.M
-		if row.Size == db.SizeS {
-			rend = pair.S
+		out := outs[row.Size]
+		ct := out.contentType
+		row.ContentType = &ct
+		if out.original {
+			row.Original = true
+			done = append(done, row)
+			continue
 		}
-		blobID, err := storeBlob(ctx, w.deps.Store, rend.Body, row.Version, row.ServiceType, row.OwnerID)
+		blobID, err := storeBlob(ctx, w.deps.Store, out.body, row.Version, row.ServiceType, row.OwnerID)
 		if err != nil {
 			w.deleteBlobs(ctx, done)
 			if ctx.Err() != nil {
@@ -168,8 +185,6 @@ func (w *AsyncWorker) finish(ctx context.Context, rows []db.Thumbnail, pair rend
 			return
 		}
 		row.BlobID = &blobID
-		ct := rend.ContentType
-		row.ContentType = &ct
 		done = append(done, row)
 	}
 
@@ -233,6 +248,19 @@ func storeBlob(ctx context.Context, store storage.Client, data []byte, version i
 		_ = store.Delete(context.Background(), nodeID, version, serviceType, ownerID)
 	}()
 	return "", err
+}
+
+func (w *AsyncWorker) probe(ctx context.Context, data []byte) (render.Info, *jobFailure) {
+	lim := w.deps.slotLimits()
+	if err := lim.acquire(ctx, lim.render, false); err != nil {
+		return render.Info{}, failure(failReleased, err)
+	}
+	defer lim.render.release()
+	info, err := probeFunc(data)
+	if err != nil {
+		return render.Info{}, failure(failContent, fmt.Errorf("probe: %w", err))
+	}
+	return info, nil
 }
 
 func (w *AsyncWorker) renderPair(ctx context.Context, data []byte) (render.Pair, *jobFailure) {
@@ -411,4 +439,186 @@ func (w *AsyncWorker) runOffice(ctx context.Context, rows []db.Thumbnail) (rende
 		return render.Pair{}, failure(failContent, fmt.Errorf("collabora convert: %w", err))
 	}
 	return w.renderPair(ctx, png)
+}
+
+// runGIF downloads the source, writes the sizes that fit as originals and resizes the others with ffmpeg
+// under the async slot: M from the source, S from the M output when M was produced in this job.
+func (w *AsyncWorker) runGIF(ctx context.Context, rows []db.Thumbnail) (map[string]produced, *jobFailure) {
+	row := rows[0]
+	data, err := w.deps.Store.RetrieveData(ctx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
+	if err != nil {
+		return nil, sourceFailure(ctx, err)
+	}
+	info, fail := w.probe(ctx, data)
+	if fail != nil {
+		return nil, fail
+	}
+	outs := map[string]produced{}
+	var resize []string
+	for _, r := range rows {
+		if longSide(info) <= sideOf(r.Size) {
+			outs[r.Size] = produced{body: data, contentType: mimeGIF, original: true}
+		} else {
+			resize = append(resize, r.Size)
+		}
+	}
+	if len(resize) == 0 {
+		return outs, nil
+	}
+
+	dir, err := os.MkdirTemp("", "carbonio-preview-gif-*")
+	if err != nil {
+		return nil, failure(failConnectivity, err)
+	}
+	defer os.RemoveAll(dir)
+	src := filepath.Join(dir, "src.gif")
+	if err := os.WriteFile(src, data, 0o600); err != nil {
+		return nil, failure(failConnectivity, err)
+	}
+
+	if err := w.acquireSem(ctx); err != nil {
+		return nil, failure(failReleased, err)
+	}
+	defer w.releaseSem()
+	input := src
+	for _, size := range []string{db.SizeM, db.SizeS} {
+		if !containsSize(resize, size) {
+			continue
+		}
+		out, fail := w.gifPass(ctx, input, info, size, filepath.Join(dir, size))
+		if fail != nil {
+			return nil, fail
+		}
+		outs[size] = produced{body: out, contentType: mimeGIF}
+		if size == db.SizeM {
+			input = filepath.Join(dir, "m.gif")
+			if err := os.WriteFile(input, out, 0o600); err != nil {
+				return nil, failure(failConnectivity, err)
+			}
+		}
+	}
+	return outs, nil
+}
+
+func (w *AsyncWorker) gifPass(ctx context.Context, input string, info render.Info, size, workDir string) ([]byte, *jobFailure) {
+	if err := os.Mkdir(workDir, 0o700); err != nil {
+		return nil, failure(failConnectivity, err)
+	}
+	passCtx, cancel := context.WithTimeout(ctx, extractCeiling)
+	defer cancel()
+	out, err := animatedGIFFunc(passCtx, input, info, sideOf(size), workDir)
+	switch {
+	case ctx.Err() != nil:
+		return nil, failure(failReleased, ctx.Err())
+	case err != nil:
+		return nil, failure(failContent, fmt.Errorf("gif resize: %w", err))
+	}
+	return out, nil
+}
+
+type produced struct {
+	body        []byte
+	contentType string
+	original    bool
+}
+
+func (p produced) entry() cache.Entry {
+	return cache.Entry{Body: p.body, ContentType: p.contentType}
+}
+
+const mimeGIF = "image/gif"
+
+func sideOf(size string) int {
+	if size == db.SizeS {
+		return render.SideS
+	}
+	return render.SideM
+}
+
+func longSide(i render.Info) int { return max(i.Width, i.Height) }
+
+func isAnimatedGIF(p pipeline, i render.Info) bool { return p.mime == mimeGIF && i.Pages > 1 }
+
+func fromPair(pair render.Pair) map[string]produced {
+	return map[string]produced{
+		db.SizeS: {body: pair.S.Body, contentType: pair.S.ContentType},
+		db.SizeM: {body: pair.M.Body, contentType: pair.M.ContentType},
+	}
+}
+
+func (r runner) probe(data []byte) (render.Info, error) {
+	if err := r.slot(r.l.render); err != nil {
+		return render.Info{}, err
+	}
+	defer r.l.render.release()
+	info, err := probeFunc(data)
+	if err != nil {
+		slog.Warn(r.op+" probe", "err", err)
+		return render.Info{}, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+	return info, nil
+}
+
+func (r runner) imagePair(data []byte) (render.Pair, error) {
+	if err := r.slot(r.l.render); err != nil {
+		return render.Pair{}, err
+	}
+	defer r.l.render.release()
+	pair, err := imagePairFunc(data)
+	if err != nil {
+		slog.Warn(r.op+" render", "err", err)
+		return render.Pair{}, huma.NewError(http.StatusBadRequest, config.Msg.FormatNotSupported)
+	}
+	return pair, nil
+}
+
+func (r runner) pdfRenditions(data []byte) (map[string]produced, error) {
+	if err := r.slot(r.l.render); err != nil {
+		return nil, err
+	}
+	defer r.l.render.release()
+	pair, err := pdfPairFunc(r.wait, data)
+	if err != nil {
+		slog.Warn(r.op+" PDFPage1Pair", "err", err)
+		return nil, pdfRenderError(err)
+	}
+	return fromPair(pair), nil
+}
+
+func (r runner) imageInfo(p pipeline, data []byte) (render.Info, error) {
+	if !p.original {
+		return render.Info{}, nil
+	}
+	return r.probe(data)
+}
+
+// A size at or below the target of a JPEG/PNG/GIF source is the source itself; the pair is only rendered when a size needs it.
+func (r runner) staticRenditions(p pipeline, data []byte, info render.Info) (map[string]produced, error) {
+	set := map[string]produced{}
+	for _, size := range []string{db.SizeS, db.SizeM} {
+		if p.original && longSide(info) <= sideOf(size) {
+			set[size] = produced{body: data, contentType: p.mime, original: true}
+		}
+	}
+	if len(set) == 2 {
+		return set, nil
+	}
+	rendered, err := r.frameRenditions(data)
+	if err != nil {
+		return nil, err
+	}
+	for size, g := range rendered {
+		if _, ok := set[size]; !ok {
+			set[size] = g
+		}
+	}
+	return set, nil
+}
+
+func (r runner) frameRenditions(data []byte) (map[string]produced, error) {
+	pair, err := r.imagePair(data)
+	if err != nil {
+		return nil, err
+	}
+	return fromPair(pair), nil
 }

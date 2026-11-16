@@ -361,6 +361,17 @@ type ThumbnailGetInput struct {
 	FileOwnerID string        `header:"fileownerid" required:"false" doc:"File owner ID for Advanced storage routing"`
 }
 
+type UploadFiles struct {
+	File huma.FormFile `form:"file" contentType:"application/octet-stream" required:"true" doc:"Source file"`
+}
+
+type ThumbnailPostInput struct {
+	Size    ThumbnailSize `path:"size" doc:"Thumbnail size"`
+	Mime    string        `query:"mime" required:"true" maxLength:"255" doc:"MIME type of the uploaded file"`
+	Lang    string        `query:"lang" default:"en-US" maxLength:"35" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for office conversions"`
+	RawBody huma.MultipartFormFiles[UploadFiles]
+}
+
 type ThumbnailDeleteInput struct {
 	ID string `path:"id" format:"uuid" doc:"UUID of the file whose thumbnails (all versions, both sizes) are deleted"`
 }

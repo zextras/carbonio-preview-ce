@@ -180,7 +180,7 @@ func newID() string { return uuid.NewString() }
 
 func TestThumbnailGet_UnsupportedMIME415(t *testing.T) {
 	h := newHarness(t, harnessOpts{noDB: true})
-	for _, mime := range []string{"application/octet-stream", "image/bmp", "image/jpeg", "image/png", "application/pdf", "garbage"} {
+	for _, mime := range []string{"application/octet-stream", "image/bmp", "garbage"} {
 		rec := h.get(thumbReq{id: newID(), version: 1, mime: mime})
 		if rec.Code != http.StatusUnsupportedMediaType {
 			t.Errorf("mime %q: status %d, want 415 (body %s)", mime, rec.Code, rec.Body)

@@ -94,7 +94,7 @@ func RegisterOperations(api huma.API, deps Deps) *AsyncWorker {
 	if deps.Cfg != nil {
 		w = NewAsyncWorker(deps)
 	}
-	apispec.RegisterThumbnailOps(api, buildGetThumbnail(deps, w), buildDeleteThumbnails(deps))
+	apispec.RegisterThumbnailOps(api, buildGetThumbnail(deps, w), buildPostThumbnail(deps), buildDeleteThumbnails(deps))
 	return w
 }
 

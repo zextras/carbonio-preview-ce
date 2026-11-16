@@ -19,11 +19,14 @@
 package testsupport
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"sync"
 	"sync/atomic"
 )
 
@@ -85,6 +88,15 @@ type StoragesMock struct {
 	Status int
 
 	hits int64
+
+	mu      sync.Mutex
+	uploads map[string][]byte
+	deleted map[string]bool
+	deletes []string
+}
+
+func BlobKey(node string, version int, serviceType string) string {
+	return node + "|" + strconv.Itoa(version) + "|" + serviceType
 }
 
 // NewStoragesMock starts a storages mock serving GET /{downloadAPI} with the
@@ -95,9 +107,13 @@ func NewStoragesMock(downloadAPI string, blob []byte, contentType string) *Stora
 		Blob:        blob,
 		ContentType: contentType,
 		Status:      http.StatusOK,
+		uploads:     map[string][]byte{},
+		deleted:     map[string]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+downloadAPI, m.handle)
+	mux.HandleFunc("/upload", m.handleUpload)
+	mux.HandleFunc("/delete", m.handleDelete)
 	m.Server = httptest.NewServer(mux)
 	return m
 }
@@ -122,11 +138,101 @@ func (m *StoragesMock) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(m.Status)
 		return
 	}
+	key := BlobKey(q.Get("node"), atoiOrZero(q.Get("version")), q.Get("type"))
+	m.mu.Lock()
+	up, uploaded := m.uploads[key]
+	gone := m.deleted[key]
+	m.mu.Unlock()
+	if gone {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if uploaded {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(up)
+		return
+	}
 	if m.ContentType != "" {
 		w.Header().Set("Content-Type", m.ContentType)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(m.Blob)
+}
+
+func atoiOrZero(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+func (m *StoragesMock) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("node") == "" || q.Get("version") == "" || q.Get("type") == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	mr, err := r.MultipartReader()
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var body []byte
+	found := false
+	for {
+		part, perr := mr.NextPart()
+		if perr != nil {
+			break
+		}
+		if part.FormName() == "file" {
+			body, err = io.ReadAll(part)
+			found = err == nil
+		}
+	}
+	if !found {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	key := BlobKey(q.Get("node"), atoiOrZero(q.Get("version")), q.Get("type"))
+	m.mu.Lock()
+	m.uploads[key] = body
+	delete(m.deleted, key)
+	m.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *StoragesMock) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	key := BlobKey(q.Get("node"), atoiOrZero(q.Get("version")), q.Get("type"))
+	m.mu.Lock()
+	delete(m.uploads, key)
+	m.deleted[key] = true
+	m.deletes = append(m.deletes, key)
+	m.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *StoragesMock) Uploaded() map[string][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string][]byte, len(m.uploads))
+	for k, v := range m.uploads {
+		out[k] = v
+	}
+	return out
+}
+
+func (m *StoragesMock) Deletes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.deletes...)
 }
 
 // BaseURL returns the scheme://host:port to pass as storageBaseURL to

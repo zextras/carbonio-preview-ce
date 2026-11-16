@@ -1594,7 +1594,7 @@ paths:
         - thumbnail
   /thumbnail/{id}/{version}/{size}:
     get:
-      description: "Serves the thumbnail of a file version, stored per file, version and size. Video and office thumbnails are generated asynchronously: 202 with Retry-After while generating, 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail."
+      description: "Serves the thumbnail of a file version, stored per file, version and size (s = 320 px, m = 1280 px long side, never upscaled). Images and PDFs are generated synchronously; a source at or below the target that is already JPEG, PNG or GIF is served as is. Video, office and animated GIF thumbnails are generated asynchronously: 202 with Retry-After while generating (an animated GIF answers with its static first frame as body), 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail."
       operationId: getThumbnail
       parameters:
         - description: UUID of the file (UUID1-UUID4)
@@ -1769,5 +1769,124 @@ paths:
                 $ref: "#/components/schemas/FastAPIError"
           description: Service Unavailable
       summary: Get Thumbnail
+      tags:
+        - thumbnail
+  /thumbnail/{size}:
+    post:
+      description: Generates the thumbnail of the uploaded file synchronously, for every supported MIME type. The result is never stored or cached and storages and the database are never touched.
+      operationId: postThumbnail
+      parameters:
+        - description: Thumbnail size
+          in: path
+          name: size
+          required: true
+          schema:
+            description: Thumbnail size
+            enum:
+              - s
+              - m
+            type: string
+        - description: MIME type of the uploaded file
+          explode: false
+          in: query
+          name: mime
+          required: true
+          schema:
+            description: MIME type of the uploaded file
+            maxLength: 255
+            type: string
+        - description: Language tag for office conversions
+          explode: false
+          in: query
+          name: lang
+          schema:
+            default: en-US
+            description: Language tag for office conversions
+            maxLength: 35
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: application/octet-stream
+            schema:
+              properties:
+                file:
+                  description: Source file
+                  format: binary
+                  type: string
+                  x-contentEncoding: binary
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+      responses:
+        "200":
+          content:
+            image/gif:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: Successful Response — the thumbnail rendition
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            Content-Type:
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Request
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unsupported Media Type
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Internal Server Error
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FastAPIError"
+          description: Service Unavailable
+      summary: Post Thumbnail
       tags:
         - thumbnail

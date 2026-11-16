@@ -44,6 +44,7 @@ type Handlers struct {
 	PostDocumentThumbnail func(context.Context, *DocPostThumbnailInput) (*BinOut, error)
 
 	GetThumbnail     func(context.Context, *ThumbnailGetInput) (*ThumbnailOutput, error)
+	PostThumbnail    func(context.Context, *ThumbnailPostInput) (*ThumbnailOutput, error)
 	DeleteThumbnails func(context.Context, *ThumbnailDeleteInput) (*struct{}, error)
 }
 
@@ -54,7 +55,7 @@ func Register(api huma.API, h Handlers) {
 	RegisterHealthOps(api, h.GetHealthLive, h.GetHealthReady, h.GetHealth)
 	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail)
 	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail)
-	RegisterThumbnailOps(api, h.GetThumbnail, h.DeleteThumbnails)
+	RegisterThumbnailOps(api, h.GetThumbnail, h.PostThumbnail, h.DeleteThumbnails)
 }
 
 // RegisterStubs registers all operations with no-op stub handlers.
@@ -84,6 +85,7 @@ func RegisterStubs(api huma.API) {
 		PostDocumentThumbnail: func(_ context.Context, _ *DocPostThumbnailInput) (*BinOut, error) { return nil, nil },
 
 		GetThumbnail:     func(_ context.Context, _ *ThumbnailGetInput) (*ThumbnailOutput, error) { return nil, nil },
+		PostThumbnail:    func(_ context.Context, _ *ThumbnailPostInput) (*ThumbnailOutput, error) { return nil, nil },
 		DeleteThumbnails: func(_ context.Context, _ *ThumbnailDeleteInput) (*struct{}, error) { return nil, nil },
 	}
 	Register(api, h)
@@ -323,6 +325,7 @@ func RegisterDocumentOps(
 func RegisterThumbnailOps(
 	api huma.API,
 	getThumbnail func(context.Context, *ThumbnailGetInput) (*ThumbnailOutput, error),
+	postThumbnail func(context.Context, *ThumbnailPostInput) (*ThumbnailOutput, error),
 	deleteThumbnails func(context.Context, *ThumbnailDeleteInput) (*struct{}, error),
 ) {
 	huma.Register(api, huma.Operation{
@@ -330,7 +333,7 @@ func RegisterThumbnailOps(
 		Method:      http.MethodGet,
 		Path:        "/thumbnail/{id}/{version}/{size}",
 		Summary:     "Get Thumbnail",
-		Description: "Serves the thumbnail of a file version, stored per file, version and size. Video and office thumbnails are generated asynchronously: 202 with Retry-After while generating, 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail.",
+		Description: "Serves the thumbnail of a file version, stored per file, version and size (s = 320 px, m = 1280 px long side, never upscaled). Images and PDFs are generated synchronously; a source at or below the target that is already JPEG, PNG or GIF is served as is. Video, office and animated GIF thumbnails are generated asynchronously: 202 with Retry-After while generating (an animated GIF answers with its static first frame as body), 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail.",
 		Tags:        []string{"thumbnail"},
 		Errors:      []int{400, 404, 415, 422, 424, 502, 503},
 		Responses: map[string]*huma.Response{
@@ -338,6 +341,20 @@ func RegisterThumbnailOps(
 			"202": ThumbnailAccepted,
 		},
 	}, getThumbnail)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "postThumbnail",
+		Method:      http.MethodPost,
+		Path:        "/thumbnail/{size}",
+		Summary:     "Post Thumbnail",
+		Description: "Generates the thumbnail of the uploaded file synchronously, for every supported MIME type. The result is never stored or cached and storages and the database are never touched.",
+		Tags:        []string{"thumbnail"},
+		Errors:      []int{400, 415, 422, 502, 503},
+		Responses: map[string]*huma.Response{
+			"200": ThumbnailOK,
+		},
+		BodyReadTimeout: uploadReadTimeout,
+	}, postThumbnail)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteThumbnails",

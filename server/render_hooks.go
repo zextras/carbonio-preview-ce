@@ -22,9 +22,15 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/video"
 )
 
-// imageThumbnailFunc is the seam for render.ImageThumbnail.
+var probeFunc = render.Probe
+
 var imagePairFunc = render.ImagePair
 
+var pdfPairFunc = render.PDFPage1Pair
+
+var animatedGIFFunc = render.AnimatedGIF
+
+// imageThumbnailFunc is the seam for render.ImageThumbnail.
 var imageThumbnailFunc = func(
 	data []byte,
 	width, height int,
