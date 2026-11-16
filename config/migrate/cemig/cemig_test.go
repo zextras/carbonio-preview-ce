@@ -410,11 +410,11 @@ func TestHasApplicationWork_TrueWhenOnlyDropEntriesDueToV1Moves(t *testing.T) {
 	}
 	runner2.Run()
 
-	// V1MoveDBPoolKeys (3 moves) and V2RenameConfigNamespaces (4 moves) each
+	// V1MoveDBPoolKeys (3 moves), V2RenameConfigNamespaces (4 moves) and V3RenameAsyncKeys (4 moves) each
 	// issue exactly one Get(OldPath) per declared move; none of them exist, so
-	// no Get(NewPath), Put, or Delete follows. Total: 3 + 4 = 7.
-	if consulHits != 7 {
-		t.Errorf("expected 7 Consul GETs (one OldPath probe per move across V1+V2), got %d", consulHits)
+	// no Get(NewPath), Put, or Delete follows. Total: 3 + 4 + 4 = 11.
+	if consulHits != 11 {
+		t.Errorf("expected 11 Consul GETs (one OldPath probe per move across V1+V2+V3), got %d", consulHits)
 	}
 	// ini must have been renamed (all bootstrap keys consumed).
 	if _, err := os.Stat(iniPath); !os.IsNotExist(err) {

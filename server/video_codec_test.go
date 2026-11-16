@@ -30,10 +30,10 @@ import (
 // row whose stored codec is now in the supported list causes ReenqueueUnsupported
 // (row → PENDING) and returns 202.
 func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "unsup_in_list")
+	fileID := testUID(t, "unsup_in_list")
 	const version = 1
 	const instID = "inst-codec"
 	const codec = "h264" // in supported list
@@ -75,10 +75,10 @@ func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
 // TestResolve_Unsupported_CodecNotInList_Returns415 verifies that an UNSUPPORTED
 // row whose codec is NOT in the supported list still returns 415.
 func TestResolve_Unsupported_CodecNotInList_Returns415(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "unsup_not_list")
+	fileID := testUID(t, "unsup_not_list")
 	const version = 1
 	const instID = "inst-av1"
 	const codec = "av1_unsup_test_codec" // deliberately not in supported list
@@ -116,10 +116,10 @@ func TestResolve_Unsupported_CodecNotInList_Returns415(t *testing.T) {
 // TestResolve_Unsupported_NoCodec_Returns415 verifies that an UNSUPPORTED row
 // without a stored codec (codec IS NULL) returns 415 (no re-enqueue possible).
 func TestResolve_Unsupported_NoCodec_Returns415(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "unsup_no_codec")
+	fileID := testUID(t, "unsup_no_codec")
 	const version = 1
 	const instID = "inst-nc"
 
@@ -151,10 +151,10 @@ func TestResolve_Unsupported_NoCodec_Returns415(t *testing.T) {
 // returns a codec not in the supported list, the row is marked UNSUPPORTED
 // and attempts are NOT incremented.
 func TestAttempt_CodecNotSupported_MarksUnsupported(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_codec_unsup")
+	fileID := testUID(t, "att_codec_unsup")
 	const version = 1
 
 	// Stub probe to return an unsupported codec.
@@ -208,10 +208,10 @@ func TestAttempt_CodecNotSupported_MarksUnsupported(t *testing.T) {
 // TestAttempt_ProbeFails_ReleasesWithAttempt verifies that a probe failure
 // (cannot detect codec) is treated as a transient error: ReleaseWithAttempt.
 func TestAttempt_ProbeFails_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_probe_fail")
+	fileID := testUID(t, "att_probe_fail")
 	const version = 1
 
 	origProbe := videoDetectCodecFromFileFunc
@@ -251,10 +251,10 @@ func TestAttempt_ProbeFails_ReleasesWithAttempt(t *testing.T) {
 // TestAttempt_ProbeFails_AtCap_MarksFailed verifies that probe failures at
 // maxAttempts cap result in FAILED (not UNSUPPORTED).
 func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_probe_cap")
+	fileID := testUID(t, "att_probe_cap")
 	const version = 1
 
 	origProbe := videoDetectCodecFromFileFunc
@@ -303,10 +303,10 @@ func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
 // TestAttempt_CodecInList_GenerateOK_MarksReady verifies the happy path with
 // codec detection: probe returns a supported codec, extract succeeds → READY.
 func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_codec_ok")
+	fileID := testUID(t, "att_codec_ok")
 	const version = 1
 
 	origProbe := videoDetectCodecFromFileFunc
@@ -356,10 +356,10 @@ func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
 // ErrExtractFailed from the extract step (supported codec, corrupt file) is
 // treated as a transient error → ReleaseWithAttempt (NOT UNSUPPORTED).
 func TestAttempt_CodecInList_ErrExtractFailed_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_corrupt")
+	fileID := testUID(t, "att_corrupt")
 	const version = 1
 
 	origProbe := videoDetectCodecFromFileFunc
@@ -407,10 +407,10 @@ func TestAttempt_CodecInList_ErrExtractFailed_ReleasesWithAttempt(t *testing.T) 
 // codec (re-enqueued UNSUPPORTED) does not re-probe. The probe stub panics if
 // called so that any accidental call is caught as a test failure.
 func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_skip_probe")
+	fileID := testUID(t, "att_skip_probe")
 	const version = 1
 	const instID = "inst-sp"
 	const codec = "h264"

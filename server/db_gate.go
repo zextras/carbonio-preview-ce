@@ -4,7 +4,7 @@
 
 package server
 
-// video_gate.go implements the DB-resilience layer for the video-preview
+// db_gate.go implements the DB-resilience layer for the video-preview
 // endpoints.
 //
 // carbonio-preview must boot and serve image/pdf/document/health even when the
@@ -20,7 +20,7 @@ package server
 // The gate is the single readiness signal consulted at REQUEST time (not at
 // construction time), so a DB that comes up after boot re-enables video with no
 // process restart. main.go initialises the DB in a background goroutine with
-// capped-backoff retry and calls videoGate.Set on success.
+// capped-backoff retry and calls dbGate.Set on success.
 
 import (
 	"strings"
@@ -29,37 +29,37 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 )
 
-// videoGate holds the video-preview DB store behind an atomic pointer so the
+// dbGate holds the video-preview DB store behind an atomic pointer so the
 // readiness state can flip after boot without racing the request handlers.
 //
 // A nil store means "video DB not ready" (absent creds, or the background init
 // has not yet succeeded). Handlers and the worker must consult Store()/Ready()
 // on every use and degrade gracefully when it is nil.
-type videoGate struct {
+type dbGate struct {
 	store atomic.Pointer[db.Store]
 }
 
-// newVideoGate returns a gate in the not-ready (nil store) state.
-func newVideoGate() *videoGate {
-	return &videoGate{}
+// newDBGate returns a gate in the not-ready (nil store) state.
+func newDBGate() *dbGate {
+	return &dbGate{}
 }
 
 // Set publishes the ready DB store. Passing nil returns the gate to not-ready.
-func (g *videoGate) Set(s *db.Store) {
+func (g *dbGate) Set(s *db.Store) {
 	g.store.Store(s)
 }
 
 // Store returns the current DB store, or nil when video is disabled/not ready.
-func (g *videoGate) Store() *db.Store {
+func (g *dbGate) Store() *db.Store {
 	return g.store.Load()
 }
 
 // Ready reports whether a DB store is currently available.
-func (g *videoGate) Ready() bool {
+func (g *dbGate) Ready() bool {
 	return g.store.Load() != nil
 }
 
-// videoStore resolves the DB store the video path should use for THIS request.
+// dbStore resolves the DB store the async path should use for THIS request.
 //
 // Resolution order:
 //  1. If a gate is attached, its current store wins (nil ⇒ not ready ⇒ video
@@ -70,7 +70,7 @@ func (g *videoGate) Ready() bool {
 //     handlers directly) working unchanged.
 //
 // A nil return means "video is not available right now".
-func (d Deps) videoStore() *db.Store {
+func (d Deps) dbStore() *db.Store {
 	if d.DBGate != nil {
 		return d.DBGate.Store()
 	}

@@ -98,10 +98,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// StartVideoDBAsync is the SHARED helper (server package) that encapsulates
+	// StartDBAsync is the SHARED helper (server package) that encapsulates
 	// the DSN-empty-vs-background-retry decision, so CE's and Advanced's main
 	// can never diverge on how the video DB comes up.
-	srv.StartVideoDBAsync(ctx, cfg)
+	srv.StartDBAsync(ctx, cfg)
 
 	// Run blocks until SIGTERM/SIGINT; it always starts the HTTP listener.
 	srv.Run()

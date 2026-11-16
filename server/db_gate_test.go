@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// video_gate_test.go covers the DB-resilience behaviour of the video endpoints.
+// db_gate_test.go covers the DB-resilience behaviour of the video endpoints.
 //
 // When the video-preview DB is absent or unreachable the video preview +
 // thumbnail handlers must degrade to HTTP 424 (Failed Dependency) — an
@@ -13,7 +13,7 @@
 // after boot) re-enables the normal resolve() path with no restart.
 //
 // The genuine-unsupported-codec → 415 mapping is unchanged and covered in
-// video_api_test.go (TestResolve_Unsupported_Returns415).
+// thumbnail_api_test.go (TestResolve_Unsupported_Returns415).
 
 package server
 
@@ -50,17 +50,17 @@ func noDBDeps() Deps {
 		Store:    &mockStore{blob: []byte("src")},
 		Cache:    cache.New(0),
 		DB:       nil,
-		DBGate:   newVideoGate(),
-		VideoSem: nil,
+		DBGate:   newDBGate(),
+		AsyncSem: nil,
 	}
 }
 
 // ---------------------------------------------------------------------------
-// videoGate unit behaviour
+// dbGate unit behaviour
 // ---------------------------------------------------------------------------
 
-func TestVideoGate_DefaultNotReady(t *testing.T) {
-	g := newVideoGate()
+func TestDBGate_DefaultNotReady(t *testing.T) {
+	g := newDBGate()
 	if g.Store() != nil {
 		t.Error("fresh gate: Store() must be nil")
 	}
@@ -69,8 +69,8 @@ func TestVideoGate_DefaultNotReady(t *testing.T) {
 	}
 }
 
-func TestVideoGate_SetMakesReady(t *testing.T) {
-	g := newVideoGate()
+func TestDBGate_SetMakesReady(t *testing.T) {
+	g := newDBGate()
 	// A non-nil sentinel store pointer is enough for the gate's own semantics.
 	st := &db.Store{}
 	g.Set(st)
@@ -234,18 +234,18 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetVideoPreview_GateFlipsReady_Proceeds(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
 	// Start with a NOT-ready gate: handler must return 424.
-	gate := newVideoGate()
+	gate := newDBGate()
 	deps := Deps{
 		Cfg:      testCfg(),
 		Store:    &mockStore{blob: []byte("src")},
 		Cache:    cache.New(0),
 		DB:       nil,
 		DBGate:   gate,
-		VideoSem: nil,
+		AsyncSem: nil,
 	}
 	handler := buildGetVideoPreview(deps, nil)
 
@@ -288,10 +288,10 @@ func TestGetVideoPreview_GateFlipsReady_Proceeds(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetVideoPreview_RuntimeConnError_Returns424(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	gate := newVideoGate()
+	gate := newDBGate()
 	gate.Set(dbStore)
 	deps := Deps{
 		Cfg:      testCfg(),
@@ -299,7 +299,7 @@ func TestGetVideoPreview_RuntimeConnError_Returns424(t *testing.T) {
 		Cache:    cache.New(0),
 		DB:       nil,
 		DBGate:   gate,
-		VideoSem: nil,
+		AsyncSem: nil,
 	}
 	handler := buildGetVideoPreview(deps, nil)
 

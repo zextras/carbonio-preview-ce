@@ -73,7 +73,7 @@ func startPostgres(t *testing.T) *Store {
 	}
 	containerID := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
-		_ = exec.Command("docker", "rm", "-f", containerID).Run()
+		_ = exec.Command("docker", "rm", "-fv", containerID).Run()
 	})
 
 	// Retrieve the mapped host port.

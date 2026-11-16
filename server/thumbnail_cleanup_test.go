@@ -97,7 +97,7 @@ func stubSupportedCodec(t *testing.T) {
 	})
 }
 
-func claimedRow(t *testing.T, st *db.Store, w *VideoWorker, fileID string, attempts int) db.VideoPreview {
+func claimedRow(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, attempts int) db.VideoPreview {
 	t.Helper()
 	ctx := context.Background()
 	if err := st.EnqueueIfAbsent(ctx, fileID, 1, "owner1", "files"); err != nil {
@@ -122,7 +122,7 @@ func claimedRow(t *testing.T, st *db.Store, w *VideoWorker, fileID string, attem
 }
 
 func TestAttempt_FailureClassification(t *testing.T) {
-	st := startVideoPostgres(t)
+	st := startDBStore(t)
 	ctx := context.Background()
 
 	type tc struct {
@@ -153,7 +153,7 @@ func TestAttempt_FailureClassification(t *testing.T) {
 			t.Cleanup(func() { videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc = origProbe, origExtract })
 
 			w := makeWorkerWithDB(st, c.store, 3)
-			id := videoUID(t, "cls")
+			id := testUID(t, "cls")
 			row := claimedRow(t, st, w, id, c.attempts)
 			w.attempt(ctx, row)
 
@@ -178,12 +178,12 @@ func TestAttempt_FailureClassification(t *testing.T) {
 }
 
 func TestAttempt_ConnectivityFailure_DoesNotDeleteRowOwnedByAnotherInstance(t *testing.T) {
-	st := startVideoPostgres(t)
+	st := startDBStore(t)
 	ctx := context.Background()
 	stubSupportedCodec(t)
 
 	w := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
-	id := videoUID(t, "foreign")
+	id := testUID(t, "foreign")
 	row := claimedRow(t, st, w, id, 0)
 	row2 := row
 	w2 := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
@@ -194,7 +194,7 @@ func TestAttempt_ConnectivityFailure_DoesNotDeleteRowOwnedByAnotherInstance(t *t
 }
 
 func TestClaimNeedsNoSemaphore(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+	st, dsn := startDBStoreWithDSN(t)
 	ctx := context.Background()
 	stubSupportedCodec(t)
 
@@ -206,11 +206,11 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		})
 		store := newEOFStore()
 		w := makeWorkerWithSem(st, store, 3)
-		id := videoUID(t, "busy")
+		id := testUID(t, "busy")
 		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
 			t.Fatal(err)
 		}
-		w.deps.VideoSem <- struct{}{}
+		w.deps.AsyncSem <- struct{}{}
 		tickCtx, cancel := context.WithCancel(ctx)
 		t.Cleanup(cancel)
 		w.tick(tickCtx)
@@ -223,7 +223,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		if probes.Load() != 0 {
 			t.Fatal("ffmpeg ran without a slot")
 		}
-		<-w.deps.VideoSem
+		<-w.deps.AsyncSem
 		eventually(t, "row READY", func() bool {
 			r, _ := st.Find(ctx, id, 1)
 			return r != nil && r.Status == db.StatusReady
@@ -233,7 +233,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 	t.Run("lost_claim_takes_no_slot_and_leaves_no_live_entry", func(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
-		id := videoUID(t, "lost")
+		id := testUID(t, "lost")
 		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
 			t.Fatal(err)
 		}
@@ -241,8 +241,8 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 			t.Fatalf("Claim: %v %v", ok, err)
 		}
 		w.runOne(id, 1)
-		if w.liveCount() != 0 || len(w.deps.VideoSem) != 0 {
-			t.Fatalf("lost claim left live=%d slots=%d", w.liveCount(), len(w.deps.VideoSem))
+		if w.liveCount() != 0 || len(w.deps.AsyncSem) != 0 {
+			t.Fatalf("lost claim left live=%d slots=%d", w.liveCount(), len(w.deps.AsyncSem))
 		}
 		sqlExec(t, dsn, `UPDATE video_preview SET status='PENDING', claimed_by=NULL WHERE file_id=$1`, id)
 		w.runOne(id, 1)
@@ -256,7 +256,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 	t.Run("runOne_leaves_row_for_the_sweep_when_instance_is_full", func(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
-		id := videoUID(t, "full")
+		id := testUID(t, "full")
 		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
 			t.Fatal(err)
 		}
@@ -273,7 +273,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 }
 
 func TestGetVideoPreview_Ready_TouchesLastAccessOnlyWhenOlderThanOneDay(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+	st, dsn := startDBStoreWithDSN(t)
 	ctx := context.Background()
 
 	const oldID = "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
@@ -305,7 +305,7 @@ func TestGetVideoPreview_Ready_TouchesLastAccessOnlyWhenOlderThanOneDay(t *testi
 }
 
 func TestCleanupOnce(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+	st, dsn := startDBStoreWithDSN(t)
 	ctx := context.Background()
 
 	seed := func(id, status string, ago time.Duration) {

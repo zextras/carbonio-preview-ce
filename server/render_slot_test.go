@@ -838,7 +838,7 @@ func TestFlight_PanicBecomes500AndReleasesSlots(t *testing.T) {
 }
 
 func TestVideoGet_Slots(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
 	t.Run("resize holds the render slot", func(t *testing.T) {

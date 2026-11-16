@@ -34,21 +34,21 @@ type Server struct {
 	// flipped to ready asynchronously by the caller (main.go) once the background
 	// DB init succeeds. Video handlers and the worker consult it on every use, so
 	// the DB can come up after boot and re-enable video with no process restart.
-	dbGate *videoGate
+	dbGate *dbGate
 	// worker is the video-preview background sweeper. It is constructed in
 	// buildMux (gate-aware) and only actually processes rows while dbGate is
-	// ready. Started by StartVideoWorker (called from main once the DB is up).
-	worker *VideoWorker
+	// ready. Started by StartAsyncWorker (called from main once the DB is up).
+	worker *AsyncWorker
 
 	// workerStartMu guards workerStartRequested/workerStartCtx below. It makes
 	// the "start the worker" request order-independent with respect to
 	// buildMux constructing s.worker.
 	//
-	// Production ordering (main.go) is: New() [worker nil] → StartVideoDBAsync()
+	// Production ordering (main.go) is: New() [worker nil] → StartDBAsync()
 	// [background goroutine] → Run() [buildMux constructs worker]. If the
-	// background DB init finishes and calls EnableVideoDB/StartVideoWorker
+	// background DB init finishes and calls EnableDB/StartAsyncWorker
 	// BEFORE Run() reaches buildMux, the old code's `if s.worker != nil` guard
-	// in StartVideoWorker silently dropped the start request — buildMux later
+	// in StartAsyncWorker silently dropped the start request — buildMux later
 	// assigns s.worker, but nothing ever calls StartOnce on it, so the sweep
 	// goroutine never launches even though the DB gate is ready.
 	//
@@ -62,13 +62,13 @@ type Server struct {
 	workerStartRequested bool
 	workerStartCtx       context.Context
 
-	// videoMu guards the video DB lifecycle owned by StartVideoDBAsync: its
-	// cancellable context, the init goroutine and the pool, closed by stopVideo
+	// dbMu guards the video DB lifecycle owned by StartDBAsync: its
+	// cancellable context, the init goroutine and the pool, closed by stopAsync
 	// only after the worker's jobs have ended.
-	videoMu     sync.Mutex
-	videoCancel context.CancelFunc
-	videoInit   sync.WaitGroup
-	videoStore  *db.Store
+	dbMu     sync.Mutex
+	dbCancel context.CancelFunc
+	dbInit   sync.WaitGroup
+	dbPool   *db.Store
 }
 
 // Option is a functional option for Server configuration.
@@ -76,30 +76,30 @@ type Option func(*Server)
 
 // New constructs a Server. cfg and store must not be nil. c may be nil (cache
 // disabled). Both editions (CE and Advanced) call New from their own main and
-// then call StartVideoDBAsync(ctx, cfg) to enable video previews asynchronously
+// then call StartDBAsync(ctx, cfg) to enable video previews asynchronously
 // (background pool-open + Migrate, then gate + worker start).
 //
-// When EnableVideoDB has not yet fired, the video-preview DB layer is disabled:
+// When EnableDB has not yet fired, the video-preview DB layer is disabled:
 // video preview/thumbnail return 424 (Failed Dependency) and the worker does not
 // process rows. Image/PDF/document/health are unaffected.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
-	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newVideoGate()}
+	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newDBGate()}
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
 }
 
-// EnableVideoDB publishes a ready DB store to the gate and (idempotently) starts
+// EnableDB publishes a ready DB store to the gate and (idempotently) starts
 // the video worker. It is safe to call from a background goroutine after the
 // server is already serving: the gate flip is atomic and the handlers pick it up
 // on the next request with no restart. Calling it more than once is harmless.
-func (s *Server) EnableVideoDB(ctx context.Context, dbStore *db.Store) {
+func (s *Server) EnableDB(ctx context.Context, dbStore *db.Store) {
 	s.dbGate.Set(dbStore)
-	s.StartVideoWorker(ctx)
+	s.StartAsyncWorker(ctx)
 }
 
-// StartVideoWorker starts the background sweep goroutine if a worker exists and
+// StartAsyncWorker starts the background sweep goroutine if a worker exists and
 // has not been started yet. The worker itself no-ops each tick while the gate is
 // not ready, so starting it early (or before the DB is up) is safe.
 //
@@ -108,7 +108,7 @@ func (s *Server) EnableVideoDB(ctx context.Context, dbStore *db.Store) {
 // s.worker is assigned. This makes the start order-independent with respect to
 // buildMux — see the workerStartMu doc comment on Server for the full race this
 // closes.
-func (s *Server) StartVideoWorker(ctx context.Context) {
+func (s *Server) StartAsyncWorker(ctx context.Context) {
 	s.workerStartMu.Lock()
 	defer s.workerStartMu.Unlock()
 	if s.worker != nil {
@@ -162,7 +162,7 @@ func (s *Server) Run() {
 		"addr", addr,
 		"render_concurrency", s.cfg.RenderConcurrency,
 		"pdf_workers", s.cfg.PDFWorkers,
-		"video_concurrency", s.cfg.VideoConcurrency,
+		"async_concurrency", s.cfg.AsyncConcurrency,
 		"vips_concurrency", s.cfg.VIPSConcurrency,
 		"storages_timeout", s.cfg.ServiceTimeoutInSeconds,
 		"docs_timeout", s.cfg.ServiceDocsTimeout,
@@ -185,30 +185,30 @@ func (s *Server) Run() {
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: HTTP shutdown", "err", err)
 	}
-	s.stopVideo()
+	s.stopAsync()
 }
 
-// stopVideo ends the video worker and closes the video DB pool, in that order:
-// it cancels the context owned by StartVideoDBAsync, waits for the DB init, then
+// stopAsync ends the video worker and closes the video DB pool, in that order:
+// it cancels the context owned by StartDBAsync, waits for the DB init, then
 // for the worker's jobs (each returns its row to PENDING), and only then closes the pool.
-func (s *Server) stopVideo() {
-	s.videoMu.Lock()
-	cancel := s.videoCancel
-	s.videoMu.Unlock()
+func (s *Server) stopAsync() {
+	s.dbMu.Lock()
+	cancel := s.dbCancel
+	s.dbMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	s.videoInit.Wait()
+	s.dbInit.Wait()
 	s.workerStartMu.Lock()
 	w := s.worker
 	s.workerStartMu.Unlock()
 	if w != nil {
 		w.Wait()
 	}
-	s.videoMu.Lock()
-	store := s.videoStore
-	s.videoStore = nil
-	s.videoMu.Unlock()
+	s.dbMu.Lock()
+	store := s.dbPool
+	s.dbPool = nil
+	s.dbMu.Unlock()
 	if store != nil {
 		store.Close()
 	}
@@ -245,32 +245,32 @@ func (s *Server) Handler() http.Handler {
 //
 // The render slots are sized from the image-document.max-concurrent-operations
 // key and bound only CPU work. The dedicated video semaphore is built
-// here from cfg.VideoConcurrency (APPLICATION key
-// video.max-concurrent-extractions, default runtime.NumCPU()) so a flood of
+// here from cfg.AsyncConcurrency (APPLICATION key
+// async.max-concurrent-jobs, default runtime.NumCPU()) so a flood of
 // video jobs can never starve image previews, and vice-versa.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	videoSem := make(chan struct{}, s.cfg.VideoConcurrency)
+	asyncSem := make(chan struct{}, s.cfg.AsyncConcurrency)
 
 	// Register all operations under huma. The video worker is constructed here
 	// (gate-aware) and retained on the Server so it can be started once the DB is
-	// ready (EnableVideoDB / StartVideoWorker).
+	// ready (EnableDB / StartAsyncWorker).
 	api := newHumaAPI(mux)
 	worker := RegisterOperations(api, Deps{
 		Cfg:      s.cfg,
 		Store:    s.store,
 		Cache:    s.cache,
 		Limits:   newLimits(s.cfg.RenderConcurrency),
-		VideoSem: videoSem,
+		AsyncSem: asyncSem,
 		DBGate:   s.dbGate,
 	})
 
 	// Assign s.worker and check/honour a deferred start request atomically
-	// under the SAME lock that StartVideoWorker uses to read/write s.worker.
-	// This closes the race where EnableVideoDB/StartVideoWorker fires
+	// under the SAME lock that StartAsyncWorker uses to read/write s.worker.
+	// This closes the race where EnableDB/StartAsyncWorker fires
 	// concurrently with buildMux: without the shared lock, the assignment
-	// below and the `if s.worker != nil` read in StartVideoWorker can race
+	// below and the `if s.worker != nil` read in StartAsyncWorker can race
 	// (flagged by `go test -race`). See the workerStartMu doc comment on
 	// Server for the full ordering issue this pairing fixes. StartOnce's
 	// atomic CAS makes calling it here safe even if the normal post-ready

@@ -80,19 +80,19 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func slotWorker(st *db.Store, store storage.Client, v int) *VideoWorker {
+func slotWorker(st *db.Store, store storage.Client, v int) *AsyncWorker {
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = 3
-	return NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = 3
+	return NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		Cache:    cache.New(0),
 		DB:       st,
-		VideoSem: make(chan struct{}, v),
+		AsyncSem: make(chan struct{}, v),
 	})
 }
 
-func runAttempt(ctx context.Context, w *VideoWorker, row db.VideoPreview) <-chan struct{} {
+func runAttempt(ctx context.Context, w *AsyncWorker, row db.VideoPreview) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -118,8 +118,8 @@ func waitReady(t *testing.T, st *db.Store, id string) {
 	})
 }
 
-func TestVideoSlot(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+func TestAsyncSlot(t *testing.T) {
+	st, dsn := startDBStoreWithDSN(t)
 	ctx := context.Background()
 
 	t.Run("download_is_not_gated_by_a_busy_extraction", func(t *testing.T) {
@@ -143,7 +143,7 @@ func TestVideoSlot(t *testing.T) {
 		})
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
-		idA, idB := videoUID(t, "A"), videoUID(t, "B")
+		idA, idB := testUID(t, "A"), testUID(t, "B")
 		rowA, rowB := claimedRow(t, st, w, idA, 0), claimedRow(t, st, w, idB, 0)
 
 		doneA := runAttempt(ctx, w, rowA)
@@ -200,7 +200,7 @@ func TestVideoSlot(t *testing.T) {
 		var done []<-chan struct{}
 		var ids []string
 		for i := 0; i < jobs; i++ {
-			id := videoUID(t, "j"+strconv.Itoa(i))
+			id := testUID(t, "j"+strconv.Itoa(i))
 			ids = append(ids, id)
 			done = append(done, runAttempt(ctx, w, claimedRow(t, st, w, id, 0)))
 		}
@@ -226,8 +226,8 @@ func TestVideoSlot(t *testing.T) {
 		if p := peak.Load(); p != v {
 			t.Errorf("peak concurrent ffmpeg jobs=%d, want %d", p, v)
 		}
-		if len(w.deps.VideoSem) != 0 {
-			t.Errorf("slots still held=%d", len(w.deps.VideoSem))
+		if len(w.deps.AsyncSem) != 0 {
+			t.Errorf("slots still held=%d", len(w.deps.AsyncSem))
 		}
 	})
 
@@ -236,9 +236,9 @@ func TestVideoSlot(t *testing.T) {
 		stubSupportedCodec(t)
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
-		id := videoUID(t, "hb")
+		id := testUID(t, "hb")
 		row := claimedRow(t, st, w, id, 0)
-		w.deps.VideoSem <- struct{}{}
+		w.deps.AsyncSem <- struct{}{}
 
 		done := runAttempt(ctx, w, row)
 		store.waitEOF(t, 1)
@@ -254,7 +254,7 @@ func TestVideoSlot(t *testing.T) {
 			t.Fatalf("waiting row: status=%s attempts=%d, want GENERATING/0", r.Status, r.Attempts)
 		}
 
-		<-w.deps.VideoSem
+		<-w.deps.AsyncSem
 		waitDone(t, done)
 		waitReady(t, st, id)
 	})
@@ -267,9 +267,9 @@ func TestVideoSlot(t *testing.T) {
 		})
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
-		id := videoUID(t, "cancel")
+		id := testUID(t, "cancel")
 		row := claimedRow(t, st, w, id, 1)
-		w.deps.VideoSem <- struct{}{}
+		w.deps.AsyncSem <- struct{}{}
 
 		runCtx, cancel := context.WithCancel(ctx)
 		done := runAttempt(runCtx, w, row)
@@ -285,8 +285,8 @@ func TestVideoSlot(t *testing.T) {
 		if probes.Load() != 0 {
 			t.Error("ffmpeg ran without a slot")
 		}
-		if len(w.deps.VideoSem) != 1 {
-			t.Errorf("slots held=%d, want 1 (only the test's)", len(w.deps.VideoSem))
+		if len(w.deps.AsyncSem) != 1 {
+			t.Errorf("slots held=%d, want 1 (only the test's)", len(w.deps.AsyncSem))
 		}
 	})
 
@@ -295,10 +295,10 @@ func TestVideoSlot(t *testing.T) {
 		sqlExec(t, dsn, `DELETE FROM video_preview WHERE status='PENDING'`)
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
-		w.deps.VideoSem <- struct{}{}
+		w.deps.AsyncSem <- struct{}{}
 		const rows = maxInFlight + 6
 		for i := 0; i < rows; i++ {
-			if err := st.EnqueueIfAbsent(ctx, videoUID(t, "m"+strconv.Itoa(i)), 1, "owner1", "files"); err != nil {
+			if err := st.EnqueueIfAbsent(ctx, testUID(t, "m"+strconv.Itoa(i)), 1, "owner1", "files"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -313,7 +313,7 @@ func TestVideoSlot(t *testing.T) {
 		}
 		generating := 0
 		for i := 0; i < rows; i++ {
-			if r, _ := st.Find(ctx, videoUID(t, "m"+strconv.Itoa(i)), 1); r.Status == db.StatusGenerating {
+			if r, _ := st.Find(ctx, testUID(t, "m"+strconv.Itoa(i)), 1); r.Status == db.StatusGenerating {
 				generating++
 			}
 		}
@@ -334,11 +334,11 @@ func TestVideoSlot(t *testing.T) {
 		sqlExec(t, dsn, `DELETE FROM video_preview WHERE status='PENDING'`)
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
-		w.deps.VideoSem <- struct{}{}
+		w.deps.AsyncSem <- struct{}{}
 		w.staleTTL = time.Minute
 		const stale = 3
 		for i := 0; i < stale; i++ {
-			id := videoUID(t, "s"+strconv.Itoa(i))
+			id := testUID(t, "s"+strconv.Itoa(i))
 			if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +357,7 @@ func TestVideoSlot(t *testing.T) {
 
 		generating, pending := 0, 0
 		for i := 0; i < stale; i++ {
-			r, _ := st.Find(ctx, videoUID(t, "s"+strconv.Itoa(i)), 1)
+			r, _ := st.Find(ctx, testUID(t, "s"+strconv.Itoa(i)), 1)
 			switch {
 			case r.Status == db.StatusGenerating && r.ClaimedBy != nil && *r.ClaimedBy == w.instanceID:
 				generating++
@@ -372,23 +372,23 @@ func TestVideoSlot(t *testing.T) {
 			t.Fatalf("live jobs=%d, want %d", n, maxInFlight)
 		}
 		cancel()
-		<-w.deps.VideoSem
+		<-w.deps.AsyncSem
 		w.Wait()
 	})
 }
 
 func TestResolve_AsyncAttemptFiresOnlyForPendingRows(t *testing.T) {
-	st := startVideoPostgres(t)
+	st := startDBStore(t)
 	bg := context.Background()
 	stubSupportedCodec(t)
 	store := newEOFStore()
 	w := slotWorker(st, store, 1)
-	w.deps.VideoSem <- struct{}{}
+	w.deps.AsyncSem <- struct{}{}
 	ctx, cancel := context.WithCancel(bg)
 	defer cancel()
 	w.bind(ctx)
 	deps := w.deps
-	idOther, idPending := videoUID(t, "other"), videoUID(t, "pending")
+	idOther, idPending := testUID(t, "other"), testUID(t, "pending")
 
 	if err := st.EnqueueIfAbsent(bg, idOther, 1, "owner1", "files"); err != nil {
 		t.Fatal(err)
@@ -422,6 +422,6 @@ func TestResolve_AsyncAttemptFiresOnlyForPendingRows(t *testing.T) {
 	}
 
 	cancel()
-	<-w.deps.VideoSem
+	<-w.deps.AsyncSem
 	w.Wait()
 }

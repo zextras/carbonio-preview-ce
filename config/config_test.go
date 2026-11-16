@@ -138,7 +138,7 @@ func TestPDFWorkersFallbackToCPUCount(t *testing.T) {
 func TestConfig_ConcurrencyFromApplicationEnv(t *testing.T) {
 	t.Setenv("APPLICATION_CONFIG_IMAGE_DOCUMENT_MAX_CONCURRENT_OPERATIONS", "4")
 	t.Setenv("APPLICATION_CONFIG_DOCUMENT_SUBPROCESS_POOL_SIZE", "2")
-	t.Setenv("APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS", "3")
+	t.Setenv("APPLICATION_CONFIG_ASYNC_MAX_CONCURRENT_JOBS", "3")
 	srv := buildKVServer(t, nil)
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -149,8 +149,8 @@ func TestConfig_ConcurrencyFromApplicationEnv(t *testing.T) {
 	if App.PDFWorkers != 2 {
 		t.Errorf("PDFWorkers = %d, want 2", App.PDFWorkers)
 	}
-	if App.VideoConcurrency != 3 {
-		t.Errorf("VideoConcurrency = %d, want 3", App.VideoConcurrency)
+	if App.AsyncConcurrency != 3 {
+		t.Errorf("AsyncConcurrency = %d, want 3", App.AsyncConcurrency)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestConfig_ConcurrencyFromKV(t *testing.T) {
 	srv := buildKVServer(t, map[string]string{
 		"image-document/max-concurrent-operations": "6",
 		"document/subprocess-pool-size":            "7",
-		"video/max-concurrent-extractions":         "8",
+		"async/max-concurrent-jobs":                "8",
 	})
 	if err := loadWithConsul(t, srv); err != nil {
 		t.Fatalf("Load(): %v", err)
@@ -171,8 +171,8 @@ func TestConfig_ConcurrencyFromKV(t *testing.T) {
 	if App.PDFWorkers != 7 {
 		t.Errorf("PDFWorkers = %d, want 7", App.PDFWorkers)
 	}
-	if App.VideoConcurrency != 8 {
-		t.Errorf("VideoConcurrency = %d, want 8", App.VideoConcurrency)
+	if App.AsyncConcurrency != 8 {
+		t.Errorf("AsyncConcurrency = %d, want 8", App.AsyncConcurrency)
 	}
 }
 
@@ -189,8 +189,8 @@ func TestConfig_ConcurrencyDefaultsToNumCPU(t *testing.T) {
 	if App.PDFWorkers != runtime.NumCPU() {
 		t.Errorf("PDFWorkers = %d, want runtime.NumCPU() = %d", App.PDFWorkers, runtime.NumCPU())
 	}
-	if App.VideoConcurrency != runtime.NumCPU() {
-		t.Errorf("VideoConcurrency = %d, want runtime.NumCPU() = %d", App.VideoConcurrency, runtime.NumCPU())
+	if App.AsyncConcurrency != runtime.NumCPU() {
+		t.Errorf("AsyncConcurrency = %d, want runtime.NumCPU() = %d", App.AsyncConcurrency, runtime.NumCPU())
 	}
 }
 
@@ -548,17 +548,17 @@ func TestParseFailureZeroPDFWorkers(t *testing.T) {
 	}
 }
 
-// TestParseFailureZeroVideoConcurrency verifies that
-// video.max-concurrent-extractions=0 is rejected.
-func TestParseFailureZeroVideoConcurrency(t *testing.T) {
-	srv := buildKVServer(t, map[string]string{"video/max-concurrent-extractions": "0"})
+// TestParseFailureZeroAsyncConcurrency verifies that
+// async.max-concurrent-jobs=0 is rejected.
+func TestParseFailureZeroAsyncConcurrency(t *testing.T) {
+	srv := buildKVServer(t, map[string]string{"async/max-concurrent-jobs": "0"})
 	pointConsulAt(t, srv)
 	err := Load()
 	if err == nil {
-		t.Fatal("expected error for video.max-concurrent-extractions=0, got nil")
+		t.Fatal("expected error for async.max-concurrent-jobs=0, got nil")
 	}
-	if !strings.Contains(err.Error(), "video.max-concurrent-extractions") {
-		t.Errorf("error %q should mention key %q", err.Error(), "video.max-concurrent-extractions")
+	if !strings.Contains(err.Error(), "async.max-concurrent-jobs") {
+		t.Errorf("error %q should mention key %q", err.Error(), "async.max-concurrent-jobs")
 	}
 }
 

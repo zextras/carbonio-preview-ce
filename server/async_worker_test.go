@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// video_worker_test.go covers:
+// async_worker_test.go covers:
 //
 //  1. Idle-read watchdog: a stalled download (reader blocks forever) is
 //     cancelled by the watchdog timer → attempt() calls dropRow (row deleted).
@@ -147,17 +147,17 @@ func (c *controllableStore) Delete(_ context.Context, _ string, _ int, _ string,
 	return nil
 }
 
-// makeWorkerWithSem builds a VideoWorker with a semaphore of capacity 1.
-func makeWorkerWithSem(dbStore *db.Store, store storage.Client, maxAttempts int) *VideoWorker {
+// makeWorkerWithSem builds a AsyncWorker with a semaphore of capacity 1.
+func makeWorkerWithSem(dbStore *db.Store, store storage.Client, maxAttempts int) *AsyncWorker {
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = maxAttempts
+	cfg.AsyncMaxAttempts = maxAttempts
 	sem := make(chan struct{}, 1)
-	return NewVideoWorker(Deps{
+	return NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		Cache:    cache.New(0),
 		DB:       dbStore,
-		VideoSem: sem,
+		AsyncSem: sem,
 	})
 }
 
@@ -177,10 +177,10 @@ func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 	readIdleTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { readIdleTimeout = orig })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "stall")
+	fileID := testUID(t, "stall")
 	const version = 1
 
 	// A real HTTP server that blocks body writes → when dlCtx is cancelled the
@@ -192,13 +192,13 @@ func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 
 	sem := make(chan struct{}, 1)
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = 3
-	w := NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = 3
+	w := NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		Cache:    cache.New(0),
 		DB:       dbStore,
-		VideoSem: sem,
+		AsyncSem: sem,
 	})
 
 	// Enqueue + claim so attempt() has a valid row.
@@ -267,10 +267,10 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "flow")
+	fileID := testUID(t, "flow")
 	const version = 1
 
 	// Slow reader: delivers 5 bytes every chunkDelay ms; total data = 50 bytes.
@@ -333,7 +333,7 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 // live-set behaviour directly via the exported fields.
 func TestWorker_LiveSet_KeyInsertAndDelete(t *testing.T) {
 	// This is a pure unit test of the live-set mechanics — no DB needed.
-	w := &VideoWorker{
+	w := &AsyncWorker{
 		live:        make(map[string]struct{}),
 		maxAttempts: 3,
 	}
@@ -388,23 +388,23 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	readIdleTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { readIdleTimeout = orig })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "live_stale")
+	fileID := testUID(t, "live_stale")
 	const version = 1
 
 	store := &controllableStore{}
 	sem := make(chan struct{}, 1)
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = 3
-	cfg.VideoStaleTTLSeconds = 1 // 1-second stale TTL so we can trigger it quickly
-	w := NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = 3
+	cfg.AsyncStuckJobTimeoutSeconds = 1 // 1-second stale TTL so we can trigger it quickly
+	w := NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		Cache:    cache.New(0),
 		DB:       dbStore,
-		VideoSem: sem,
+		AsyncSem: sem,
 	})
 
 	// Enqueue + claim (row becomes GENERATING).
@@ -488,10 +488,10 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "hb_alive")
+	fileID := testUID(t, "hb_alive")
 	const version = 1
 
 	// Slow reader: delivers 5 bytes every 30ms for ~300ms total.
@@ -506,14 +506,14 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 
 	sem := make(chan struct{}, 1)
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = 3
-	cfg.VideoStaleTTLSeconds = 1 // 1s → tiny in absolute terms; see w.staleTTL override below
-	w := NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = 3
+	cfg.AsyncStuckJobTimeoutSeconds = 1 // 1s → tiny in absolute terms; see w.staleTTL override below
+	w := NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		Cache:    nil,
 		DB:       dbStore,
-		VideoSem: sem,
+		AsyncSem: sem,
 	})
 	// Override staleTTL to be smaller than the total download time but larger
 	// than heartbeatInterval, so ReclaimStale would fire without heartbeats.
@@ -602,10 +602,10 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 	}
 	t.Cleanup(func() { videoFirstFrameFromFileFunc = origExtract })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "extract_ceil")
+	fileID := testUID(t, "extract_ceil")
 	const version = 1
 
 	// Fast download: instant bytes so only the extract hangs.
@@ -670,23 +670,23 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	readIdleTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { readIdleTimeout = orig })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "live_highatt")
+	fileID := testUID(t, "live_highatt")
 	const version = 1
 
 	store := &controllableStore{}
 	sem := make(chan struct{}, 1)
 	cfg := testCfg()
 	// maxAttempts = 2: after ReclaimStale increments, attempts will equal maxAttempts.
-	cfg.VideoMaxAttempts = 2
-	cfg.VideoStaleTTLSeconds = 1
-	w := NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = 2
+	cfg.AsyncStuckJobTimeoutSeconds = 1
+	w := NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    store,
 		DB:       dbStore,
-		VideoSem: sem,
+		AsyncSem: sem,
 	})
 	w.staleTTL = 1 * time.Millisecond
 
@@ -762,9 +762,9 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 	readIdleTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { readIdleTimeout = orig })
 
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
-	fileID := videoUID(t, "hdrwait")
+	fileID := testUID(t, "hdrwait")
 	const version = 1
 
 	w := makeWorkerWithSem(dbStore, &headerBlockingStore{}, 3)

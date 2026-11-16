@@ -27,7 +27,7 @@ var (
 //
 // Concurrency is NOT bounded here. The caller is the background video worker,
 // which bounds concurrency at exactly one point — the dedicated video semaphore
-// (capacity = video.max-concurrent-extractions, default runtime.NumCPU()).
+// (capacity = async.max-concurrent-jobs, default runtime.NumCPU()).
 // Bounding again inside this function would double-bound the same work.
 //
 // ctx is the only time budget for the ffmpeg subprocess (via

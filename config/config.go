@@ -73,13 +73,13 @@ type Config struct {
 	// runtime.NumCPU() when absent.
 	PDFWorkers int
 
-	// VideoConcurrency is the maximum number of video first-frame extractions
-	// (ffmpeg codec probe and decode) running at the same time; source downloads
-	// and frame uploads take no slot. Application-layer key "video.max-concurrent-extractions"
-	// (Consul KV carbonio-preview/video/max-concurrent-extractions / env
-	// APPLICATION_CONFIG_VIDEO_MAX_CONCURRENT_EXTRACTIONS).
+	// AsyncConcurrency is the maximum number of CPU-heavy steps of asynchronous
+	// thumbnails (ffmpeg runs and Collabora conversions) running at the same time;
+	// source downloads and uploads take no slot. Application-layer key
+	// "async.max-concurrent-jobs" (Consul KV carbonio-preview/async/max-concurrent-jobs /
+	// env APPLICATION_CONFIG_ASYNC_MAX_CONCURRENT_JOBS).
 	// Defaults to runtime.NumCPU() when absent.
-	VideoConcurrency int
+	AsyncConcurrency int
 
 	// VIPSConcurrency is the libvips internal-threads level. It is a hardcoded
 	// internal constant (= 1), not an operator knob — no registry key, no env var,
@@ -119,15 +119,15 @@ type Config struct {
 	DBPoolMinConns      int32
 	DBConnMaxLifetimeMs int
 
-	// ── Video worker ─────────────────────────────────────────────────────────
-	// Application-layer keys video.poll-interval-seconds /
-	// video.stuck-generation-timeout-seconds / video.max-attempts. Zero values are
+	// ── Async worker ─────────────────────────────────────────────────────────
+	// Application-layer keys async.poll-interval-seconds /
+	// async.stuck-job-timeout-seconds / async.max-attempts. Zero values are
 	// resolved to defaults in the worker itself (matching WSC Java constants).
-	// Total ffmpeg concurrency is governed by VideoConcurrency
-	// (video.max-concurrent-extractions key) via the shared VideoSem.
-	VideoSweepIntervalSeconds int
-	VideoStaleTTLSeconds      int
-	VideoMaxAttempts          int
+	// Total ffmpeg concurrency is governed by AsyncConcurrency
+	// (async.max-concurrent-jobs key) via the shared AsyncSem.
+	AsyncPollIntervalSeconds    int
+	AsyncStuckJobTimeoutSeconds int
+	AsyncMaxAttempts            int
 }
 
 // Hardcoded endpoint-path constants. These values were formerly stored in Consul
@@ -233,17 +233,17 @@ func Load() error {
 	// via appPositiveInt.
 	c.RenderConcurrency, parseErr = appPositiveInt(r, "image-document.max-concurrent-operations", parseErr)
 	c.PDFWorkers, parseErr = appPositiveInt(r, "document.subprocess-pool-size", parseErr)
-	c.VideoConcurrency, parseErr = appPositiveInt(r, "video.max-concurrent-extractions", parseErr)
+	c.AsyncConcurrency, parseErr = appPositiveInt(r, "async.max-concurrent-jobs", parseErr)
 
 	var dbPoolMaxConns, dbPoolMinConns, dbConnMaxLifetimeMs int
 	dbPoolMaxConns, parseErr = appPositiveInt(r, "database.db-pool-max-size", parseErr)
 	dbPoolMinConns, parseErr = appPositiveInt(r, "database.db-pool-min-size", parseErr)
 	dbConnMaxLifetimeMs, parseErr = appPositiveInt(r, "database.db-pool-max-lifetime", parseErr)
 
-	var videoSweepInterval, videoStaleTTL, videoMaxAttempts int
-	videoSweepInterval, parseErr = appPositiveInt(r, "video.poll-interval-seconds", parseErr)
-	videoStaleTTL, parseErr = appPositiveInt(r, "video.stuck-generation-timeout-seconds", parseErr)
-	videoMaxAttempts, parseErr = appPositiveInt(r, "video.max-attempts", parseErr)
+	var asyncPollInterval, asyncStuckJobTimeout, asyncMaxAttempts int
+	asyncPollInterval, parseErr = appPositiveInt(r, "async.poll-interval-seconds", parseErr)
+	asyncStuckJobTimeout, parseErr = appPositiveInt(r, "async.stuck-job-timeout-seconds", parseErr)
+	asyncMaxAttempts, parseErr = appPositiveInt(r, "async.max-attempts", parseErr)
 
 	if parseErr != nil {
 		return parseErr
@@ -257,8 +257,8 @@ func Load() error {
 	if c.PDFWorkers == 0 {
 		c.PDFWorkers = runtime.NumCPU()
 	}
-	if c.VideoConcurrency == 0 {
-		c.VideoConcurrency = runtime.NumCPU()
+	if c.AsyncConcurrency == 0 {
+		c.AsyncConcurrency = runtime.NumCPU()
 	}
 
 	// ── Database pool tuning ──────────────────────────────────────────────────
@@ -280,11 +280,11 @@ func Load() error {
 		c.DBConnMaxLifetimeMs = 600000
 	}
 
-	// ── Video worker tuning ───────────────────────────────────────────────────
+	// ── Async worker tuning ───────────────────────────────────────────────────
 	// Zero → the worker applies its own defaults (matching WSC Java constants).
-	c.VideoSweepIntervalSeconds = videoSweepInterval
-	c.VideoStaleTTLSeconds = videoStaleTTL
-	c.VideoMaxAttempts = videoMaxAttempts
+	c.AsyncPollIntervalSeconds = asyncPollInterval
+	c.AsyncStuckJobTimeoutSeconds = asyncStuckJobTimeout
+	c.AsyncMaxAttempts = asyncMaxAttempts
 
 	// ── Database DSN ───────────────────────────────────────────────────────────
 	// Credentials are written by carbonio-preview-db-bootstrap into Consul KV

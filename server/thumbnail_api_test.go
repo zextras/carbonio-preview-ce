@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// video_api_test.go tests resolve() and the attempt() outcome mapping in
-// VideoWorker, driven through a real DB (Postgres 16 container) + a fake
+// thumbnail_api_test.go tests resolve() and the attempt() outcome mapping in
+// AsyncWorker, driven through a real DB (Postgres 16 container) + a fake
 // storage.Client.
 //
 // Structure:
 //   - fakeVideoStore — implements storage.Client for the video path.
-//   - startVideoStore — spins up the Postgres testcontainer and returns a *db.Store.
+//   - startDBStore (postgres_test.go) — spins up the Postgres testcontainer and returns a *db.Store.
 //   - Tests for resolve() covering all 6 states.
 //   - Tests for attempt() outcome mapping (success, ErrExtractFailed,
 //     storage.ErrNotFound, transient reaching cap, transient below cap).
@@ -22,13 +22,10 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
@@ -84,100 +81,6 @@ func (f *fakeVideoStore) Delete(_ context.Context, _ string, _ int, _ string, _ 
 }
 
 // ---------------------------------------------------------------------------
-// Postgres helper (mirrors db/store_test.go approach without importing it)
-// ---------------------------------------------------------------------------
-
-func startVideoPostgres(t *testing.T) *db.Store {
-	t.Helper()
-	store, _ := startVideoPostgresWithDSN(t)
-	return store
-}
-
-func startVideoPostgresWithDSN(t *testing.T) (*db.Store, string) {
-	t.Helper()
-
-	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not found in PATH — skipping video DB integration tests")
-	}
-	if out, err := exec.Command("docker", "info").CombinedOutput(); err != nil {
-		t.Skipf("docker daemon not reachable (%v): %s", err, out)
-	}
-
-	const (
-		pgUser  = "preview"
-		pgPass  = "preview"
-		pgDB    = "preview_video_test"
-		pgPort  = "5432"
-		imgName = "postgres:16-alpine"
-	)
-
-	out, err := exec.Command("docker", "run", "--rm", "-d",
-		"-e", "POSTGRES_USER="+pgUser,
-		"-e", "POSTGRES_PASSWORD="+pgPass,
-		"-e", "POSTGRES_DB="+pgDB,
-		"-P",
-		imgName,
-	).CombinedOutput()
-	if err != nil {
-		t.Fatalf("docker run: %v — %s", err, out)
-	}
-	containerID := strings.TrimSpace(string(out))
-	t.Cleanup(func() {
-		_ = exec.Command("docker", "rm", "-f", containerID).Run()
-	})
-
-	portOut, err := exec.Command(
-		"docker", "inspect",
-		"--format", fmt.Sprintf(`{{(index (index .NetworkSettings.Ports "%s/tcp") 0).HostPort}}`, pgPort),
-		containerID,
-	).CombinedOutput()
-	if err != nil {
-		t.Fatalf("docker inspect port: %v — %s", err, portOut)
-	}
-	hostPort := strings.TrimSpace(string(portOut))
-
-	dsn := fmt.Sprintf("postgres://%s:%s@127.0.0.1:%s/%s?sslmode=disable",
-		pgUser, pgPass, hostPort, pgDB)
-
-	ctx := context.Background()
-	var store *db.Store
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		st, serr := db.New(ctx, dsn, db.PoolConfig{MaxConns: 5})
-		if serr == nil {
-			store = st
-			break
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	if store == nil {
-		t.Fatalf("postgres not ready after 30s (DSN: %s)", dsn)
-	}
-	t.Cleanup(store.Close)
-
-	if err := store.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return store, dsn
-}
-
-// videoUID generates a unique file_id for a sub-test.
-func videoUID(t *testing.T, suffix string) string {
-	t.Helper()
-	safe := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
-			return r
-		}
-		return '_'
-	}, t.Name())
-	s := safe + "_" + suffix
-	if len(s) > 60 {
-		s = s[len(s)-60:]
-	}
-	return s
-}
-
-// ---------------------------------------------------------------------------
 // resolve() state machine tests
 // ---------------------------------------------------------------------------
 
@@ -188,17 +91,17 @@ func buildResolveDeps(dbStore *db.Store, storeClient storage.Client) Deps {
 		Store:    storeClient,
 		Cache:    cache.New(0),
 		DB:       dbStore,
-		VideoSem: nil,
+		AsyncSem: nil,
 	}
 }
 
 // TestResolve_NotFound_Returns202AndEnqueues verifies that a missing row causes
 // EnqueueIfAbsent to create a PENDING row and resolve returns 202.
 func TestResolve_NotFound_Returns202AndEnqueues(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "nf")
+	fileID := testUID(t, "nf")
 	const version = 1
 
 	fakeStore := &fakeVideoStore{}
@@ -226,10 +129,10 @@ func TestResolve_NotFound_Returns202AndEnqueues(t *testing.T) {
 
 // TestResolve_Pending_Returns202 verifies that a PENDING row returns 202.
 func TestResolve_Pending_Returns202(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "pend")
+	fileID := testUID(t, "pend")
 	const version = 1
 
 	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
@@ -245,10 +148,10 @@ func TestResolve_Pending_Returns202(t *testing.T) {
 
 // TestResolve_Generating_Returns202 verifies that a GENERATING row returns 202.
 func TestResolve_Generating_Returns202(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "gen")
+	fileID := testUID(t, "gen")
 	const version = 1
 
 	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
@@ -268,10 +171,10 @@ func TestResolve_Generating_Returns202(t *testing.T) {
 // TestResolve_Ready_BlobPresent_Returns200 verifies that a READY row returns 200
 // with the previewID set. resolve() is now DB-only — it does not touch storage.
 func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "ready_ok")
+	fileID := testUID(t, "ready_ok")
 	const version = 1
 	const previewID = "preview-ok-1"
 
@@ -295,10 +198,10 @@ func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
 // the previewID set. After the fix, resolve() is DB-only for READY rows — it does
 // NOT check storage. Blob existence is verified lazily by the handler.
 func TestResolve_Ready_Returns200_DBOnly(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "ready_dbonly")
+	fileID := testUID(t, "ready_dbonly")
 	const version = 1
 	const previewID = "preview-dbonly"
 
@@ -329,7 +232,7 @@ func TestResolve_Ready_Returns200_DBOnly(t *testing.T) {
 // behavior is identical — a READY row with a missing blob is re-enqueued — but the
 // check now happens in the handler (single fetch point), not resolve().
 func TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
 	// Use a real UUID so validateUUID passes.
@@ -384,10 +287,10 @@ func TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
 
 // TestResolve_Unsupported_Returns415 verifies that an UNSUPPORTED row returns 415.
 func TestResolve_Unsupported_Returns415(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "unsup")
+	fileID := testUID(t, "unsup")
 	const version = 1
 
 	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
@@ -409,10 +312,10 @@ func TestResolve_Unsupported_Returns415(t *testing.T) {
 
 // TestResolve_Failed_Returns422 verifies that a FAILED row returns 422.
 func TestResolve_Failed_Returns422(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "fail")
+	fileID := testUID(t, "fail")
 	const version = 1
 
 	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
@@ -436,17 +339,17 @@ func TestResolve_Failed_Returns422(t *testing.T) {
 // attempt() outcome mapping tests
 // ---------------------------------------------------------------------------
 
-// makeWorkerWithDB builds a VideoWorker with a real DB store and the given
+// makeWorkerWithDB builds a AsyncWorker with a real DB store and the given
 // storage fake. maxAttempts can be overridden via the config field.
-func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts int) *VideoWorker {
+func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts int) *AsyncWorker {
 	cfg := testCfg()
-	cfg.VideoMaxAttempts = maxAttempts
-	return NewVideoWorker(Deps{
+	cfg.AsyncMaxAttempts = maxAttempts
+	return NewAsyncWorker(Deps{
 		Cfg:      cfg,
 		Store:    storeClient,
 		Cache:    cache.New(0),
 		DB:       dbStore,
-		VideoSem: nil,
+		AsyncSem: nil,
 	})
 }
 
@@ -454,10 +357,10 @@ func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts
 // (probe returns supported codec, extract returns valid PNG, StoreData succeeds) →
 // MarkReady → row becomes READY with a non-empty preview_id.
 func TestAttempt_Success_MarksReady(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_ok")
+	fileID := testUID(t, "att_ok")
 	const version = 1
 
 	// Stub probe to return a supported codec.
@@ -509,10 +412,10 @@ func TestAttempt_Success_MarksReady(t *testing.T) {
 // ErrExtractFailed→UNSUPPORTED mapping: ErrExtractFailed now means corruption
 // of a supported codec (→ retry), not an unsupported codec.
 func TestAttempt_ErrExtractFailed_NoCodecInRow_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_probe_transient")
+	fileID := testUID(t, "att_probe_transient")
 	const version = 1
 
 	// Probe fails → transient error path.
@@ -554,10 +457,10 @@ func TestAttempt_ErrExtractFailed_NoCodecInRow_ReleasesWithAttempt(t *testing.T)
 // TestAttempt_StorageNotFound_MarksFailed verifies that storage.ErrNotFound from
 // the source blob transitions the row to FAILED (terminal, no retry).
 func TestAttempt_StorageNotFound_MarksFailed(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_notfound")
+	fileID := testUID(t, "att_notfound")
 	const version = 1
 
 	// RetrieveDataStreaming returns ErrNotFound → no extract attempted.
@@ -592,10 +495,10 @@ func TestAttempt_StorageNotFound_MarksFailed(t *testing.T) {
 // error during extract (not ErrNotFound) below maxAttempts calls
 // ReleaseWithAttempt → PENDING + attempts incremented.
 func TestAttempt_Transient_BelowCap_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_transient")
+	fileID := testUID(t, "att_transient")
 	const version = 1
 
 	// Probe succeeds (supported codec), extract fails transiently.
@@ -643,10 +546,10 @@ func TestAttempt_Transient_BelowCap_ReleasesWithAttempt(t *testing.T) {
 // TestAttempt_Transient_AtCap_MarksFailed verifies that a transient error at
 // maxAttempts causes MarkFailed instead of ReleaseWithAttempt.
 func TestAttempt_Transient_AtCap_MarksFailed(t *testing.T) {
-	dbStore := startVideoPostgres(t)
+	dbStore := startDBStore(t)
 	ctx := context.Background()
 
-	fileID := videoUID(t, "att_cap")
+	fileID := testUID(t, "att_cap")
 	const version = 1
 
 	// Probe succeeds, extract fails transiently (hits cap → FAILED).

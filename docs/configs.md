@@ -31,6 +31,10 @@ Overridable by Consul KV
 
 | Key | Default | If not set |
 | --- | ------- | ---------- |
+| `carbonio-preview/async/max-attempts` | `3` |  |
+| `carbonio-preview/async/max-concurrent-jobs` | *(not set)* | Defaults to the number of CPUs |
+| `carbonio-preview/async/poll-interval-seconds` | `15` |  |
+| `carbonio-preview/async/stuck-job-timeout-seconds` | `900` |  |
 | `carbonio-preview/cache-max-mb` | `256` |  |
 | `carbonio-preview/database/credentials/db-name` | *(not set)* | Crashes; but always set by database bootstrap |
 | `carbonio-preview/database/credentials/db-password` | *(not set)* | Crashes; but always set by database bootstrap |
@@ -44,8 +48,4 @@ Overridable by Consul KV
 | `carbonio-preview/document/subprocess-pool-size` | *(not set)* | Defaults to the number of CPUs |
 | `carbonio-preview/image-document/fetch-timeout-seconds` | `30` |  |
 | `carbonio-preview/image-document/max-concurrent-operations` | *(not set)* | Defaults to the number of CPUs |
-| `carbonio-preview/video/max-attempts` | `3` |  |
-| `carbonio-preview/video/max-concurrent-extractions` | *(not set)* | Defaults to the number of CPUs |
-| `carbonio-preview/video/poll-interval-seconds` | `15` |  |
-| `carbonio-preview/video/stuck-generation-timeout-seconds` | `900` |  |
 

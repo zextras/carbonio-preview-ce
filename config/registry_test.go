@@ -57,7 +57,7 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 		"document.conversion-timeout-seconds",
 		"image-document.max-concurrent-operations",
 		"document.subprocess-pool-size",
-		"video.max-concurrent-extractions",
+		"async.max-concurrent-jobs",
 	}
 
 	idx := make(map[string]KeyEntry, len(keys))
@@ -81,7 +81,7 @@ func TestRegisteredCEApplicationKeys(t *testing.T) {
 		"document.conversion-timeout-seconds":      false,
 		"image-document.max-concurrent-operations": false,
 		"document.subprocess-pool-size":            false,
-		"video.max-concurrent-extractions":         false,
+		"async.max-concurrent-jobs":                false,
 	}
 	for k, wantHidden := range hiddenExpected {
 		e, ok := idx[k]
@@ -143,7 +143,7 @@ func TestKeyDefaults(t *testing.T) {
 		{"database.db-pool-min-size", "2", ""},
 		{"image-document.max-concurrent-operations", "", "Defaults to the number of CPUs"},
 		{"document.subprocess-pool-size", "", "Defaults to the number of CPUs"},
-		{"video.max-concurrent-extractions", "", "Defaults to the number of CPUs"},
+		{"async.max-concurrent-jobs", "", "Defaults to the number of CPUs"},
 	}
 	for _, tc := range appChecks {
 		e, ok := appIdx[tc.key]
@@ -286,8 +286,12 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 	}
 
 	// Spot-check: known application keys that must appear in alphabetical order.
-	// The list includes all registered application keys (db-pool-*, video-*, etc.).
+	// The list includes all registered application keys (db-pool-*, async.*, etc.).
 	appExpected := []string{
+		"async.max-attempts",
+		"async.max-concurrent-jobs",
+		"async.poll-interval-seconds",
+		"async.stuck-job-timeout-seconds",
 		"cache-max-mb",
 		"database.credentials.db-name",
 		"database.credentials.db-password",
@@ -301,10 +305,6 @@ func TestRegisteredKeysSortOrder(t *testing.T) {
 		"document.subprocess-pool-size",
 		"image-document.fetch-timeout-seconds",
 		"image-document.max-concurrent-operations",
-		"video.max-attempts",
-		"video.max-concurrent-extractions",
-		"video.poll-interval-seconds",
-		"video.stuck-generation-timeout-seconds",
 	}
 	appKeys := keys[firstAppIdx:]
 	for i, want := range appExpected {

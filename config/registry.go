@@ -271,13 +271,6 @@ func registerCEKeys() {
 			IfNotPresent: "Defaults to the number of CPUs",
 			Description:  "Number of PDFium helper OS subprocesses used for PDF/document rendering; a render acquires one after passing image-document/max-concurrent-operations. Default: CPU count.",
 		},
-		{
-			Key:          "video.max-concurrent-extractions",
-			Namespace:    NamespaceApplication,
-			Default:      "", // computed at runtime → runtime.NumCPU()
-			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Maximum number of video first-frame extractions (ffmpeg probe and decode, each an ffmpeg subprocess) running at the same time. Source downloads and frame uploads take no slot. Default: CPU count.",
-		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via
 		// r.Application.Get("database.credentials.db-*"). Registered here so the
@@ -325,28 +318,35 @@ func registerCEKeys() {
 			Default:     "600000",
 			Description: "Maximum lifetime (milliseconds) before a pooled PostgreSQL connection is recycled.",
 		},
-		// ── Video worker tuning ───────────────────────────────────────────────
+		// ── Async worker tuning ───────────────────────────────────────────────
 		// NOTE: a separate worker-only concurrency bound is intentionally absent.
-		// Total ffmpeg concurrency is governed by video.max-concurrent-extractions
-		// (VideoSem), used by the background worker. A separate worker-only
+		// Total ffmpeg concurrency is governed by async.max-concurrent-jobs
+		// (AsyncSem), used by the background worker. A separate worker-only
 		// concurrency bound was parsed but never used and has been removed.
 		{
-			Key:         "video.poll-interval-seconds",
+			Key:          "async.max-concurrent-jobs",
+			Namespace:    NamespaceApplication,
+			Default:      "", // computed at runtime → runtime.NumCPU()
+			IfNotPresent: "Defaults to the number of CPUs",
+			Description:  "Maximum number of CPU-heavy steps of asynchronous thumbnails running at the same time: ffmpeg runs (video and animated GIF) and the Collabora conversions of office thumbnail jobs. Downloads and uploads take no slot. Default: CPU count.",
+		},
+		{
+			Key:         "async.poll-interval-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "15",
-			Description: "Interval (seconds) at which the background video worker sweeps for pending jobs.",
+			Description: "Interval (seconds) at which the background worker sweeps for pending asynchronous thumbnail jobs.",
 		},
 		{
-			Key:         "video.stuck-generation-timeout-seconds",
+			Key:         "async.stuck-job-timeout-seconds",
 			Namespace:   NamespaceApplication,
 			Default:     "900",
-			Description: "A generation left in GENERATING state longer than this (seconds) is treated as crashed and reclaimed.",
+			Description: "A job left GENERATING longer than this (seconds) without a heartbeat is treated as crashed and reclaimed.",
 		},
 		{
-			Key:         "video.max-attempts",
+			Key:         "async.max-attempts",
 			Namespace:   NamespaceApplication,
 			Default:     "3",
-			Description: "Maximum generation attempts before a video job is marked FAILED.",
+			Description: "Maximum generation attempts before an asynchronous thumbnail job is marked FAILED.",
 		},
 		// NOTE: log.level is intentionally NOT registered here.
 		// It is controlled by the PREVIEW_LOG_LEVEL environment variable directly

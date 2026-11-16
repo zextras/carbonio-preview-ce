@@ -4,14 +4,14 @@
 
 package server
 
-// videodb_start.go implements StartVideoDBAsync — the SHARED video-preview DB
+// db_start.go implements StartDBAsync — the SHARED video-preview DB
 // background startup helper.
 //
 // It used to live as two unexported funcs in CE's cmd/carbonio-preview/main.go
-// (initVideoDBWithRetry + openAndMigrateDB) plus the DSN-empty/else branch in
+// (initDBWithRetry + openAndMigrateDB) plus the DSN-empty/else branch in
 // main() itself. Because it was private to package main, the Advanced binary
 // (a separate repo that imports this CE server package) could not call it and
-// silently never started its background VideoWorker. Moving the whole thing
+// silently never started its background AsyncWorker. Moving the whole thing
 // here as an exported method means CE's main and Advanced's main call the
 // EXACT same code and can never diverge again.
 //
@@ -28,26 +28,26 @@ import (
 )
 
 const (
-	// videoDBInitialBackoff is the first retry delay after a failed DB open/
+	// dbInitialBackoff is the first retry delay after a failed DB open/
 	// migrate attempt.
-	videoDBInitialBackoff = 1 * time.Second
-	// videoDBMaxBackoff caps the exponential backoff between retries.
-	videoDBMaxBackoff = 60 * time.Second
+	dbInitialBackoff = 1 * time.Second
+	// dbMaxBackoff caps the exponential backoff between retries.
+	dbMaxBackoff = 60 * time.Second
 )
 
-// StartVideoDBAsync wires up the video-preview DB the same way for every
+// StartDBAsync wires up the video-preview DB the same way for every
 // caller: if cfg.DBDSN is empty it logs a WARN and returns immediately — no
 // goroutine is spawned, video previews stay disabled (424) forever, and
 // image/pdf/document/health are unaffected. Otherwise it launches a
 // background goroutine that retries opening the pool and running migrations
 // with capped exponential backoff (initial 1s, max 60s) until it succeeds or
-// ctx is cancelled; on success it calls s.EnableVideoDB (flips the readiness
+// ctx is cancelled; on success it calls s.EnableDB (flips the readiness
 // gate + starts the video worker). The pool is closed by Run on shutdown, after
 // the worker's jobs have returned their rows to PENDING.
 //
 // Both CE's and Advanced's main should call this right after server.New,
 // instead of hand-rolling the DSN-empty check and the retry loop themselves.
-func (s *Server) StartVideoDBAsync(ctx context.Context, cfg *config.Config) {
+func (s *Server) StartDBAsync(ctx context.Context, cfg *config.Config) {
 	if cfg.DBDSN == "" {
 		// No credentials: run WITHOUT a video DB. Video previews return 424
 		// (unsupported/dependency-down), the worker stays off; all other previews
@@ -64,35 +64,35 @@ func (s *Server) StartVideoDBAsync(ctx context.Context, cfg *config.Config) {
 	// and self-heals with no crash. On success the video DB is enabled and the
 	// worker started; the pool is closed on shutdown.
 	ctx, cancel := context.WithCancel(ctx)
-	s.videoMu.Lock()
-	s.videoCancel = cancel
-	s.videoMu.Unlock()
-	s.videoInit.Add(1)
+	s.dbMu.Lock()
+	s.dbCancel = cancel
+	s.dbMu.Unlock()
+	s.dbInit.Add(1)
 	go func() {
-		defer s.videoInit.Done()
-		s.initVideoDBWithRetry(ctx, cfg)
+		defer s.dbInit.Done()
+		s.initDBWithRetry(ctx, cfg)
 	}()
 }
 
-// initVideoDBWithRetry opens the video-preview DB pool and runs migrations,
+// initDBWithRetry opens the video-preview DB pool and runs migrations,
 // retrying with capped exponential backoff until it succeeds or ctx is
 // cancelled. On success it enables the video DB on the server (flips the
-// readiness gate + starts the worker) and records the pool for stopVideo.
+// readiness gate + starts the worker) and records the pool for stopAsync.
 //
 // It NEVER exits the process: a persistently-unreachable DB simply means video
 // previews stay disabled (424) while everything else keeps serving.
-func (s *Server) initVideoDBWithRetry(ctx context.Context, cfg *config.Config) {
-	backoff := videoDBInitialBackoff
+func (s *Server) initDBWithRetry(ctx context.Context, cfg *config.Config) {
+	backoff := dbInitialBackoff
 	attempt := 0
 	for {
 		attempt++
-		store, err := openAndMigrateVideoDB(ctx, cfg)
+		store, err := openAndMigrateDB(ctx, cfg)
 		if err == nil {
 			slog.Info("video-preview DB ready; enabling video previews", "attempts", attempt)
-			s.videoMu.Lock()
-			s.videoStore = store
-			s.videoMu.Unlock()
-			s.EnableVideoDB(ctx, store)
+			s.dbMu.Lock()
+			s.dbPool = store
+			s.dbMu.Unlock()
+			s.EnableDB(ctx, store)
 			return
 		}
 
@@ -109,19 +109,19 @@ func (s *Server) initVideoDBWithRetry(ctx context.Context, cfg *config.Config) {
 			return
 		case <-time.After(backoff):
 		}
-		if backoff < videoDBMaxBackoff {
+		if backoff < dbMaxBackoff {
 			backoff *= 2
-			if backoff > videoDBMaxBackoff {
-				backoff = videoDBMaxBackoff
+			if backoff > dbMaxBackoff {
+				backoff = dbMaxBackoff
 			}
 		}
 	}
 }
 
-// openAndMigrateVideoDB opens the pool (with a ping) and applies migrations.
+// openAndMigrateDB opens the pool (with a ping) and applies migrations.
 // Both steps are bounded by a per-attempt timeout so a hung connect cannot
 // wedge the retry loop.
-func openAndMigrateVideoDB(ctx context.Context, cfg *config.Config) (*db.Store, error) {
+func openAndMigrateDB(ctx context.Context, cfg *config.Config) (*db.Store, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 

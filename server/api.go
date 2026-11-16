@@ -41,23 +41,23 @@ type Deps struct {
 	Cache *cache.Cache
 	// Limits bounds render (CPU) work and coalesces identical GETs; nil = unlimited (tests).
 	Limits *limits
-	// VideoSem is the DEDICATED video semaphore (capacity =
-	// video.max-concurrent-extractions, default NumCPU) bounding ffmpeg work
+	// AsyncSem is the DEDICATED video semaphore (capacity =
+	// async.max-concurrent-jobs, default NumCPU) bounding ffmpeg work
 	// (codec probe and first-frame extraction) only. nil = unlimited (tests).
-	VideoSem chan struct{}
+	AsyncSem chan struct{}
 	// DB is the video_preview database store.  nil means the video DB layer is
 	// disabled (spec-only gendocs mode or unit tests that do not exercise video
 	// endpoints). The video worker and video HTTP handlers must check for nil and
 	// either skip or return an appropriate error.
 	//
-	// Prefer Deps.videoStore() over reading DB directly: when a DBGate is
+	// Prefer Deps.dbStore() over reading DB directly: when a DBGate is
 	// attached (production) it is the authoritative, request-time readiness
 	// signal; DB is the static fallback used by tests.
 	DB *db.Store
 	// DBGate, when non-nil, is the request-time readiness signal for the video
 	// DB. Its store may start nil and flip to ready after boot (background init),
 	// re-enabling video with no restart. When nil, handlers fall back to DB.
-	DBGate *videoGate
+	DBGate *dbGate
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +71,9 @@ type Deps struct {
 // The video worker is ALWAYS constructed (it is gate-aware: it no-ops each tick
 // while the DB is not ready) and returned so the caller can start it once the DB
 // is up. It is NOT started here — the server owns the worker lifecycle via
-// Server.EnableVideoDB / StartVideoWorker so a transient DB outage at boot never
+// Server.EnableDB / StartAsyncWorker so a transient DB outage at boot never
 // blocks registration. Returns nil only in pure spec-only gendocs mode (no cfg).
-func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
+func RegisterOperations(api huma.API, deps Deps) *AsyncWorker {
 	apispec.RegisterImageOps(api,
 		buildGetImagePreview(deps), buildGetImageThumbnail(deps),
 		buildPostImagePreview(deps), buildPostImageThumbnail(deps))
@@ -88,12 +88,12 @@ func RegisterOperations(api huma.API, deps Deps) *VideoWorker {
 
 	// Video GET / DELETE / copy endpoints (Q5: generate endpoint removed).
 	// Build the worker whenever a config is present (spec-only gendocs has none).
-	// The worker resolves its store through deps.videoStore() at tick time, so it
+	// The worker resolves its store through deps.dbStore() at tick time, so it
 	// is safe to construct before the DB is ready; it processes rows only once the
 	// gate flips.
-	var w *VideoWorker
+	var w *AsyncWorker
 	if deps.Cfg != nil {
-		w = NewVideoWorker(deps)
+		w = NewAsyncWorker(deps)
 	}
 	apispec.RegisterVideoOps(api,
 		buildGetVideoPreview(deps, w),

@@ -100,7 +100,7 @@ func testCfg() *config.Config {
 		ServiceTimeoutInSeconds:              30,
 		ServiceDocsTimeout:                   15,
 		RenderConcurrency:                    runtime.NumCPU(),
-		VideoConcurrency:                     runtime.NumCPU(),
+		AsyncConcurrency:                     runtime.NumCPU(),
 		ServiceEnableDocumentPreview:         true,
 		ServiceEnableDocumentThumbnail:       true,
 		StorageFullAddress:                   "http://127.0.0.1:20000",

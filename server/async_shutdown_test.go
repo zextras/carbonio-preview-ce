@@ -60,7 +60,7 @@ func (s *stageStore) StoreData(ctx context.Context, _ string, _ int, _, _ string
 	return "", ctx.Err()
 }
 
-func startJob(w *VideoWorker, ctx context.Context, row db.VideoPreview) {
+func startJob(w *AsyncWorker, ctx context.Context, row db.VideoPreview) {
 	key := liveKey(row.FileID, row.Version)
 	if w.reserve(key) != reserveOK {
 		panic("reserve")
@@ -71,7 +71,7 @@ func startJob(w *VideoWorker, ctx context.Context, row db.VideoPreview) {
 	}()
 }
 
-func waitWorker(t *testing.T, w *VideoWorker) {
+func waitWorker(t *testing.T, w *AsyncWorker) {
 	t.Helper()
 	done := make(chan struct{})
 	go func() {
@@ -85,8 +85,8 @@ func waitWorker(t *testing.T, w *VideoWorker) {
 	}
 }
 
-func TestVideoShutdown_EveryStageReturnsRowToPending(t *testing.T) {
-	st := startVideoPostgres(t)
+func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
+	st := startDBStore(t)
 	bg := context.Background()
 	var probes atomic.Int32
 	inFFmpeg := make(chan struct{})
@@ -100,7 +100,7 @@ func TestVideoShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	})
 	swap(t, &videoFirstFrameFromFileFunc, func(context.Context, string) ([]byte, error) { return tinyJPEG(t), nil })
 
-	idUpload, idFFmpeg, idSlot, idDownload, idHeaders := videoUID(t, "up"), videoUID(t, "ff"), videoUID(t, "slot"), videoUID(t, "dl"), videoUID(t, "hdr")
+	idUpload, idFFmpeg, idSlot, idDownload, idHeaders := testUID(t, "up"), testUID(t, "ff"), testUID(t, "slot"), testUID(t, "dl"), testUID(t, "hdr")
 	store := &stageStore{
 		eofStore: newEOFStore(), dlID: idDownload, hdrID: idHeaders,
 		dlStarted: make(chan struct{}), hdrStarted: make(chan struct{}), uploadStarted: make(chan struct{}),
@@ -164,13 +164,13 @@ func TestVideoShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 			t.Errorf("%s: status=%s attempts=%d claimed_by=%v, want PENDING/0/nil", stage, r.Status, r.Attempts, r.ClaimedBy)
 		}
 	}
-	if len(w.deps.VideoSem) != 0 || w.liveCount() != 0 {
-		t.Errorf("slots held=%d live=%d, want 0/0", len(w.deps.VideoSem), w.liveCount())
+	if len(w.deps.AsyncSem) != 0 || w.liveCount() != 0 {
+		t.Errorf("slots held=%d live=%d, want 0/0", len(w.deps.AsyncSem), w.liveCount())
 	}
 }
 
-func TestVideoShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+func TestAsyncShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
+	st, dsn := startDBStoreWithDSN(t)
 	chk, err := db.New(context.Background(), dsn, db.PoolConfig{MaxConns: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -187,19 +187,19 @@ func TestVideoShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 		return "", ctx.Err()
 	})
 	cfg := testCfg()
-	cfg.VideoConcurrency = 1
-	cfg.VideoMaxAttempts = 3
+	cfg.AsyncConcurrency = 1
+	cfg.AsyncMaxAttempts = 3
 	s := New(cfg, newEOFStore(), cache.New(0))
 	_ = s.buildMux()
 	s.dbGate.Set(st)
 	ctx, cancel := context.WithCancel(bg)
-	s.videoMu.Lock()
-	s.videoCancel = cancel
-	s.videoStore = st
-	s.videoMu.Unlock()
-	s.StartVideoWorker(ctx)
+	s.dbMu.Lock()
+	s.dbCancel = cancel
+	s.dbPool = st
+	s.dbMu.Unlock()
+	s.StartAsyncWorker(ctx)
 
-	id := videoUID(t, "job")
+	id := testUID(t, "job")
 	row := claimedRow(t, st, s.worker, id, 0)
 	startJob(s.worker, ctx, row)
 	select {
@@ -210,24 +210,24 @@ func TestVideoShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 
 	stopped := make(chan struct{})
 	go func() {
-		s.stopVideo()
+		s.stopAsync()
 		close(stopped)
 	}()
-	eventually(t, "stopVideo waiting for the worker", func() bool {
+	eventually(t, "stopAsync waiting for the worker", func() bool {
 		s.worker.mu.Lock()
 		defer s.worker.mu.Unlock()
 		return s.worker.closed
 	})
 	select {
 	case <-stopped:
-		t.Fatal("stopVideo returned while a job was still running")
+		t.Fatal("stopAsync returned while a job was still running")
 	default:
 	}
 	close(proceed)
 	select {
 	case <-stopped:
 	case <-time.After(slotWatchdog):
-		t.Fatal("stopVideo never returned")
+		t.Fatal("stopAsync never returned")
 	}
 
 	r, err := chk.Find(bg, id, 1)
@@ -239,14 +239,14 @@ func TestVideoShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 	}
 }
 
-func TestVideoShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
-	st, dsn := startVideoPostgresWithDSN(t)
+func TestAsyncShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
+	st, dsn := startDBStoreWithDSN(t)
 	bg := context.Background()
 	stubSupportedCodec(t)
 
 	t.Run("attempt_with_ended_context", func(t *testing.T) {
 		for _, name := range []string{"storage_honours_ctx", "storage_ignores_ctx"} {
-			id := videoUID(t, name)
+			id := testUID(t, name)
 			var store storage.Client = newEOFStore()
 			if name == "storage_honours_ctx" {
 				store = &stageStore{eofStore: newEOFStore(), hdrID: id, hdrStarted: make(chan struct{}), deleteCtxs: make(chan bool, 1)}
@@ -267,7 +267,7 @@ func TestVideoShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
 		sqlExec(t, dsn, `DELETE FROM video_preview WHERE status='PENDING'`)
 		w := slotWorker(st, newEOFStore(), 1)
 		w.staleTTL = time.Minute
-		id := videoUID(t, "stale")
+		id := testUID(t, "stale")
 		if err := st.EnqueueIfAbsent(bg, id, 1, "owner1", "files"); err != nil {
 			t.Fatal(err)
 		}

@@ -4,7 +4,7 @@
 
 package server
 
-// video_worker.go implements the VideoWorker — a background sweeper that drives
+// async_worker.go implements the AsyncWorker — a background sweeper that drives
 // video first-frame generation. It is a port of WSC's VideoPreviewWorker.java +
 // VideoPreviewServiceImpl.processOne/runGenerate.
 //
@@ -12,14 +12,14 @@ package server
 //   - Per-process instanceID (UUID) generated once at construction, used to
 //     atomically claim and guard all DB transitions (prevents split-brain between
 //     concurrent preview instances).
-//   - Deps.VideoSem bounds only the ffmpeg work (codec probe + first-frame
+//   - Deps.AsyncSem bounds only the ffmpeg work (codec probe + first-frame
 //     extraction), so total ffmpeg concurrency is ONE number shared between the
 //     worker and any immediate on-request generation attempts in the GET
 //     handlers. Source download, frame upload and DB updates take no slot.
 //   - Live jobs on this instance (claimed rows, whether downloading, waiting for
 //     the ffmpeg slot or extracting) are bounded by maxInFlight.
 //   - Only render failures (codec probe, frame extraction, extraction ceiling)
-//     count attempts and end in FAILED at video.max-attempts; stale reclaim also
+//     count attempts and end in FAILED at async.max-attempts; stale reclaim also
 //     increments attempts. A connectivity failure (source download, frame upload,
 //     temp file) never blocks a preview: the row is deleted as if it had never
 //     been requested and the next user request starts over. A source that is
@@ -120,27 +120,27 @@ const (
 	// Matches WSC's MAX_IN_FLIGHT = 64.
 	maxInFlight = 64
 
-	// defaultSweepIntervalSeconds is the KV default for video.poll-interval-seconds.
+	// defaultSweepIntervalSeconds is the KV default for async.poll-interval-seconds.
 	// Matches WSC's SWEEP_INTERVAL = 15s.
 	defaultSweepIntervalSeconds = 15
 
-	// defaultStaleTTLSeconds is the KV default for video.stuck-generation-timeout-seconds.
+	// defaultStaleTTLSeconds is the KV default for async.stuck-job-timeout-seconds.
 	// Matches WSC's STALE_TTL = 15 minutes (900s). Note: the spec said 3600 but
 	// the Java source uses 15 minutes; we follow the Java to keep identical semantics.
 	defaultStaleTTLSeconds = 900
 
-	// defaultMaxAttempts is the KV default for video.max-attempts.
+	// defaultMaxAttempts is the KV default for async.max-attempts.
 	// 3 total attempts before a job is marked terminal FAILED (corruption / ffmpeg failure path).
 	defaultMaxAttempts = 3
 )
 
 // ---------------------------------------------------------------------------
-// VideoWorker
+// AsyncWorker
 // ---------------------------------------------------------------------------
 
-// VideoWorker drives background video first-frame generation. Construct with
-// NewVideoWorker and launch with Start. Safe to share across goroutines.
-type VideoWorker struct {
+// AsyncWorker drives background video first-frame generation. Construct with
+// NewAsyncWorker and launch with Start. Safe to share across goroutines.
+type AsyncWorker struct {
 	deps       Deps
 	instanceID string
 
@@ -166,7 +166,7 @@ type VideoWorker struct {
 	jobCtx      context.Context
 
 	// started guards StartOnce so the sweep goroutine is launched at most once
-	// even if EnableVideoDB is called multiple times (e.g. background init retry
+	// even if EnableDB is called multiple times (e.g. background init retry
 	// races). 0 = not started, 1 = started.
 	started atomic.Bool
 }
@@ -174,33 +174,33 @@ type VideoWorker struct {
 // db resolves the current video-preview DB store via the readiness gate (or the
 // static deps.DB fallback in tests). Returns nil while the DB is not ready.
 // Every worker DB access goes through this so the store can flip after boot.
-func (w *VideoWorker) db() *db.Store {
-	return w.deps.videoStore()
+func (w *AsyncWorker) db() *db.Store {
+	return w.deps.dbStore()
 }
 
-// NewVideoWorker creates a VideoWorker from deps. cfg fields
-// VideoSweepIntervalSeconds/VideoStaleTTLSeconds/VideoMaxAttempts are read from
+// NewAsyncWorker creates a AsyncWorker from deps. cfg fields
+// AsyncPollIntervalSeconds/AsyncStuckJobTimeoutSeconds/AsyncMaxAttempts are read from
 // deps.Cfg; zero values fall back to the Java-matching defaults above.
-// Concurrent ffmpeg work is controlled by deps.VideoSem (sized by VideoConcurrency).
+// Concurrent ffmpeg work is controlled by deps.AsyncSem (sized by AsyncConcurrency).
 //
 // instanceID is a fresh UUID minted per-process, used to own DB rows atomically.
-func NewVideoWorker(deps Deps) *VideoWorker {
+func NewAsyncWorker(deps Deps) *AsyncWorker {
 	sweepSec := defaultSweepIntervalSeconds
-	if deps.Cfg != nil && deps.Cfg.VideoSweepIntervalSeconds > 0 {
-		sweepSec = deps.Cfg.VideoSweepIntervalSeconds
+	if deps.Cfg != nil && deps.Cfg.AsyncPollIntervalSeconds > 0 {
+		sweepSec = deps.Cfg.AsyncPollIntervalSeconds
 	}
 
 	staleSec := defaultStaleTTLSeconds
-	if deps.Cfg != nil && deps.Cfg.VideoStaleTTLSeconds > 0 {
-		staleSec = deps.Cfg.VideoStaleTTLSeconds
+	if deps.Cfg != nil && deps.Cfg.AsyncStuckJobTimeoutSeconds > 0 {
+		staleSec = deps.Cfg.AsyncStuckJobTimeoutSeconds
 	}
 
 	maxAttempts := defaultMaxAttempts
-	if deps.Cfg != nil && deps.Cfg.VideoMaxAttempts > 0 {
-		maxAttempts = deps.Cfg.VideoMaxAttempts
+	if deps.Cfg != nil && deps.Cfg.AsyncMaxAttempts > 0 {
+		maxAttempts = deps.Cfg.AsyncMaxAttempts
 	}
 
-	return &VideoWorker{
+	return &AsyncWorker{
 		deps:          deps,
 		instanceID:    uuid.New().String(),
 		sweepInterval: time.Duration(sweepSec) * time.Second,
@@ -213,7 +213,7 @@ func NewVideoWorker(deps Deps) *VideoWorker {
 // StartOnce launches the sweep goroutine at most once, regardless of how many
 // times it is called. Safe to call from the background DB-init goroutine (which
 // may retry) once the DB becomes ready.
-func (w *VideoWorker) StartOnce(ctx context.Context) {
+func (w *AsyncWorker) StartOnce(ctx context.Context) {
 	if w.started.CompareAndSwap(false, true) {
 		w.Start(ctx)
 	}
@@ -221,7 +221,7 @@ func (w *VideoWorker) StartOnce(ctx context.Context) {
 
 // Start launches the background sweep goroutine. It stops when ctx is
 // cancelled. Returns immediately.
-func (w *VideoWorker) Start(ctx context.Context) {
+func (w *AsyncWorker) Start(ctx context.Context) {
 	w.bind(ctx)
 	if w.track() {
 		go func() {
@@ -241,12 +241,12 @@ func (w *VideoWorker) Start(ctx context.Context) {
 			case <-ticker.C:
 				w.tick(ctx)
 			case <-ctx.Done():
-				slog.Info("VideoWorker: context cancelled, stopping sweep")
+				slog.Info("AsyncWorker: context cancelled, stopping sweep")
 				return
 			}
 		}
 	}()
-	slog.Info("VideoWorker started",
+	slog.Info("AsyncWorker started",
 		"instance_id", w.instanceID,
 		"sweep_interval", w.sweepInterval,
 		"stale_ttl", w.staleTTL,
@@ -254,19 +254,19 @@ func (w *VideoWorker) Start(ctx context.Context) {
 	)
 }
 
-func (w *VideoWorker) bind(ctx context.Context) {
+func (w *AsyncWorker) bind(ctx context.Context) {
 	w.mu.Lock()
 	w.jobCtx = ctx
 	w.mu.Unlock()
 }
 
-func (w *VideoWorker) jobContext() context.Context {
+func (w *AsyncWorker) jobContext() context.Context {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.jobCtx
 }
 
-func (w *VideoWorker) track() bool {
+func (w *AsyncWorker) track() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -279,7 +279,7 @@ func (w *VideoWorker) track() bool {
 // Wait blocks until the sweep, the cleanup loop and every job have finished and
 // refuses new ones. Cancel the context given to Start first: each job then
 // returns its row to PENDING and ends.
-func (w *VideoWorker) Wait() {
+func (w *AsyncWorker) Wait() {
 	w.mu.Lock()
 	w.closed = true
 	w.mu.Unlock()
@@ -288,10 +288,10 @@ func (w *VideoWorker) Wait() {
 
 // tick is the body of one sweep cycle. It is also called directly from the
 // resolve() fast-path (non-blocking, best-effort).
-func (w *VideoWorker) tick(ctx context.Context) {
+func (w *AsyncWorker) tick(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("VideoWorker: tick panicked", "panic", r, "stack", string(debug.Stack()))
+			slog.Error("AsyncWorker: tick panicked", "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
 
@@ -306,7 +306,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 	//     them while fewer than MAX_IN_FLIGHT jobs are live on this instance.
 	rows, err := w.db().FindPendingNewest(ctx, maxInFlight*4)
 	if err != nil {
-		slog.Warn("VideoWorker: FindPendingNewest failed", "err", err)
+		slog.Warn("AsyncWorker: FindPendingNewest failed", "err", err)
 	} else {
 		for _, row := range rows {
 			key := liveKey(row.FileID, row.Version)
@@ -319,7 +319,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 			claimed, cerr := w.db().Claim(claimCtx, row.FileID, row.Version, w.instanceID)
 			cancelClaim()
 			if cerr != nil {
-				slog.Warn("VideoWorker: Claim failed", "file_id", row.FileID, "version", row.Version, "err", cerr)
+				slog.Warn("AsyncWorker: Claim failed", "file_id", row.FileID, "version", row.Version, "err", cerr)
 			}
 			if cerr != nil || !claimed {
 				w.unreserve(key)
@@ -341,7 +341,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 	staleRows, serr := w.db().ReclaimStale(reclaimCtx, w.instanceID, w.staleTTL)
 	cancelReclaim()
 	if serr != nil {
-		slog.Warn("VideoWorker: ReclaimStale failed", "err", serr)
+		slog.Warn("AsyncWorker: ReclaimStale failed", "err", serr)
 		return
 	}
 	for _, stale := range staleRows {
@@ -362,7 +362,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		_, isLive := w.live[staleKey]
 		w.mu.Unlock()
 		if isLive {
-			slog.Debug("VideoWorker: stale-reclaim skipped (goroutine still alive)",
+			slog.Debug("AsyncWorker: stale-reclaim skipped (goroutine still alive)",
 				"file_id", stale.FileID, "version", stale.Version)
 			// Leave the row as GENERATING — do NOT call Release.
 			// The live goroutine will call its own terminal transition.
@@ -371,13 +371,13 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		// Row is genuinely dead (crashed instance or this instance lost the goroutine).
 		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
 		if stale.Attempts >= w.maxAttempts {
-			slog.Warn("VideoWorker: max attempts reached after stale reclaim, marking FAILED",
+			slog.Warn("AsyncWorker: max attempts reached after stale reclaim, marking FAILED",
 				"file_id", stale.FileID, "version", stale.Version, "max_attempts", w.maxAttempts)
 			failCtx, cancelFail := dbCtx(ctx)
 			ferr := w.db().MarkFailed(failCtx, stale.FileID, stale.Version, w.instanceID)
 			cancelFail()
 			if ferr != nil {
-				slog.Warn("VideoWorker: MarkFailed (stale cap) failed", "err", ferr)
+				slog.Warn("AsyncWorker: MarkFailed (stale cap) failed", "err", ferr)
 			}
 			continue
 		}
@@ -387,7 +387,7 @@ func (w *VideoWorker) tick(ctx context.Context) {
 		}
 		switch w.reserve(staleKey) {
 		case reserveFull, reserveClosed, reserveDuplicate:
-			slog.Debug("VideoWorker: instance at maxInFlight on stale-reclaimed row, releasing without attempt increment",
+			slog.Debug("AsyncWorker: instance at maxInFlight on stale-reclaimed row, releasing without attempt increment",
 				"file_id", stale.FileID, "version", stale.Version)
 			w.releaseRow(ctx, stale)
 			continue
@@ -409,13 +409,13 @@ const (
 	reserveClosed
 )
 
-func (w *VideoWorker) liveCount() int {
+func (w *AsyncWorker) liveCount() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return len(w.live)
 }
 
-func (w *VideoWorker) reserve(key string) reserveResult {
+func (w *AsyncWorker) reserve(key string) reserveResult {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, ok := w.live[key]; ok {
@@ -432,7 +432,7 @@ func (w *VideoWorker) reserve(key string) reserveResult {
 	return reserveOK
 }
 
-func (w *VideoWorker) unreserve(key string) {
+func (w *AsyncWorker) unreserve(key string) {
 	w.mu.Lock()
 	delete(w.live, key)
 	w.mu.Unlock()
@@ -445,21 +445,21 @@ func dbCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // releaseRow returns a row this instance claimed to PENDING without counting an attempt.
-func (w *VideoWorker) releaseRow(ctx context.Context, row db.VideoPreview) {
+func (w *AsyncWorker) releaseRow(ctx context.Context, row db.VideoPreview) {
 	c, cancel := dbCtx(ctx)
 	defer cancel()
 	if rerr := w.db().Release(c, row.FileID, row.Version, w.instanceID); rerr != nil {
-		slog.Warn("VideoWorker: Release failed", "file_id", row.FileID, "version", row.Version, "err", rerr)
+		slog.Warn("AsyncWorker: Release failed", "file_id", row.FileID, "version", row.Version, "err", rerr)
 	}
 }
 
 // attempt runs a single generate job for a row this instance has claimed. It
-// takes a VideoSem slot only around the codec probe and the first-frame
+// takes a AsyncSem slot only around the codec probe and the first-frame
 // extraction, after the source is downloaded.
 //
 // Probe-first outcome mapping:
 //  1. Download source video to a temp file (shared for probe + extract), no slot,
-//     then wait for a VideoSem slot; if ctx ends first the row returns to
+//     then wait for a AsyncSem slot; if ctx ends first the row returns to
 //     PENDING without an attempt.
 //  2. If row.Codec already set (re-enqueued UNSUPPORTED), skip re-probe.
 //     Otherwise probe to detect codec and persist via SetCodec.
@@ -470,10 +470,10 @@ func (w *VideoWorker) releaseRow(ctx context.Context, row db.VideoPreview) {
 //     (supported codec but corrupt, or over extractCeiling).
 //  7. storage.ErrNotFound (source gone)           → MarkFailed (terminal, no retry).
 //  8. connectivity failure (download, upload, temp file) → row deleted, no attempt counted.
-func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
+func (w *AsyncWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("VideoWorker: attempt panicked",
+			slog.Error("AsyncWorker: attempt panicked",
 				"file_id", row.FileID, "version", row.Version, "panic", r,
 				"stack", string(debug.Stack()))
 			if w.db() != nil {
@@ -483,7 +483,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	}()
 
 	previewID := uuid.New().String()
-	slog.Debug("VideoWorker: attempt started",
+	slog.Debug("AsyncWorker: attempt started",
 		"file_id", row.FileID, "version", row.Version,
 		"preview_id", previewID, "instance_id", w.instanceID)
 
@@ -515,12 +515,12 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 			return
 		}
 		if isStorageNotFound(err) {
-			slog.Warn("VideoWorker: source blob not found, marking FAILED",
+			slog.Warn("AsyncWorker: source blob not found, marking FAILED",
 				"file_id", row.FileID, "version", row.Version)
 			notFoundCtx, cancelNotFound := dbCtx(ctx)
 			defer cancelNotFound()
 			if merr := w.db().MarkFailed(notFoundCtx, row.FileID, row.Version, w.instanceID); merr != nil {
-				slog.Warn("VideoWorker: MarkFailed (not found) failed", "err", merr)
+				slog.Warn("AsyncWorker: MarkFailed (not found) failed", "err", merr)
 			}
 			return
 		}
@@ -552,10 +552,10 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 			select {
 			case <-ticker.C:
 				if herr := w.db().Heartbeat(ctx, row.FileID, row.Version, w.instanceID); herr != nil {
-					slog.Warn("VideoWorker: download heartbeat failed (non-fatal)", "err", herr,
+					slog.Warn("AsyncWorker: download heartbeat failed (non-fatal)", "err", herr,
 						"file_id", row.FileID, "version", row.Version)
 				} else {
-					slog.Debug("VideoWorker: download heartbeat sent",
+					slog.Debug("AsyncWorker: download heartbeat sent",
 						"file_id", row.FileID, "version", row.Version)
 				}
 			case <-hbStop:
@@ -591,7 +591,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 			w.releaseRow(ctx, row)
 			return
 		}
-		slog.Warn("VideoWorker: download failed (possibly stalled idle watchdog)",
+		slog.Warn("AsyncWorker: download failed (possibly stalled idle watchdog)",
 			"file_id", row.FileID, "version", row.Version, "err", copyErr)
 		w.dropRow(ctx, row, copyErr)
 		return
@@ -610,7 +610,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	// nor to the wait for the ffmpeg slot.
 	if serr := w.acquireSem(ctx); serr != nil {
 		stopHB()
-		slog.Debug("VideoWorker: context ended while waiting for an ffmpeg slot, releasing without attempt increment",
+		slog.Debug("AsyncWorker: context ended while waiting for an ffmpeg slot, releasing without attempt increment",
 			"file_id", row.FileID, "version", row.Version)
 		w.releaseRow(ctx, row)
 		return
@@ -625,7 +625,7 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	defer stateCancel()
 
 	if res.probeErr != nil {
-		slog.Warn("VideoWorker: codec probe failed, releasing with attempt increment",
+		slog.Warn("AsyncWorker: codec probe failed, releasing with attempt increment",
 			"file_id", row.FileID, "version", row.Version, "err", res.probeErr)
 		w.releaseOrFail(ctx, row, fmt.Errorf("codec probe failed: %w", res.probeErr))
 		return
@@ -634,23 +634,23 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	if res.probed {
 		// Persist the codec immediately so it survives future re-enqueue cycles.
 		if serr := w.db().SetCodec(stateCtx, row.FileID, row.Version, w.instanceID, codec); serr != nil {
-			slog.Warn("VideoWorker: SetCodec failed (non-fatal)", "err", serr)
+			slog.Warn("AsyncWorker: SetCodec failed (non-fatal)", "err", serr)
 		}
 	}
 
 	// --- Step 3: Check codec support ---
 	if !isSupportedVideoCodec(codec) {
-		slog.Warn("VideoWorker: codec not in supported list, marking UNSUPPORTED",
+		slog.Warn("AsyncWorker: codec not in supported list, marking UNSUPPORTED",
 			"file_id", row.FileID, "version", row.Version, "codec", codec)
 		if merr := w.db().MarkUnsupported(stateCtx, row.FileID, row.Version, w.instanceID); merr != nil {
-			slog.Warn("VideoWorker: MarkUnsupported failed", "err", merr)
+			slog.Warn("AsyncWorker: MarkUnsupported failed", "err", merr)
 		}
 		return
 	}
 
 	if res.extractErr != nil {
 		if errors.Is(res.extractErr, video.ErrExtractFailed) || errors.Is(res.extractErr, video.ErrExtractTimeout) {
-			slog.Warn("VideoWorker: frame extraction failed for supported codec, releasing with attempt increment",
+			slog.Warn("AsyncWorker: frame extraction failed for supported codec, releasing with attempt increment",
 				"file_id", row.FileID, "version", row.Version, "codec", codec, "err", res.extractErr)
 		}
 		w.releaseOrFail(ctx, row, res.extractErr)
@@ -671,9 +671,9 @@ func (w *VideoWorker) attempt(ctx context.Context, row db.VideoPreview) {
 	readyCtx, readyCancel := dbCtx(ctx)
 	defer readyCancel()
 	if merr := w.db().MarkReady(readyCtx, row.FileID, row.Version, w.instanceID, previewID); merr != nil {
-		slog.Warn("VideoWorker: MarkReady failed", "file_id", row.FileID, "version", row.Version, "err", merr)
+		slog.Warn("AsyncWorker: MarkReady failed", "file_id", row.FileID, "version", row.Version, "err", merr)
 	} else {
-		slog.Info("VideoWorker: frame generated", "file_id", row.FileID, "version", row.Version, "preview_id", previewID, "codec", codec)
+		slog.Info("AsyncWorker: frame generated", "file_id", row.FileID, "version", row.Version, "preview_id", previewID, "codec", codec)
 	}
 }
 
@@ -685,8 +685,8 @@ type ffmpegResult struct {
 	extractErr error
 }
 
-// runFFmpeg takes over the caller's VideoSem slot and releases it when the ffmpeg work ends, even on panic.
-func (w *VideoWorker) runFFmpeg(ctx context.Context, row db.VideoPreview, tmpName string) ffmpegResult {
+// runFFmpeg takes over the caller's AsyncSem slot and releases it when the ffmpeg work ends, even on panic.
+func (w *AsyncWorker) runFFmpeg(ctx context.Context, row db.VideoPreview, tmpName string) ffmpegResult {
 	defer w.releaseSem()
 	extractCtx, extractCancel := context.WithTimeout(ctx, extractCeiling)
 	defer extractCancel()
@@ -694,7 +694,7 @@ func (w *VideoWorker) runFFmpeg(ctx context.Context, row db.VideoPreview, tmpNam
 	var res ffmpegResult
 	if row.Codec != nil && *row.Codec != "" {
 		res.codec = *row.Codec
-		slog.Debug("VideoWorker: using stored codec (skip re-probe)",
+		slog.Debug("AsyncWorker: using stored codec (skip re-probe)",
 			"file_id", row.FileID, "version", row.Version, "codec", res.codec)
 	} else {
 		codec, err := videoDetectCodecFromFileFunc(extractCtx, tmpName)
@@ -715,13 +715,13 @@ func (w *VideoWorker) runFFmpeg(ctx context.Context, row db.VideoPreview, tmpNam
 // file): the GENERATING row owned by this instance is deleted as if the preview
 // had never been requested, so the next user request starts over. No attempt is
 // counted and no backoff applies.
-func (w *VideoWorker) dropRow(ctx context.Context, row db.VideoPreview, err error) {
-	slog.Warn("VideoWorker: connectivity failure, dropping row",
+func (w *AsyncWorker) dropRow(ctx context.Context, row db.VideoPreview, err error) {
+	slog.Warn("AsyncWorker: connectivity failure, dropping row",
 		"file_id", row.FileID, "version", row.Version, "err", err)
 	c, cancel := dbCtx(ctx)
 	defer cancel()
 	if derr := w.db().DeleteClaimed(c, row.FileID, row.Version, w.instanceID); derr != nil {
-		slog.Warn("VideoWorker: DeleteClaimed failed", "file_id", row.FileID, "version", row.Version, "err", derr)
+		slog.Warn("AsyncWorker: DeleteClaimed failed", "file_id", row.FileID, "version", row.Version, "err", derr)
 	}
 }
 
@@ -729,36 +729,36 @@ func (w *VideoWorker) dropRow(ctx context.Context, row db.VideoPreview, err erro
 // releases to PENDING or marks FAILED at cap.
 // The triggering error is logged here (in full, untruncated) for observability;
 // it is never persisted to the DB.
-func (w *VideoWorker) releaseOrFail(ctx context.Context, row db.VideoPreview, err error) {
+func (w *AsyncWorker) releaseOrFail(ctx context.Context, row db.VideoPreview, err error) {
 	ctx, cancel := dbCtx(ctx)
 	defer cancel()
-	slog.Warn("VideoWorker: render failure, releasing to PENDING with attempt increment",
+	slog.Warn("AsyncWorker: render failure, releasing to PENDING with attempt increment",
 		"file_id", row.FileID, "version", row.Version, "err", err,
 		"attempts_after", row.Attempts+1)
 	if row.Attempts+1 >= w.maxAttempts {
-		slog.Warn("VideoWorker: max attempts reached, marking FAILED",
+		slog.Warn("AsyncWorker: max attempts reached, marking FAILED",
 			"file_id", row.FileID, "version", row.Version, "max_attempts", w.maxAttempts, "err", err)
 		if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID); merr != nil {
-			slog.Warn("VideoWorker: MarkFailed (transient cap) failed", "err", merr)
+			slog.Warn("AsyncWorker: MarkFailed (transient cap) failed", "err", merr)
 		}
 	} else {
 		if rerr := w.db().ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID); rerr != nil {
-			slog.Warn("VideoWorker: ReleaseWithAttempt failed", "err", rerr)
+			slog.Warn("AsyncWorker: ReleaseWithAttempt failed", "err", rerr)
 		}
 	}
 }
 
-// acquireSem blocks until a VideoSem slot is free or ctx is done; nil VideoSem is unlimited.
-func (w *VideoWorker) acquireSem(ctx context.Context) error {
-	if w.deps.VideoSem == nil {
+// acquireSem blocks until a AsyncSem slot is free or ctx is done; nil AsyncSem is unlimited.
+func (w *AsyncWorker) acquireSem(ctx context.Context) error {
+	if w.deps.AsyncSem == nil {
 		return nil
 	}
 	w.slotWaiters.Add(1)
 	defer w.slotWaiters.Add(-1)
 	select {
-	case w.deps.VideoSem <- struct{}{}:
+	case w.deps.AsyncSem <- struct{}{}:
 		if err := ctx.Err(); err != nil {
-			<-w.deps.VideoSem
+			<-w.deps.AsyncSem
 			return err
 		}
 		return nil
@@ -767,12 +767,12 @@ func (w *VideoWorker) acquireSem(ctx context.Context) error {
 	}
 }
 
-// releaseSem releases one slot back to VideoSem. No-op when VideoSem is nil.
-func (w *VideoWorker) releaseSem() {
-	if w.deps.VideoSem == nil {
+// releaseSem releases one slot back to AsyncSem. No-op when AsyncSem is nil.
+func (w *AsyncWorker) releaseSem() {
+	if w.deps.AsyncSem == nil {
 		return
 	}
-	<-w.deps.VideoSem
+	<-w.deps.AsyncSem
 }
 
 // isStorageNotFound returns true if err wraps storage.ErrNotFound.
@@ -780,7 +780,7 @@ func isStorageNotFound(err error) bool {
 	return errors.Is(err, storage.ErrNotFound)
 }
 
-// liveKey returns the map key used to track a running goroutine in VideoWorker.live.
+// liveKey returns the map key used to track a running goroutine in AsyncWorker.live.
 func liveKey(fileID string, version int) string {
 	return fileID + "\x00" + strconv.Itoa(version)
 }
