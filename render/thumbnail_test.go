@@ -359,3 +359,27 @@ func TestFullImage_AlphaIsPNG(t *testing.T) {
 		t.Fatalf("got %dx%d %s", r.Width, r.Height, r.ContentType)
 	}
 }
+
+func TestProbe_LoaderAndOrientation(t *testing.T) {
+	cases := []struct {
+		name     string
+		data     []byte
+		original bool
+		gif      bool
+		orient   int
+	}{
+		{"jpeg", encodeJPEG(t, noisyRGBA(300, 200)), true, false, 1},
+		{"png", encodePNG(t, noisyRGBA(300, 200)), true, false, 1},
+		{"gif", genGIF(t, 160, 90, 12), true, true, 1},
+		{"jpeg rotated", spliceAPP1(t, encodeJPEG(t, noisyRGBA(600, 300)), exifOrientation(6)), false, false, 6},
+	}
+	for _, c := range cases {
+		info, err := Probe(c.data)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if info.Loader == "" || info.Original() != c.original || info.IsGIF() != c.gif || info.Orientation != c.orient {
+			t.Errorf("%s: info=%+v, want original=%v gif=%v orientation=%d", c.name, info, c.original, c.gif, c.orient)
+		}
+	}
+}

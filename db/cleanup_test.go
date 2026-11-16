@@ -93,7 +93,7 @@ func TestDeleteClaimed_OnlyOwnGeneratingRow(t *testing.T) {
 	}
 
 	for _, id := range []string{own, other, pending, ready} {
-		if err := st.DeleteClaimed(ctx, id, 1, "inst-a"); err != nil {
+		if err := st.DeleteClaimed(ctx, id, 1, "inst-a", AllSizes); err != nil {
 			t.Fatalf("DeleteClaimed %s: %v", id, err)
 		}
 	}

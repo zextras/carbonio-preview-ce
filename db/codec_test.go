@@ -23,7 +23,7 @@ func TestSetCodec_PersistsCodec(t *testing.T) {
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, instID)
 
-	if err := store.SetCodec(ctx, fileID, version, instID, codec); err != nil {
+	if err := store.SetCodec(ctx, fileID, version, instID, AllSizes, codec); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestSetCodec_WrongInstanceNoop(t *testing.T) {
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, ownerInst)
 
-	if err := store.SetCodec(ctx, fileID, version, wrongInst, "vp9"); err != nil {
+	if err := store.SetCodec(ctx, fileID, version, wrongInst, AllSizes, "vp9"); err != nil {
 		t.Fatalf("SetCodec (wrong inst): unexpected error: %v", err)
 	}
 
@@ -76,10 +76,10 @@ func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, instID)
-	if err := store.SetCodec(ctx, fileID, version, instID, codec); err != nil {
+	if err := store.SetCodec(ctx, fileID, version, instID, AllSizes, codec); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
-	if err := store.MarkUnsupported(ctx, fileID, version, instID); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestReenqueueUnsupported_NoopOnFailed(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, instID)
-	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func TestCodecRoundTrip(t *testing.T) {
 	claimPair(t, store, fileID, version, instID)
 
 	const want = "hevc"
-	if err := store.SetCodec(ctx, fileID, version, instID, want); err != nil {
+	if err := store.SetCodec(ctx, fileID, version, instID, AllSizes, want); err != nil {
 		t.Fatalf("SetCodec: %v", err)
 	}
 

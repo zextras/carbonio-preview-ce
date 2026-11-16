@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -65,6 +66,8 @@ type Server struct {
 	// dbMu guards the thumbnail DB lifecycle owned by StartDBAsync: its
 	// cancellable context, the init goroutine and the pool, closed by stopAsync
 	// only after the worker's jobs have ended.
+	limits atomic.Pointer[limits]
+
 	dbMu     sync.Mutex
 	dbCancel context.CancelFunc
 	dbInit   sync.WaitGroup
@@ -180,12 +183,29 @@ func (s *Server) Run() {
 	sig := <-sigC
 	slog.Info("Run: received signal, shutting down", "signal", sig.String())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Warn("Run: HTTP shutdown", "err", err)
 	}
+	s.drainRenders()
 	s.stopAsync()
+}
+
+const shutdownTimeout = 10 * time.Second
+
+// drainRenders waits for the render flights and blob cleanups still running after the listener closed, so no
+// blob is left behind by a flight that was writing; the wait is bounded and the rest is left to the sweep.
+func (s *Server) drainRenders() {
+	lim := s.limits.Load()
+	if lim == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if !lim.drain(ctx) {
+		slog.Warn("Run: render work still running at shutdown")
+	}
 }
 
 // stopAsync ends the async worker and closes the thumbnail DB pool, in that order:
@@ -257,11 +277,13 @@ func (s *Server) buildMux() *http.ServeMux {
 	// (gate-aware) and retained on the Server so it can be started once the DB is
 	// ready (EnableDB / StartAsyncWorker).
 	api := newHumaAPI(mux)
+	lim := newLimits(s.cfg.RenderConcurrency)
+	s.limits.Store(lim)
 	worker := RegisterOperations(api, Deps{
 		Cfg:      s.cfg,
 		Store:    s.store,
 		Cache:    s.cache,
-		Limits:   newLimits(s.cfg.RenderConcurrency),
+		Limits:   lim,
 		AsyncSem: asyncSem,
 		DBGate:   s.dbGate,
 	})

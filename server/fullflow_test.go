@@ -208,8 +208,8 @@ func TestFullFlow(t *testing.T) {
 	})
 
 	t.Run("cache_hit_thumbnail", func(t *testing.T) {
-		ts, storages, _ := start(t, fx.jpeg, "image/jpeg", cache.New(8<<20))
-		url := thumbURL(ts, "m", "image/jpeg")
+		ts, storages, _ := start(t, fx.pdf, "application/pdf", cache.New(8<<20))
+		url := thumbURL(ts, "m", "application/pdf")
 		c1, ct1, b1 := getBody(t, url)
 		c2, ct2, b2 := getBody(t, url)
 		if c1 != http.StatusOK || c2 != http.StatusOK {

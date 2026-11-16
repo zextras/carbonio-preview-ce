@@ -65,7 +65,7 @@ func (w *AsyncWorker) attempt(ctx context.Context, rows []db.Thumbnail) {
 				"file_id", first.FileID, "version", first.Version, "panic", r,
 				"stack", string(debug.Stack()))
 			if w.db() != nil {
-				w.releaseRows(ctx, first.FileID, first.Version)
+				w.releaseRows(ctx, first.FileID, first.Version, sizesOf(rows))
 			}
 		}
 	}()
@@ -73,7 +73,7 @@ func (w *AsyncWorker) attempt(ctx context.Context, rows []db.Thumbnail) {
 	slog.Debug("AsyncWorker: attempt started",
 		"file_id", first.FileID, "version", first.Version, "kind", first.Kind, "instance_id", w.instanceID)
 
-	stopHB := w.startHeartbeat(ctx, first.FileID, first.Version)
+	stopHB := w.startHeartbeat(ctx, first.FileID, first.Version, sizesOf(rows))
 	defer stopHB()
 
 	var outs map[string]produced
@@ -104,7 +104,7 @@ func (w *AsyncWorker) attempt(ctx context.Context, rows []db.Thumbnail) {
 	w.finish(ctx, rows, outs)
 }
 
-func (w *AsyncWorker) startHeartbeat(ctx context.Context, fileID string, version int) func() {
+func (w *AsyncWorker) startHeartbeat(ctx context.Context, fileID string, version int, sizes []string) func() {
 	stop := make(chan struct{})
 	stopOnce := sync.OnceFunc(func() { close(stop) })
 	go func() {
@@ -113,7 +113,7 @@ func (w *AsyncWorker) startHeartbeat(ctx context.Context, fileID string, version
 		for {
 			select {
 			case <-ticker.C:
-				if herr := w.db().Heartbeat(ctx, fileID, version, w.instanceID); herr != nil {
+				if herr := w.db().Heartbeat(ctx, fileID, version, w.instanceID, sizes); herr != nil {
 					slog.Warn("AsyncWorker: heartbeat failed (non-fatal)", "err", herr, "file_id", fileID, "version", version)
 				} else {
 					slog.Debug("AsyncWorker: heartbeat sent", "file_id", fileID, "version", version)
@@ -137,21 +137,21 @@ func (w *AsyncWorker) settleFailure(ctx context.Context, rows []db.Thumbnail, f 
 	case failReleased:
 		slog.Debug("AsyncWorker: context ended, releasing without attempt increment",
 			"file_id", first.FileID, "version", first.Version)
-		w.releaseRows(ctx, first.FileID, first.Version)
+		w.releaseRows(ctx, first.FileID, first.Version, sizesOf(rows))
 	case failNotFound:
 		slog.Warn("AsyncWorker: source blob not found, marking FAILED",
 			"file_id", first.FileID, "version", first.Version)
 		c, cancel := dbCtx(ctx)
 		defer cancel()
-		if merr := w.db().MarkFailed(c, first.FileID, first.Version, w.instanceID); merr != nil {
+		if merr := w.db().MarkFailed(c, first.FileID, first.Version, w.instanceID, sizesOf(rows)); merr != nil {
 			slog.Warn("AsyncWorker: MarkFailed (not found) failed", "err", merr)
 		}
 	case failConnectivity:
-		w.dropRows(ctx, first.FileID, first.Version, f.err)
+		w.dropRows(ctx, first.FileID, first.Version, sizesOf(rows), f.err)
 	case failUnsupported:
 		c, cancel := dbCtx(ctx)
 		defer cancel()
-		if merr := w.db().MarkUnsupported(c, first.FileID, first.Version, w.instanceID); merr != nil {
+		if merr := w.db().MarkUnsupported(c, first.FileID, first.Version, w.instanceID, sizesOf(rows)); merr != nil {
 			slog.Warn("AsyncWorker: MarkUnsupported failed", "err", merr)
 		}
 	default:
@@ -174,14 +174,14 @@ func (w *AsyncWorker) finish(ctx context.Context, rows []db.Thumbnail, outs map[
 			done = append(done, row)
 			continue
 		}
-		blobID, err := storeBlob(ctx, w.deps.Store, out.body, row.Version, row.ServiceType, row.OwnerID)
+		blobID, err := storeBlob(ctx, w.deps.slotLimits(), w.deps.Store, out.body, row.Version, row.ServiceType, row.OwnerID)
 		if err != nil {
 			w.deleteBlobs(ctx, done)
 			if ctx.Err() != nil {
-				w.releaseRows(ctx, first.FileID, first.Version)
+				w.releaseRows(ctx, first.FileID, first.Version, sizesOf(rows))
 				return
 			}
-			w.dropRows(ctx, first.FileID, first.Version, err)
+			w.dropRows(ctx, first.FileID, first.Version, sizesOf(rows), err)
 			return
 		}
 		row.BlobID = &blobID
@@ -193,7 +193,12 @@ func (w *AsyncWorker) finish(ctx context.Context, rows []db.Thumbnail, outs map[
 	written, err := w.db().MarkReady(readyCtx, w.instanceID, done)
 	if err != nil {
 		slog.Warn("AsyncWorker: MarkReady failed", "file_id", first.FileID, "version", first.Version, "err", err)
-		w.deleteBlobs(ctx, done)
+		w.deleteUnreferenced(ctx, done)
+		if ctx.Err() != nil {
+			w.releaseRows(ctx, first.FileID, first.Version, sizesOf(rows))
+			return
+		}
+		w.dropRows(ctx, first.FileID, first.Version, sizesOf(rows), err)
 		return
 	}
 	var orphans []db.Thumbnail
@@ -218,21 +223,33 @@ func containsSize(sizes []string, size string) bool {
 	return false
 }
 
+// deleteBlobs deletes each blob on the live job context and falls back to a bounded one once it is done.
 func (w *AsyncWorker) deleteBlobs(ctx context.Context, rows []db.Thumbnail) {
-	if len(rows) == 0 {
-		return
-	}
-	dctx, cancel := dbCtx(ctx)
-	defer cancel()
 	for i := range rows {
+		dctx, cancel := ctx, context.CancelFunc(func() {})
+		if ctx.Err() != nil {
+			dctx, cancel = dbCtx(ctx)
+		}
 		deleteRowBlob(dctx, w.deps.Store, &rows[i], "AsyncWorker")
+		cancel()
 	}
+}
+
+// deleteUnreferenced is for an ambiguous MarkReady: a commit that was applied but not acknowledged keeps its blobs.
+func (w *AsyncWorker) deleteUnreferenced(ctx context.Context, rows []db.Thumbnail) {
+	var orphans []db.Thumbnail
+	for _, row := range rows {
+		if row.BlobID == nil || !blobReferenced(ctx, w.db(), row.FileID, row.Version, *row.BlobID) {
+			orphans = append(orphans, row)
+		}
+	}
+	w.deleteBlobs(ctx, orphans)
 }
 
 // storeBlob uploads data under a fresh node id with the given version, service type and owner, so it
 // counts toward the owner's quota. On failure it deletes the possibly partial node: before returning
-// when ctx ended (bounded by releaseTimeout), in the background otherwise.
-func storeBlob(ctx context.Context, store storage.Client, data []byte, version int, serviceType, ownerID string) (string, error) {
+// when ctx ended, in a tracked background goroutine otherwise; both are bounded by releaseTimeout.
+func storeBlob(ctx context.Context, lim *limits, store storage.Client, data []byte, version int, serviceType, ownerID string) (string, error) {
 	nodeID := uuid.New().String()
 	storedID, err := store.StoreData(ctx, nodeID, version, serviceType, ownerID, data)
 	if err == nil {
@@ -244,9 +261,11 @@ func storeBlob(ctx context.Context, store storage.Client, data []byte, version i
 		_ = store.Delete(dctx, nodeID, version, serviceType, ownerID)
 		return "", err
 	}
-	go func() {
-		_ = store.Delete(context.Background(), nodeID, version, serviceType, ownerID)
-	}()
+	lim.background(func() {
+		dctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+		defer cancel()
+		_ = store.Delete(dctx, nodeID, version, serviceType, ownerID)
+	})
 	return "", err
 }
 
@@ -341,7 +360,7 @@ func (w *AsyncWorker) runVideo(ctx context.Context, rows []db.Thumbnail) (render
 	}
 	if res.probed {
 		stateCtx, cancel := dbCtx(ctx)
-		if serr := w.db().SetCodec(stateCtx, row.FileID, row.Version, w.instanceID, res.codec); serr != nil {
+		if serr := w.db().SetCodec(stateCtx, row.FileID, row.Version, w.instanceID, sizesOf(rows), res.codec); serr != nil {
 			slog.Warn("AsyncWorker: SetCodec failed (non-fatal)", "err", serr)
 		}
 		cancel()
@@ -525,7 +544,9 @@ func sideOf(size string) int {
 
 func longSide(i render.Info) int { return max(i.Width, i.Height) }
 
-func isAnimatedGIF(p pipeline, i render.Info) bool { return p.mime == mimeGIF && i.Pages > 1 }
+func isAnimatedGIF(p pipeline, i render.Info) bool {
+	return p.mime == mimeGIF && i.IsGIF() && i.Pages > 1
+}
 
 func fromPair(pair render.Pair) map[string]produced {
 	return map[string]produced{
@@ -593,11 +614,11 @@ func (r runner) imageInfo(p pipeline, data []byte) (render.Info, error) {
 	return r.probe(data)
 }
 
-// A size at or below the target of a JPEG/PNG/GIF source is the source itself; the pair is only rendered when a size needs it.
+// A size at or below the target of a source that libvips reads as unrotated JPEG/PNG/GIF is the source itself; the pair is only rendered when a size needs it.
 func (r runner) staticRenditions(p pipeline, data []byte, info render.Info) (map[string]produced, error) {
 	set := map[string]produced{}
 	for _, size := range []string{db.SizeS, db.SizeM} {
-		if p.original && longSide(info) <= sideOf(size) {
+		if p.original && info.Original() && longSide(info) <= sideOf(size) {
 			set[size] = produced{body: data, contentType: p.mime, original: true}
 		}
 	}

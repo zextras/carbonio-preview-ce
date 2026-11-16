@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/config"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
+	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
 const (
@@ -98,13 +100,13 @@ func buildGetThumbnail(deps Deps, worker *AsyncWorker) func(context.Context, *ap
 		})
 		var acc acceptedError
 		if errors.As(err, &acc) {
-			return &apispec.ThumbnailOutput{
-				Status:       http.StatusAccepted,
-				ContentType:  acc.contentType,
-				CacheControl: "no-store",
-				RetryAfter:   strconv.Itoa(retryAfterSeconds),
-				Body:         acc.body,
-			}, nil
+			out := thumbnailBytes(http.StatusAccepted, acc.contentType, acc.body)
+			out.CacheControl, out.RetryAfter = "no-store", strconv.Itoa(retryAfterSeconds)
+			return out, nil
+		}
+		var orig originalAnswer
+		if errors.As(err, &orig) {
+			return streamOriginal(ctx, deps, q, orig.contentType)
 		}
 		if err != nil {
 			return nil, err
@@ -114,7 +116,48 @@ func buildGetThumbnail(deps Deps, worker *AsyncWorker) func(context.Context, *ap
 }
 
 func thumbnailOK(e cache.Entry) *apispec.ThumbnailOutput {
-	return &apispec.ThumbnailOutput{Status: http.StatusOK, ContentType: e.ContentType, Body: e.Body}
+	return thumbnailBytes(http.StatusOK, e.ContentType, e.Body)
+}
+
+func thumbnailBytes(status int, contentType string, body []byte) *apispec.ThumbnailOutput {
+	out := &apispec.ThumbnailOutput{Status: status, ContentType: contentType}
+	if len(body) > 0 {
+		out.ContentLength = strconv.Itoa(len(body))
+	}
+	out.Body = func(c huma.Context) {
+		c.SetStatus(status)
+		if len(body) > 0 {
+			_, _ = c.BodyWriter().Write(body)
+		}
+	}
+	return out
+}
+
+// originalAnswer asks the handler to stream the source itself, so originals never sit in memory or in the cache.
+type originalAnswer struct{ contentType string }
+
+func (originalAnswer) Error() string { return "serve the original source" }
+
+func streamOriginal(ctx context.Context, deps Deps, q thumbRequest, contentType string) (*apispec.ThumbnailOutput, error) {
+	src, size, err := openSource(ctx, deps.Store, q.id, q.version, q.serviceType, q.owner, fetchIdle(deps.Cfg))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
+		}
+		return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
+	}
+	out := &apispec.ThumbnailOutput{Status: http.StatusOK, ContentType: contentType}
+	if size >= 0 {
+		out.ContentLength = strconv.FormatInt(size, 10)
+	}
+	out.Body = func(c huma.Context) {
+		defer src.Close()
+		c.SetStatus(http.StatusOK)
+		if _, err := io.Copy(c.BodyWriter(), src); err != nil {
+			panic(http.ErrAbortHandler)
+		}
+	}
+	return out, nil
 }
 
 func (d Deps) touchOnHit(key string, q thumbRequest) {
@@ -153,15 +196,17 @@ func buildDeleteThumbnails(deps Deps) func(context.Context, *apispec.ThumbnailDe
 			return nil, errDependencyDown()
 		}
 		for i := range rows {
-			deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails")
-		}
-		if err := store.DeleteByFile(ctx, id); err != nil {
-			if isDBConnError(err) {
-				slog.Warn("deleteThumbnails: DB connection down on delete, no-op success", "err", err)
-				return nil, nil
+			if !deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails") {
+				continue
 			}
-			slog.Warn("deleteThumbnails: DeleteByFile failed", "err", err)
-			return nil, errDependencyDown()
+			if _, err := store.DeleteRow(ctx, rows[i]); err != nil {
+				if isDBConnError(err) {
+					slog.Warn("deleteThumbnails: DB connection down on delete, no-op success", "err", err)
+					return nil, nil
+				}
+				slog.Warn("deleteThumbnails: DeleteRow failed", "err", err)
+				return nil, errDependencyDown()
+			}
 		}
 		return nil, nil
 	}

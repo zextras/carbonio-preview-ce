@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2/humatest"
+
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/render"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
@@ -498,7 +500,7 @@ func TestFlight_ConcurrentIdenticalRequestsFetchOnce(t *testing.T) {
 
 	for i := 0; i < n; i++ {
 		r := <-results
-		if r.err != nil || string(r.out.Body) != "rendered" {
+		if r.err != nil || thumbBody(r.out) != "rendered" {
 			t.Fatalf("waiter %d: out=%v err=%v", i, r.out, r.err)
 		}
 	}
@@ -574,7 +576,7 @@ func TestFlight_AllWaitersLeaveDuringFetch_WorkCompletesAndFillsCache(t *testing
 	assertNoFlights(t, lim)
 
 	out, err := handler(context.Background(), thumbnailInput(1))
-	if err != nil || string(out.Body) != "rendered" {
+	if err != nil || thumbBody(out) != "rendered" {
 		t.Fatalf("follow-up: out=%v err=%v", out, err)
 	}
 	if n := store.callsFor(1); n != 1 {
@@ -691,7 +693,7 @@ func TestFlight_JoinerKeepsFlightAlive(t *testing.T) {
 
 	select {
 	case r := <-resB:
-		if r.err != nil || string(r.out.Body) != "rendered" {
+		if r.err != nil || thumbBody(r.out) != "rendered" {
 			t.Fatalf("remaining waiter: out=%v err=%v", r.out, r.err)
 		}
 	case <-time.After(slotWatchdog):
@@ -752,7 +754,7 @@ func TestFlight_LateCallerAfterAbandonmentIsServed(t *testing.T) {
 
 	select {
 	case r := <-resB:
-		if r.err != nil || string(r.out.Body) != "rendered" {
+		if r.err != nil || thumbBody(r.out) != "rendered" {
 			t.Fatalf("late caller: out=%v err=%v, want 200 (it must not join the abandoned flight)", r.out, r.err)
 		}
 	case <-time.After(slotWatchdog):
@@ -976,4 +978,10 @@ func TestRenderSlot_CollaboraConversionsAreNotGated(t *testing.T) {
 			t.Errorf("conversion %d: got %d, want 200", i, rec.Code)
 		}
 	}
+}
+
+func thumbBody(out *apispec.ThumbnailOutput) string {
+	rec := httptest.NewRecorder()
+	out.Body(humatest.NewContext(nil, httptest.NewRequest(http.MethodGet, "/", nil), rec))
+	return rec.Body.String()
 }

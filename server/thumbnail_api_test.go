@@ -677,7 +677,7 @@ func TestDeleteThumbnails_AllVersionsAndSizes(t *testing.T) {
 	}
 }
 
-func TestDeleteThumbnails_StorageErrorIsSwallowed(t *testing.T) {
+func TestDeleteThumbnails_StorageErrorKeepsTheRow(t *testing.T) {
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
 	h.seedReady(id, 1, "m", "video", "b", "o", "files", []byte("x"), "")
@@ -687,8 +687,8 @@ func TestDeleteThumbnails_StorageErrorIsSwallowed(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", rec.Code)
 	}
-	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
-		t.Errorf("rows must be deleted even when a blob delete fails")
+	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 1 {
+		t.Errorf("a row whose blob delete failed must be kept for the sweep: %+v", rows)
 	}
 }
 
@@ -774,13 +774,22 @@ func TestThumbnailGet_ConcurrentMissesEnqueueOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusAccepted {
+			size := "s"
+			if i%2 == 0 {
+				size = "m"
+			}
+			if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, size: size}); rec.Code != http.StatusAccepted {
 				t.Errorf("status %d", rec.Code)
 			}
 		}()
 	}
 	wg.Wait()
-	if rows := h.pair(id, 1); len(rows) != 2 {
-		t.Errorf("rows = %d, want 2", len(rows))
+	rows := h.pair(id, 1)
+	if len(rows) != 2 || rows["s"].Status != db.StatusPending || rows["m"].Status != db.StatusPending {
+		t.Fatalf("rows = %+v, want two PENDING rows", rows)
+	}
+	claimed, err := h.st.Claim(context.Background(), id, 1, "inst")
+	if err != nil || len(claimed) != 2 {
+		t.Fatalf("one claim must take both sizes: n=%d err=%v", len(claimed), err)
 	}
 }

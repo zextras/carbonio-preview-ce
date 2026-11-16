@@ -63,7 +63,7 @@ func buildPostThumbnail(deps Deps) func(context.Context, *apispec.ThumbnailPostI
 		if err != nil {
 			return nil, err
 		}
-		return &apispec.ThumbnailOutput{Status: http.StatusOK, ContentType: out.contentType, Body: out.body}, nil
+		return thumbnailBytes(http.StatusOK, out.contentType, out.body), nil
 	}
 }
 

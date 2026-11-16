@@ -30,6 +30,8 @@ const (
 	SizeM = "m"
 )
 
+var AllSizes = []string{SizeS, SizeM}
+
 // ---------------------------------------------------------------------------
 // PoolConfig holds connection-pool tuning parameters.
 // ---------------------------------------------------------------------------
@@ -268,7 +270,7 @@ func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail)
 		`UPDATE thumbnail
          SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, original=false, content_type=NULL,
              owner_id=$10, service_type=$11, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
-             updated_at=now()
+             created_at=now(), updated_at=now()
          WHERE `+casWhere,
 		row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
 		row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
@@ -372,10 +374,11 @@ func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbna
 	return written, nil
 }
 
-func (s *Store) execClaimed(ctx context.Context, op, set string, args ...any) error {
+func (s *Store) execClaimed(ctx context.Context, op, set string, fileID string, version int, instanceID string, sizes []string, extra ...any) error {
+	args := append([]any{fileID, version, instanceID, sizes}, extra...)
 	_, err := s.pool.Exec(ctx,
 		`UPDATE thumbnail SET `+set+`, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3 AND size = ANY($4)`,
 		args...,
 	)
 	if err != nil {
@@ -386,39 +389,39 @@ func (s *Store) execClaimed(ctx context.Context, op, set string, args ...any) er
 
 // MarkUnsupported moves the claimed rows to UNSUPPORTED (terminal until the
 // codec list grows). The caller logs the reason; it is not persisted.
-func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int, instanceID string) error {
+func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
 	return s.execClaimed(ctx, "MarkUnsupported", `status='UNSUPPORTED', claimed_by=NULL, claimed_at=NULL`,
-		fileID, version, instanceID)
+		fileID, version, instanceID, sizes)
 }
 
 // MarkFailed moves the claimed rows to FAILED (terminal: attempts exhausted or
 // source gone). The caller logs the reason; it is not persisted.
-func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, instanceID string) error {
+func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
 	return s.execClaimed(ctx, "MarkFailed", `status='FAILED', claimed_by=NULL, claimed_at=NULL`,
-		fileID, version, instanceID)
+		fileID, version, instanceID, sizes)
 }
 
 // Release returns the claimed rows to PENDING without counting an attempt.
-func (s *Store) Release(ctx context.Context, fileID string, version int, instanceID string) error {
+func (s *Store) Release(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
 	return s.execClaimed(ctx, "Release", `status='PENDING', claimed_by=NULL, claimed_at=NULL`,
-		fileID, version, instanceID)
+		fileID, version, instanceID, sizes)
 }
 
 // ReleaseWithAttempt returns the claimed rows to PENDING and counts an attempt.
-func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID string) error {
+func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
 	return s.execClaimed(ctx, "ReleaseWithAttempt", `status='PENDING', claimed_by=NULL, claimed_at=NULL, attempts=attempts+1`,
-		fileID, version, instanceID)
+		fileID, version, instanceID, sizes)
 }
 
 // SetCodec records the detected codec on the claimed rows.
-func (s *Store) SetCodec(ctx context.Context, fileID string, version int, instanceID, codec string) error {
-	return s.execClaimed(ctx, "SetCodec", `codec=$4`, fileID, version, instanceID, codec)
+func (s *Store) SetCodec(ctx context.Context, fileID string, version int, instanceID string, sizes []string, codec string) error {
+	return s.execClaimed(ctx, "SetCodec", `codec=$5`, fileID, version, instanceID, sizes, codec)
 }
 
 // Heartbeat refreshes claimed_at of the claimed rows so ReclaimStale never
 // takes over a job that is making progress.
-func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, instanceID string) error {
-	return s.execClaimed(ctx, "Heartbeat", `claimed_at=now()`, fileID, version, instanceID)
+func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
+	return s.execClaimed(ctx, "Heartbeat", `claimed_at=now()`, fileID, version, instanceID, sizes)
 }
 
 // ReenqueueUnsupported moves UNSUPPORTED rows back to PENDING keeping the
@@ -438,11 +441,11 @@ func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version
 
 // DeleteClaimed deletes the claimed rows as if the thumbnail had never been
 // requested; rows owned by another instance or in another status are kept.
-func (s *Store) DeleteClaimed(ctx context.Context, fileID string, version int, instanceID string) error {
+func (s *Store) DeleteClaimed(ctx context.Context, fileID string, version int, instanceID string, sizes []string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM thumbnail
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3 AND size = ANY($4)`,
+		fileID, version, instanceID, sizes,
 	)
 	if err != nil {
 		return fmt.Errorf("db.DeleteClaimed: %w", err)
@@ -463,6 +466,19 @@ func (s *Store) TouchReady(ctx context.Context, fileID string, version int, size
 		return fmt.Errorf("db.TouchReady: %w", err)
 	}
 	return nil
+}
+
+// DeleteRow deletes the row only while it still equals the snapshot, so a row that was replaced
+// meanwhile (and the blob it references) survives for the sweep. It reports whether a row was deleted.
+func (s *Store) DeleteRow(ctx context.Context, row Thumbnail) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM thumbnail WHERE `+casWhere,
+		row.FileID, row.Version, row.Size, row.Status, row.BlobID, row.Digest,
+	)
+	if err != nil {
+		return false, fmt.Errorf("db.DeleteRow: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func (s *Store) DeleteByFile(ctx context.Context, fileID string) error {

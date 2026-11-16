@@ -249,7 +249,7 @@ func TestReleaseWithAttempt_IncrementsAttempts(t *testing.T) {
 	claimPair(t, store, fileID, version, instID)
 	before := pairOf(t, store, fileID, version)
 
-	if err := store.ReleaseWithAttempt(ctx, fileID, version, instID); err != nil {
+	if err := store.ReleaseWithAttempt(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("ReleaseWithAttempt: %v", err)
 	}
 
@@ -282,7 +282,7 @@ func TestReleaseWithAttempt_WrongInstanceNoop(t *testing.T) {
 	claimPair(t, store, fileID, version, ownerInst)
 	before := pairOf(t, store, fileID, version)
 
-	if err := store.ReleaseWithAttempt(ctx, fileID, version, wrongInst); err != nil {
+	if err := store.ReleaseWithAttempt(ctx, fileID, version, wrongInst, AllSizes); err != nil {
 		t.Fatalf("ReleaseWithAttempt (wrong inst): unexpected error: %v", err)
 	}
 
@@ -315,7 +315,7 @@ func TestRelease_DoesNotIncrementAttempts(t *testing.T) {
 	claimPair(t, store, fileID, version, instID)
 	before := pairOf(t, store, fileID, version)
 
-	if err := store.Release(ctx, fileID, version, instID); err != nil {
+	if err := store.Release(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
@@ -485,7 +485,7 @@ func TestMarkUnsupported_TerminatesRow(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, instID)
-	if err := store.MarkUnsupported(ctx, fileID, version, instID); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
@@ -511,7 +511,7 @@ func TestMarkUnsupported_WrongInstanceNoop(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, realInst)
-	if err := store.MarkUnsupported(ctx, fileID, version, wrongInst); err != nil {
+	if err := store.MarkUnsupported(ctx, fileID, version, wrongInst, AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported (wrong inst): unexpected error: %v", err)
 	}
 
@@ -533,7 +533,7 @@ func TestMarkFailed_TerminatesRow(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, instID)
-	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
@@ -574,7 +574,7 @@ func TestMarkFailed_TerminatesRow_RegressionLongErrorNoLongerStored(t *testing.T
 	// persists) any such string, so there is nothing to truncate or overflow.
 	_ = strings.Repeat("x", 2000) // representative of the oversized message that used to break the UPDATE
 
-	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, instID, AllSizes); err != nil {
 		t.Fatalf("MarkFailed: unexpected error (terminal transition must always succeed): %v", err)
 	}
 
@@ -600,7 +600,7 @@ func TestMarkFailed_WrongInstanceNoop(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 	claimPair(t, store, fileID, version, realInst)
-	if err := store.MarkFailed(ctx, fileID, version, wrongInst); err != nil {
+	if err := store.MarkFailed(ctx, fileID, version, wrongInst, AllSizes); err != nil {
 		t.Fatalf("MarkFailed (wrong inst): unexpected error: %v", err)
 	}
 
@@ -876,5 +876,84 @@ func TestDeleteByFile_AllVersionsAndSizes(t *testing.T) {
 	}
 	if rows, _ := st.FindByFile(ctx, other); len(rows) != 1 {
 		t.Errorf("other file must be kept: %v", rows)
+	}
+}
+
+func TestEnqueue_CASRefreshesCreatedAt(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "created")
+	ready := newPending(id, 1, SizeM, "video")
+	ready.BlobID = strp("old")
+	if ok, err := st.PutReady(ctx, ready, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, err := st.pool.Exec(ctx, `UPDATE thumbnail SET created_at = now() - interval '2 days' WHERE file_id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := st.FindPair(ctx, id, 1)
+	if ok, err := st.Enqueue(ctx, newPending(id, 1, SizeM, "video"), cur[SizeM]); err != nil || !ok {
+		t.Fatalf("CAS enqueue: ok=%v err=%v", ok, err)
+	}
+	got, _ := st.FindPair(ctx, id, 1)
+	if age := time.Since(got[SizeM].CreatedAt); age > time.Hour {
+		t.Fatalf("re-enqueued row keeps created_at %s old, want it refreshed", age)
+	}
+}
+
+func TestDeleteRow_OnlyWhileSnapshotMatches(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "delrow")
+	old := newPending(id, 1, SizeM, "video")
+	old.BlobID = strp("old")
+	if ok, err := st.PutReady(ctx, old, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	snap, _ := st.FindPair(ctx, id, 1)
+
+	next := newPending(id, 1, SizeM, "video")
+	next.BlobID = strp("new")
+	if ok, err := st.PutReady(ctx, next, snap[SizeM]); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if ok, err := st.DeleteRow(ctx, *snap[SizeM]); err != nil || ok {
+		t.Fatalf("stale snapshot: ok=%v err=%v, want false", ok, err)
+	}
+	cur, _ := st.FindPair(ctx, id, 1)
+	if cur[SizeM] == nil || *cur[SizeM].BlobID != "new" {
+		t.Fatalf("the replaced row must survive: %+v", cur[SizeM])
+	}
+	if ok, err := st.DeleteRow(ctx, *cur[SizeM]); err != nil || !ok {
+		t.Fatalf("matching snapshot: ok=%v err=%v, want true", ok, err)
+	}
+	if left, _ := st.FindPair(ctx, id, 1); len(left) != 0 {
+		t.Fatalf("rows left: %+v", left)
+	}
+}
+
+func TestClaimedTransitions_ScopedToSizes(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "scoped")
+	enqueuePair(t, st, id, 1)
+	claimPair(t, st, id, 1, "inst-a")
+
+	if err := st.Release(ctx, id, 1, "inst-a", []string{SizeS}); err != nil {
+		t.Fatal(err)
+	}
+	got := pairOf(t, st, id, 1)
+	if got[SizeS].Status != StatusPending || got[SizeM].Status != StatusGenerating {
+		t.Fatalf("Release scoped to s: s=%s m=%s", got[SizeS].Status, got[SizeM].Status)
+	}
+	if err := st.MarkFailed(ctx, id, 1, "inst-a", []string{SizeS}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkFailed(ctx, id, 1, "inst-a", []string{SizeM}); err != nil {
+		t.Fatal(err)
+	}
+	got = pairOf(t, st, id, 1)
+	if got[SizeS].Status != StatusPending || got[SizeM].Status != StatusFailed {
+		t.Fatalf("MarkFailed scoped to m: s=%s m=%s", got[SizeS].Status, got[SizeM].Status)
 	}
 }

@@ -135,7 +135,7 @@ func claimedRows(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, atte
 	enqueuePair(t, st, fileID, 1)
 	for i := 0; i < attempts; i++ {
 		claimPair(t, st, w.instanceID, fileID, 1)
-		if err := st.ReleaseWithAttempt(ctx, fileID, 1, w.instanceID); err != nil {
+		if err := st.ReleaseWithAttempt(ctx, fileID, 1, w.instanceID, db.AllSizes); err != nil {
 			t.Fatal(err)
 		}
 	}

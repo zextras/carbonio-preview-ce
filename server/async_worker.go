@@ -345,7 +345,7 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 			slog.Warn("AsyncWorker: max attempts reached after stale reclaim, marking FAILED",
 				"file_id", first.FileID, "version", first.Version, "max_attempts", w.maxAttempts)
 			failCtx, cancelFail := dbCtx(ctx)
-			ferr := w.db().MarkFailed(failCtx, first.FileID, first.Version, w.instanceID)
+			ferr := w.db().MarkFailed(failCtx, first.FileID, first.Version, w.instanceID, sizesOf(group))
 			cancelFail()
 			if ferr != nil {
 				slog.Warn("AsyncWorker: MarkFailed (stale cap) failed", "err", ferr)
@@ -353,14 +353,14 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 			continue
 		}
 		if ctx.Err() != nil {
-			w.releaseRows(ctx, first.FileID, first.Version)
+			w.releaseRows(ctx, first.FileID, first.Version, sizesOf(group))
 			continue
 		}
 		switch w.reserve(staleKey) {
 		case reserveFull, reserveClosed, reserveDuplicate:
 			slog.Debug("AsyncWorker: instance at maxInFlight on stale-reclaimed rows, releasing without attempt increment",
 				"file_id", first.FileID, "version", first.Version)
-			w.releaseRows(ctx, first.FileID, first.Version)
+			w.releaseRows(ctx, first.FileID, first.Version, sizesOf(group))
 			continue
 		}
 		job := group
@@ -385,6 +385,14 @@ func groupByJob(rows []db.Thumbnail) [][]db.Thumbnail {
 		groups[i] = append(groups[i], r)
 	}
 	return groups
+}
+
+func sizesOf(rows []db.Thumbnail) []string {
+	sizes := make([]string, 0, len(rows))
+	for _, r := range rows {
+		sizes = append(sizes, r.Size)
+	}
+	return sizes
 }
 
 func maxAttempts(rows []db.Thumbnail) int {
@@ -469,10 +477,10 @@ func (w *AsyncWorker) runOne(fileID string, version int) {
 }
 
 // releaseRows returns the rows of a job this instance claimed to PENDING without counting an attempt.
-func (w *AsyncWorker) releaseRows(ctx context.Context, fileID string, version int) {
+func (w *AsyncWorker) releaseRows(ctx context.Context, fileID string, version int, sizes []string) {
 	c, cancel := dbCtx(ctx)
 	defer cancel()
-	if rerr := w.db().Release(c, fileID, version, w.instanceID); rerr != nil {
+	if rerr := w.db().Release(c, fileID, version, w.instanceID, sizes); rerr != nil {
 		slog.Warn("AsyncWorker: Release failed", "file_id", fileID, "version", version, "err", rerr)
 	}
 }
@@ -481,12 +489,12 @@ func (w *AsyncWorker) releaseRows(ctx context.Context, fileID string, version in
 // file, Collabora unreachable): the GENERATING rows owned by this instance are
 // deleted as if the thumbnail had never been requested, so the next user
 // request starts over. No attempt is counted and no backoff applies.
-func (w *AsyncWorker) dropRows(ctx context.Context, fileID string, version int, err error) {
+func (w *AsyncWorker) dropRows(ctx context.Context, fileID string, version int, sizes []string, err error) {
 	slog.Warn("AsyncWorker: connectivity failure, dropping rows",
 		"file_id", fileID, "version", version, "err", err)
 	c, cancel := dbCtx(ctx)
 	defer cancel()
-	if derr := w.db().DeleteClaimed(c, fileID, version, w.instanceID); derr != nil {
+	if derr := w.db().DeleteClaimed(c, fileID, version, w.instanceID, sizes); derr != nil {
 		slog.Warn("AsyncWorker: DeleteClaimed failed", "file_id", fileID, "version", version, "err", derr)
 	}
 }
@@ -505,11 +513,11 @@ func (w *AsyncWorker) releaseOrFail(ctx context.Context, rows []db.Thumbnail, er
 	if maxAttempts(rows)+1 >= w.maxAttempts {
 		slog.Warn("AsyncWorker: max attempts reached, marking FAILED",
 			"file_id", first.FileID, "version", first.Version, "max_attempts", w.maxAttempts, "err", err)
-		if merr := w.db().MarkFailed(ctx, first.FileID, first.Version, w.instanceID); merr != nil {
+		if merr := w.db().MarkFailed(ctx, first.FileID, first.Version, w.instanceID, sizesOf(rows)); merr != nil {
 			slog.Warn("AsyncWorker: MarkFailed (transient cap) failed", "err", merr)
 		}
 	} else {
-		if rerr := w.db().ReleaseWithAttempt(ctx, first.FileID, first.Version, w.instanceID); rerr != nil {
+		if rerr := w.db().ReleaseWithAttempt(ctx, first.FileID, first.Version, w.instanceID, sizesOf(rows)); rerr != nil {
 			slog.Warn("AsyncWorker: ReleaseWithAttempt failed", "err", rerr)
 		}
 	}

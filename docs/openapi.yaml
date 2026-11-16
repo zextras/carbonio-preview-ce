@@ -479,6 +479,9 @@ paths:
             Cache-Control:
               schema:
                 type: string
+            Content-Length:
+              schema:
+                type: string
             Content-Type:
               schema:
                 type: string
@@ -630,6 +633,9 @@ paths:
           description: Successful Response — the thumbnail rendition
           headers:
             Cache-Control:
+              schema:
+                type: string
+            Content-Length:
               schema:
                 type: string
             Content-Type:

@@ -34,11 +34,11 @@ func unsupportedPair(t *testing.T, h *harness, codec string) string {
 	enqueuePair(t, h.st, id, testVersion)
 	claimPair(t, h.st, instID, id, testVersion)
 	if codec != "" {
-		if err := h.st.SetCodec(ctx, id, testVersion, instID, codec); err != nil {
+		if err := h.st.SetCodec(ctx, id, testVersion, instID, db.AllSizes, codec); err != nil {
 			t.Fatalf("SetCodec: %v", err)
 		}
 	}
-	if err := h.st.MarkUnsupported(ctx, id, testVersion, instID); err != nil {
+	if err := h.st.MarkUnsupported(ctx, id, testVersion, instID, db.AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 	return id
@@ -207,7 +207,7 @@ func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, maxAttempts)
 	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 	// Bump attempts to maxAttempts-1 so the next attempt hits the cap.
-	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
+	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, db.AllSizes); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
 	rows = claimPair(t, dbStore, w.instanceID, fileID, version)
@@ -332,10 +332,10 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 
 	// Simulate: row was UNSUPPORTED with codec stored, then re-enqueued to PENDING.
 	claimPair(t, dbStore, instID, fileID, version)
-	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
+	if err := dbStore.SetCodec(ctx, fileID, version, instID, db.AllSizes, codec); err != nil {
 		t.Fatalf("SetCodec (setup): %v", err)
 	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
+	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, db.AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported (setup): %v", err)
 	}
 	if err := dbStore.ReenqueueUnsupported(ctx, fileID, version); err != nil {

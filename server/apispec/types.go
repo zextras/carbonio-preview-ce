@@ -135,11 +135,12 @@ type ThumbnailDeleteInput struct {
 
 // Unused headers of ThumbnailOutput are left empty, which huma does not write.
 type ThumbnailOutput struct {
-	Status       int
-	ContentType  string `header:"Content-Type"`
-	CacheControl string `header:"Cache-Control"`
-	RetryAfter   string `header:"Retry-After"`
-	Body         []byte
+	Status        int
+	ContentType   string `header:"Content-Type"`
+	CacheControl  string `header:"Cache-Control"`
+	RetryAfter    string `header:"Retry-After"`
+	ContentLength string `header:"Content-Length"`
+	Body          func(huma.Context)
 }
 
 var thumbnailAcceptedHeaders = map[string]*huma.Param{

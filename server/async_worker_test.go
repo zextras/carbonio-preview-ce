@@ -662,7 +662,7 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	//   1. ReleaseWithAttempt (GENERATING → PENDING, attempts=1).
 	//   2. Re-Claim (PENDING → GENERATING, attempts still 1).
 	// After ReclaimStale +1 → attempts=2 = maxAttempts.
-	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
+	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, db.AllSizes); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
 	claimPair(t, dbStore, w.instanceID, fileID, version)

@@ -49,6 +49,8 @@ type limits struct {
 
 	mu       sync.Mutex
 	inflight map[string]*flight
+	closed   bool
+	bg       sync.WaitGroup
 }
 
 func newLimits(renderConcurrency int) *limits {
@@ -131,7 +133,16 @@ func (l *limits) join(ctx context.Context, c *cache.Cache, op, key string, work 
 		waitCtx, stopWait := context.WithCancel(workCtx)
 		f = &flight{done: make(chan struct{}), stopWait: stopWait}
 		l.inflight[key] = f
-		go l.run(key, f, c, runner{l: l, wait: waitCtx, work: workCtx, flight: true, op: op}, work)
+		tracked := !l.closed
+		if tracked {
+			l.bg.Add(1)
+		}
+		go func() {
+			if tracked {
+				defer l.bg.Done()
+			}
+			l.run(key, f, c, runner{l: l, wait: waitCtx, work: workCtx, flight: true, op: op}, work)
+		}()
 	}
 	f.waiters++
 	return f, cache.Entry{}, false
@@ -167,5 +178,39 @@ func (l *limits) run(key string, f *flight, c *cache.Cache, step runner, fn flig
 	f.entry, f.err = fn(step)
 	if f.err == nil {
 		c.Put(key, f.entry)
+	}
+}
+
+// background runs fn in a goroutine that shutdown waits for.
+func (l *limits) background(fn func()) {
+	l.mu.Lock()
+	tracked := !l.closed
+	if tracked {
+		l.bg.Add(1)
+	}
+	l.mu.Unlock()
+	go func() {
+		if tracked {
+			defer l.bg.Done()
+		}
+		fn()
+	}()
+}
+
+// drain stops tracking new work and waits for the flights and background cleanups already running, until ctx ends.
+func (l *limits) drain(ctx context.Context) bool {
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		l.bg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
