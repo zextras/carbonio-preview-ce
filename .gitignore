@@ -25,3 +25,4 @@ venv
 # Maven build output (sdk module)
 sdk/target/
 sdk/.flattened-pom.xml
+go-tests.xml

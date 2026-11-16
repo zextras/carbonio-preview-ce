@@ -44,6 +44,7 @@ func TestRunSetup_NewRunnerError(t *testing.T) {
 // fails. We make config.properties an unreadable file (chmod 0000) so the
 // load() Open succeeds-as-error path returns a non-ErrNotExist error.
 func TestNewRunner_PropertiesError(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	propsPath := writeFile(t, dir, "config.properties", "k=v\n")
 	if err := os.Chmod(propsPath, 0o000); err != nil {
