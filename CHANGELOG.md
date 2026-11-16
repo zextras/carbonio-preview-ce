@@ -1,3 +1,9 @@
+## [4.1.3](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.2...v4.1.3) (2026-11-16)
+
+### Bug Fixes
+
+* **release:** write the sdk version in the release commit ([#220](https://github.com/zextras/carbonio-preview-ce/issues/220)) ([36db476](https://github.com/zextras/carbonio-preview-ce/commit/36db476f5020a55ad24c34758dc4b558b50700f9))
+
 ## [4.1.2](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.1...v4.1.2) (2026-11-16)
 
 ## [4.1.1](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.0...v4.1.1) (2026-11-13)
