@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // video_codec_test.go tests the codec-detection enhancement:
-//   - resolve() UNSUPPORTED + codec ∈ list  → 202 + row PENDING
-//   - resolve() UNSUPPORTED + codec ∉ list  → 415 + row stays UNSUPPORTED
+//   - GET /thumbnail UNSUPPORTED + codec ∈ list  → 202 + rows PENDING
+//   - GET /thumbnail UNSUPPORTED + codec ∉ list  → 415 + rows stay UNSUPPORTED
 //   - attempt() codec ∉ list                → UNSUPPORTED (codec stored, attempts unchanged)
 //   - attempt() probe fails                 → ReleaseWithAttempt / cap → FAILED
 //   - attempt() codec ∈ list + generate OK  → READY
@@ -23,123 +23,80 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// resolve() UNSUPPORTED branch
+// GET /thumbnail UNSUPPORTED branch
 // ---------------------------------------------------------------------------
 
-// TestResolve_Unsupported_CodecInList_Returns202 verifies that an UNSUPPORTED
-// row whose stored codec is now in the supported list causes ReenqueueUnsupported
-// (row → PENDING) and returns 202.
-func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
-	dbStore := startDBStore(t)
+func unsupportedPair(t *testing.T, h *harness, codec string) string {
+	t.Helper()
 	ctx := context.Background()
-
-	fileID := testUID(t, "unsup_in_list")
-	const version = 1
 	const instID = "inst-codec"
-	const codec = "h264" // in supported list
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
+	id := newID()
+	enqueuePair(t, h.st, id, testVersion)
+	claimPair(t, h.st, instID, id, testVersion)
+	if codec != "" {
+		if err := h.st.SetCodec(ctx, id, testVersion, instID, codec); err != nil {
+			t.Fatalf("SetCodec: %v", err)
+		}
 	}
-	ok, err := dbStore.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
-		t.Fatalf("SetCodec: %v", err)
-	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
+	if err := h.st.MarkUnsupported(ctx, id, testVersion, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
+	return id
+}
 
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
+// TestResolve_Unsupported_CodecInList_Returns202 verifies that an UNSUPPORTED
+// row whose stored codec is now in the supported list is re-enqueued
+// (rows → PENDING) and the GET returns 202.
+func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	const codec = "h264" // in supported list
+	id := unsupportedPair(t, h, codec)
 
-	if res.httpStatus != http.StatusAccepted {
-		t.Errorf("httpStatus: got %d, want 202 (codec in list → re-enqueue)", res.httpStatus)
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime})
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status: got %d, want 202 (codec in list → re-enqueue)", rec.Code)
 	}
 
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING (re-enqueued)", row.Status)
-	}
-	// Codec must be preserved.
-	if row.Codec == nil || *row.Codec != codec {
-		t.Errorf("Codec: got %v, want %q (must be preserved after re-enqueue)", row.Codec, codec)
+	rows := h.pair(id, testVersion)
+	for _, size := range []string{db.SizeS, db.SizeM} {
+		r := rows[size]
+		if r == nil || r.Status != db.StatusPending {
+			t.Errorf("size %s: got %+v, want PENDING (re-enqueued)", size, r)
+			continue
+		}
+		if r.Codec == nil || *r.Codec != codec {
+			t.Errorf("size %s Codec: got %v, want %q (must be preserved after re-enqueue)", size, r.Codec, codec)
+		}
 	}
 }
 
 // TestResolve_Unsupported_CodecNotInList_Returns415 verifies that an UNSUPPORTED
 // row whose codec is NOT in the supported list still returns 415.
 func TestResolve_Unsupported_CodecNotInList_Returns415(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := unsupportedPair(t, h, "av1_unsup_test_codec")
 
-	fileID := testUID(t, "unsup_not_list")
-	const version = 1
-	const instID = "inst-av1"
-	const codec = "av1_unsup_test_codec" // deliberately not in supported list
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
-		t.Fatalf("SetCodec: %v", err)
-	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
-		t.Fatalf("MarkUnsupported: %v", err)
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime})
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status: got %d, want 415 (codec not in list → terminal)", rec.Code)
 	}
 
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-
-	if res.httpStatus != http.StatusUnsupportedMediaType {
-		t.Errorf("httpStatus: got %d, want 415 (codec not in list → terminal)", res.httpStatus)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != db.StatusUnsupported {
-		t.Errorf("status: got %q, want UNSUPPORTED (unchanged)", row.Status)
+	for size, r := range h.pair(id, testVersion) {
+		if r.Status != db.StatusUnsupported {
+			t.Errorf("size %s status: got %q, want UNSUPPORTED (unchanged)", size, r.Status)
+		}
 	}
 }
 
 // TestResolve_Unsupported_NoCodec_Returns415 verifies that an UNSUPPORTED row
 // without a stored codec (codec IS NULL) returns 415 (no re-enqueue possible).
 func TestResolve_Unsupported_NoCodec_Returns415(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := unsupportedPair(t, h, "")
 
-	fileID := testUID(t, "unsup_no_codec")
-	const version = 1
-	const instID = "inst-nc"
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	// Mark UNSUPPORTED WITHOUT setting a codec first.
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID); err != nil {
-		t.Fatalf("MarkUnsupported: %v", err)
-	}
-
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-
-	if res.httpStatus != http.StatusUnsupportedMediaType {
-		t.Errorf("httpStatus: got %d, want 415 (nil codec → terminal)", res.httpStatus)
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime})
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status: got %d, want 415 (nil codec → terminal)", rec.Code)
 	}
 }
 
@@ -172,25 +129,16 @@ func TestAttempt_CodecNotSupported_MarksUnsupported(t *testing.T) {
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	attempsBefore := row.Attempts
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	attempsBefore := rows[0].Attempts
 
-	w.attempt(ctx, *row)
+	w.attempt(ctx, rows)
 
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status != db.StatusUnsupported {
 		t.Errorf("status: got %q, want UNSUPPORTED", after.Status)
@@ -220,31 +168,22 @@ func TestAttempt_ProbeFails_ReleasesWithAttempt(t *testing.T) {
 	}
 	defer func() { videoDetectCodecFromFileFunc = origProbe }()
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 	// maxAttempts=3 → with attempts=0, attempts+1=1 < 3 → ReleaseWithAttempt
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, *row)
+	w.attempt(ctx, rows)
 
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status != db.StatusPending {
 		t.Errorf("status: got %q, want PENDING (probe failure → ReleaseWithAttempt)", after.Status)
 	}
-	if after.Attempts != row.Attempts+1 {
-		t.Errorf("Attempts: got %d, want %d (incremented)", after.Attempts, row.Attempts+1)
+	if after.Attempts != rows[0].Attempts+1 {
+		t.Errorf("Attempts: got %d, want %d (incremented)", after.Attempts, rows[0].Attempts+1)
 	}
 }
 
@@ -263,37 +202,25 @@ func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
 	}
 	defer func() { videoDetectCodecFromFileFunc = origProbe }()
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 	const maxAttempts = 2
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, maxAttempts)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 	// Bump attempts to maxAttempts-1 so the next attempt hits the cap.
 	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
-	ok2, err2 := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err2 != nil || !ok2 {
-		t.Fatalf("re-Claim: err=%v ok=%v", err2, ok2)
+	rows = claimPair(t, dbStore, w.instanceID, fileID, version)
+
+	if rows[0].Attempts != 1 {
+		t.Fatalf("setup: expected attempts=1, got %d", rows[0].Attempts)
 	}
 
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Attempts != 1 {
-		t.Fatalf("setup: expected attempts=1, got %d", row.Attempts)
-	}
+	w.attempt(ctx, rows)
 
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status != db.StatusFailed {
 		t.Errorf("status: got %q, want FAILED (probe cap reached)", after.Status)
@@ -309,6 +236,8 @@ func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
 	fileID := testUID(t, "att_codec_ok")
 	const version = 1
 
+	stubVideoPipeline(t)
+
 	origProbe := videoDetectCodecFromFileFunc
 	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
 		return "h264", nil // in supported list
@@ -321,30 +250,23 @@ func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, *row)
+	w.attempt(ctx, rows)
 
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status != db.StatusReady {
 		t.Errorf("status: got %q, want READY", after.Status)
 	}
-	if after.PreviewID == nil || *after.PreviewID == "" {
-		t.Errorf("PreviewID: got %v, want non-empty", after.PreviewID)
+	for size, r := range pairOf(t, dbStore, fileID, version) {
+		if r.Status != db.StatusReady || r.BlobID == nil || *r.BlobID == "" {
+			t.Errorf("size %s: got %+v, want READY with a non-empty BlobID", size, r)
+		}
 	}
 	// Codec must be stored.
 	if after.Codec == nil || *after.Codec != "h264" {
@@ -374,32 +296,23 @@ func TestAttempt_CodecInList_ErrExtractFailed_ReleasesWithAttempt(t *testing.T) 
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 	// maxAttempts=3 → 0+1=1 < 3 → ReleaseWithAttempt
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, *row)
+	w.attempt(ctx, rows)
 
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	// Must be PENDING (released with attempt), NOT UNSUPPORTED.
 	if after.Status != db.StatusPending {
 		t.Errorf("status: got %q, want PENDING (ErrExtractFailed on supported codec → ReleaseWithAttempt)", after.Status)
 	}
-	if after.Attempts != row.Attempts+1 {
-		t.Errorf("Attempts: got %d, want %d", after.Attempts, row.Attempts+1)
+	if after.Attempts != rows[0].Attempts+1 {
+		t.Errorf("Attempts: got %d, want %d", after.Attempts, rows[0].Attempts+1)
 	}
 }
 
@@ -415,15 +328,10 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 	const instID = "inst-sp"
 	const codec = "h264"
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
 
 	// Simulate: row was UNSUPPORTED with codec stored, then re-enqueued to PENDING.
-	ok, err := dbStore.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim (setup): err=%v ok=%v", err, ok)
-	}
+	claimPair(t, dbStore, instID, fileID, version)
 	if err := dbStore.SetCodec(ctx, fileID, version, instID, codec); err != nil {
 		t.Fatalf("SetCodec (setup): %v", err)
 	}
@@ -436,10 +344,9 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 
 	// Now make a new worker and claim it.
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok2, err2 := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err2 != nil || !ok2 {
-		t.Fatalf("Claim (worker): err=%v ok=%v", err2, ok2)
-	}
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+
+	stubVideoPipeline(t)
 
 	probeCallCount := 0
 	origProbe := videoDetectCodecFromFileFunc
@@ -455,24 +362,20 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
 	// Verify setup: codec must be stored on the row.
-	if row.Codec == nil || *row.Codec != codec {
-		t.Fatalf("setup: expected Codec=%q, got %v", codec, row.Codec)
+	if rows[0].Codec == nil || *rows[0].Codec != codec {
+		t.Fatalf("setup: expected Codec=%q, got %v", codec, rows[0].Codec)
 	}
 
-	w.attempt(ctx, *row)
+	w.attempt(ctx, rows)
 
 	if probeCallCount != 0 {
 		t.Errorf("probe called %d times, want 0 (stored codec must skip re-probe)", probeCallCount)
 	}
 
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after: %v", err)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after: row missing")
 	}
 	if after.Status != db.StatusReady {
 		t.Errorf("status: got %q, want READY", after.Status)

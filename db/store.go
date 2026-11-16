@@ -18,16 +18,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ---------------------------------------------------------------------------
-// Status constants — mirror WSC VideoPreviewStatus enum exactly.
-// ---------------------------------------------------------------------------
-
 const (
 	StatusPending     = "PENDING"
 	StatusGenerating  = "GENERATING"
 	StatusReady       = "READY"
 	StatusUnsupported = "UNSUPPORTED"
 	StatusFailed      = "FAILED"
+	StatusLegacy      = "LEGACY"
+
+	SizeS = "s"
+	SizeM = "m"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,31 +41,27 @@ type PoolConfig struct {
 	MaxConnLifetime time.Duration
 }
 
-// ---------------------------------------------------------------------------
-// VideoPreview is the Go representation of a video_preview row.
-// ---------------------------------------------------------------------------
-
-// VideoPreview maps one row of the video_preview table.
-type VideoPreview struct {
-	FileID      string
-	Version     int
-	Status      string
-	PreviewID   *string
-	OwnerID     string
-	ServiceType string
-	ClaimedBy   *string
-	ClaimedAt   *time.Time
-	Attempts    int
-	Codec       *string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-
+type Thumbnail struct {
+	FileID         string
+	Version        int
+	Size           string
+	Status         string
+	Kind           string
+	Digest         *string
+	Lang           *string
+	BlobID         *string
+	Original       bool
+	ContentType    *string
+	OwnerID        string
+	ServiceType    string
+	ClaimedBy      *string
+	ClaimedAt      *time.Time
+	Attempts       int
+	Codec          *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 	LastAccessedAt time.Time
 }
-
-// ---------------------------------------------------------------------------
-// Store wraps a pgxpool.Pool and exposes all video_preview operations.
-// ---------------------------------------------------------------------------
 
 // Store is the database access layer for carbonio-preview-ce.
 // All methods are safe for concurrent use.
@@ -111,30 +107,33 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// ---------------------------------------------------------------------------
-// Migrate applies all embedded SQL migrations idempotently.
-// ---------------------------------------------------------------------------
-
 // Migrate runs all pending SQL migrations from db/migration/*.sql against the
 // target database.  It is idempotent: already-applied migrations are skipped.
 // "no change" is not treated as an error.
 func (s *Store) Migrate(ctx context.Context) error {
-	// Build the source driver from the embedded FS.
+	m, closeFn, err := s.migrator(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("db: run migrations: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrator(ctx context.Context) (*migrate.Migrate, func(), error) {
 	srcDriver, err := iofs.New(MigrationFS, "migration")
 	if err != nil {
-		return fmt.Errorf("db: iofs source: %w", err)
+		return nil, nil, fmt.Errorf("db: iofs source: %w", err)
 	}
 
-	// Acquire a single connection from the pool for migration.
 	conn, err := s.pool.Acquire(ctx)
 	if err != nil {
-		return fmt.Errorf("db: acquire connection for migration: %w", err)
+		return nil, nil, fmt.Errorf("db: acquire connection for migration: %w", err)
 	}
-	defer conn.Release()
 
-	// Build the pgx5:// URL expected by the golang-migrate pgx/v5 driver.
-	// We reconstruct it from the pool's parsed config so passwords with special
-	// characters are handled correctly via url.UserPassword (percent-encoding).
+	// Rebuilt from the pool's config so passwords with special characters are percent-encoded.
 	connConfig := conn.Conn().Config()
 	u := &url.URL{
 		Scheme: "pgx5",
@@ -142,141 +141,169 @@ func (s *Store) Migrate(ctx context.Context) error {
 		Host:   fmt.Sprintf("%s:%d", connConfig.Host, connConfig.Port),
 		Path:   "/" + connConfig.Database,
 	}
-	pgURL := u.String()
 
-	// NewWithSourceInstance is required when using an in-process source driver
-	// (like iofs) instead of a URL string. The source name "iofs" is arbitrary
-	// (only used in error messages). The pgx5:// URL selects the registered driver.
-	m, err := migrate.NewWithSourceInstance("iofs", srcDriver, pgURL)
+	m, err := migrate.NewWithSourceInstance("iofs", srcDriver, u.String())
 	if err != nil {
-		return fmt.Errorf("db: build migrator: %w", err)
+		conn.Release()
+		return nil, nil, fmt.Errorf("db: build migrator: %w", err)
 	}
-	defer m.Close()
-
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("db: run migrations: %w", err)
-	}
-	return nil
+	return m, func() {
+		m.Close()
+		conn.Release()
+	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// Helper: scan a VideoPreview row from a pgx.Rows.
-// ---------------------------------------------------------------------------
+const selectCols = `file_id, version, size, status, kind, digest, lang, blob_id, original, content_type,
+    owner_id, service_type, claimed_by, claimed_at, attempts, codec, created_at, updated_at, last_accessed_at`
 
-func scanVideoPreview(rows pgx.Rows) (VideoPreview, error) {
-	var vp VideoPreview
+func scanThumbnail(rows pgx.Rows) (Thumbnail, error) {
+	var t Thumbnail
 	err := rows.Scan(
-		&vp.FileID,
-		&vp.Version,
-		&vp.Status,
-		&vp.PreviewID,
-		&vp.OwnerID,
-		&vp.ServiceType,
-		&vp.ClaimedBy,
-		&vp.ClaimedAt,
-		&vp.Attempts,
-		&vp.Codec,
-		&vp.CreatedAt,
-		&vp.UpdatedAt,
-		&vp.LastAccessedAt,
+		&t.FileID, &t.Version, &t.Size, &t.Status, &t.Kind, &t.Digest, &t.Lang, &t.BlobID,
+		&t.Original, &t.ContentType, &t.OwnerID, &t.ServiceType, &t.ClaimedBy, &t.ClaimedAt,
+		&t.Attempts, &t.Codec, &t.CreatedAt, &t.UpdatedAt, &t.LastAccessedAt,
 	)
-	return vp, err
+	return t, err
 }
 
-// scanOne collects exactly one VideoPreview from rows, returning nil if the
-// result set is empty, or an error on scan failure.
-func scanOne(rows pgx.Rows) (*VideoPreview, error) {
+func scanAll(rows pgx.Rows) ([]Thumbnail, error) {
 	defer rows.Close()
-	if !rows.Next() {
-		return nil, rows.Err()
-	}
-	vp, err := scanVideoPreview(rows)
-	if err != nil {
-		return nil, err
-	}
-	return &vp, nil
-}
-
-// scanAll collects all VideoPreview rows.
-func scanAll(rows pgx.Rows) ([]VideoPreview, error) {
-	defer rows.Close()
-	var out []VideoPreview
+	var out []Thumbnail
 	for rows.Next() {
-		vp, err := scanVideoPreview(rows)
+		t, err := scanThumbnail(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, vp)
+		out = append(out, t)
 	}
 	return out, rows.Err()
 }
 
-// selectCols is the canonical column list for SELECT * equivalents.
-const selectCols = `file_id, version, status, preview_id, owner_id, service_type,
-    claimed_by, claimed_at, attempts, codec, created_at, updated_at, last_accessed_at`
-
-// ---------------------------------------------------------------------------
-// Query methods
-// ---------------------------------------------------------------------------
-
-// Find returns the video_preview row for (fileID, version), or nil if absent.
-func (s *Store) Find(ctx context.Context, fileID string, version int) (*VideoPreview, error) {
+func (s *Store) FindPair(ctx context.Context, fileID string, version int) (map[string]*Thumbnail, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+selectCols+` FROM video_preview WHERE file_id=$1 AND version=$2`,
+		`SELECT `+selectCols+` FROM thumbnail WHERE file_id=$1 AND version=$2`,
 		fileID, version,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("db.Find: %w", err)
+		return nil, fmt.Errorf("db.FindPair: %w", err)
 	}
-	vp, err := scanOne(rows)
+	all, err := scanAll(rows)
 	if err != nil {
-		return nil, fmt.Errorf("db.Find: scan: %w", err)
+		return nil, fmt.Errorf("db.FindPair: scan: %w", err)
 	}
-	return vp, nil
+	out := make(map[string]*Thumbnail, len(all))
+	for i := range all {
+		out[all[i].Size] = &all[i]
+	}
+	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// Write methods
-// ---------------------------------------------------------------------------
-
-// EnqueueIfAbsent inserts a PENDING row for (fileID, version).
-// If a row already exists (any status) the INSERT is silently skipped.
-func (s *Store) EnqueueIfAbsent(ctx context.Context, fileID string, version int, ownerID, serviceType string) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO video_preview
-            (file_id, version, status, owner_id, service_type, attempts, created_at, updated_at)
-         VALUES ($1, $2, 'PENDING', $3, $4, 0, now(), now())
-         ON CONFLICT (file_id, version) DO NOTHING`,
-		fileID, version, ownerID, serviceType,
+func (s *Store) FindByFile(ctx context.Context, fileID string) ([]Thumbnail, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+selectCols+` FROM thumbnail WHERE file_id=$1 ORDER BY version, size`,
+		fileID,
 	)
 	if err != nil {
-		return fmt.Errorf("db.EnqueueIfAbsent: %w", err)
+		return nil, fmt.Errorf("db.FindByFile: %w", err)
 	}
-	return nil
+	all, err := scanAll(rows)
+	if err != nil {
+		return nil, fmt.Errorf("db.FindByFile: scan: %w", err)
+	}
+	return all, nil
 }
 
-// Claim atomically transitions a PENDING row to GENERATING, recording the
-// instanceID as the owner.  Returns true iff exactly one row was updated
-// (i.e. this instance won the claim race).
-func (s *Store) Claim(ctx context.Context, fileID string, version int, instanceID string) (bool, error) {
+const casWhere = `file_id=$1 AND version=$2 AND size=$3 AND status=$4
+    AND blob_id IS NOT DISTINCT FROM $5 AND digest IS NOT DISTINCT FROM $6`
+
+// PutReady and Enqueue are compare-and-set: expected == nil inserts and loses to any existing row,
+// otherwise the row is replaced only while it still equals expected. They report whether a row was written.
+func (s *Store) PutReady(ctx context.Context, row Thumbnail, expected *Thumbnail) (bool, error) {
+	if expected == nil {
+		tag, err := s.pool.Exec(ctx,
+			`INSERT INTO thumbnail
+                (file_id, version, size, status, kind, digest, lang, blob_id, original, content_type,
+                 owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+             VALUES ($1, $2, $3, 'READY', $4, $5, $6, $7, $8, $9, $10, $11, 0, now(), now(), now())
+             ON CONFLICT (file_id, version, size) DO NOTHING`,
+			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.BlobID, row.Original,
+			row.ContentType, row.OwnerID, row.ServiceType,
+		)
+		if err != nil {
+			return false, fmt.Errorf("db.PutReady: %w", err)
+		}
+		return tag.RowsAffected() == 1, nil
+	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='GENERATING', claimed_by=$1, claimed_at=now(), updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='PENDING'`,
-		instanceID, fileID, version,
+		`UPDATE thumbnail
+         SET status='READY', kind=$7, digest=$8, lang=$9, blob_id=$10, original=$11, content_type=$12,
+             owner_id=$13, service_type=$14, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
+             updated_at=now(), last_accessed_at=now()
+         WHERE `+casWhere,
+		row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
+		row.Kind, row.Digest, row.Lang, row.BlobID, row.Original, row.ContentType, row.OwnerID, row.ServiceType,
 	)
 	if err != nil {
-		return false, fmt.Errorf("db.Claim: %w", err)
+		return false, fmt.Errorf("db.PutReady: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
 }
 
+func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail) (bool, error) {
+	if expected == nil {
+		tag, err := s.pool.Exec(ctx,
+			`INSERT INTO thumbnail
+                (file_id, version, size, status, kind, digest, lang, owner_id, service_type,
+                 attempts, created_at, updated_at, last_accessed_at)
+             VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, 0, now(), now(), now())
+             ON CONFLICT (file_id, version, size) DO NOTHING`,
+			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
+		)
+		if err != nil {
+			return false, fmt.Errorf("db.Enqueue: %w", err)
+		}
+		return tag.RowsAffected() == 1, nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE thumbnail
+         SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, original=false, content_type=NULL,
+             owner_id=$10, service_type=$11, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
+             updated_at=now()
+         WHERE `+casWhere,
+		row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
+		row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
+	)
+	if err != nil {
+		return false, fmt.Errorf("db.Enqueue: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// Claim atomically moves the PENDING rows of (fileID, version) to GENERATING
+// for instanceID and returns them; an empty result means the claim was lost.
+func (s *Store) Claim(ctx context.Context, fileID string, version int, instanceID string) ([]Thumbnail, error) {
+	rows, err := s.pool.Query(ctx,
+		`UPDATE thumbnail
+         SET status='GENERATING', claimed_by=$1, claimed_at=now(), updated_at=now()
+         WHERE file_id=$2 AND version=$3 AND status='PENDING'
+         RETURNING `+selectCols,
+		instanceID, fileID, version,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db.Claim: %w", err)
+	}
+	out, err := scanAll(rows)
+	if err != nil {
+		return nil, fmt.Errorf("db.Claim: scan: %w", err)
+	}
+	return out, nil
+}
+
 // ReclaimStale takes over GENERATING rows whose claimed_at is older than ttl.
 // Each reclaimed row has its attempts incremented (the only path that does so).
-// Returns all reclaimed rows (for the worker to restart generation).
-func (s *Store) ReclaimStale(ctx context.Context, instanceID string, ttl time.Duration) ([]VideoPreview, error) {
+func (s *Store) ReclaimStale(ctx context.Context, instanceID string, ttl time.Duration) ([]Thumbnail, error) {
 	rows, err := s.pool.Query(ctx,
-		`UPDATE video_preview
+		`UPDATE thumbnail
          SET status='GENERATING', claimed_by=$1, claimed_at=now(),
              attempts=attempts+1, updated_at=now()
          WHERE status='GENERATING' AND claimed_at < now() - $2::interval
@@ -287,19 +314,18 @@ func (s *Store) ReclaimStale(ctx context.Context, instanceID string, ttl time.Du
 	if err != nil {
 		return nil, fmt.Errorf("db.ReclaimStale: %w", err)
 	}
-	vps, err := scanAll(rows)
+	out, err := scanAll(rows)
 	if err != nil {
 		return nil, fmt.Errorf("db.ReclaimStale: scan: %w", err)
 	}
-	return vps, nil
+	return out, nil
 }
 
-// FindPendingNewest returns up to limit PENDING rows ordered by created_at DESC
-// (newest first, so freshest requests are processed first).
-func (s *Store) FindPendingNewest(ctx context.Context, limit int) ([]VideoPreview, error) {
+// FindPendingNewest returns up to limit PENDING rows, newest first.
+func (s *Store) FindPendingNewest(ctx context.Context, limit int) ([]Thumbnail, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+selectCols+`
-         FROM video_preview
+         FROM thumbnail
          WHERE status='PENDING'
          ORDER BY created_at DESC
          LIMIT $1`,
@@ -308,126 +334,98 @@ func (s *Store) FindPendingNewest(ctx context.Context, limit int) ([]VideoPrevie
 	if err != nil {
 		return nil, fmt.Errorf("db.FindPendingNewest: %w", err)
 	}
-	vps, err := scanAll(rows)
+	out, err := scanAll(rows)
 	if err != nil {
 		return nil, fmt.Errorf("db.FindPendingNewest: scan: %w", err)
 	}
-	return vps, nil
+	return out, nil
 }
 
-// MarkReady transitions a GENERATING row owned by instanceID to READY,
-// recording previewID and clearing claimed_by/claimed_at.
-func (s *Store) MarkReady(ctx context.Context, fileID string, version int, instanceID, previewID string) error {
+// MarkReady moves the GENERATING rows owned by instanceID to READY in one
+// transaction and returns the sizes it wrote; rows that are gone or no longer
+// owned are skipped.
+func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbnail) ([]string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("db.MarkReady: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var written []string
+	for _, r := range rows {
+		tag, err := tx.Exec(ctx,
+			`UPDATE thumbnail
+             SET status='READY', blob_id=$1, original=$2, content_type=$3,
+                 claimed_by=NULL, claimed_at=NULL, updated_at=now(), last_accessed_at=now()
+             WHERE file_id=$4 AND version=$5 AND size=$6 AND status='GENERATING' AND claimed_by=$7`,
+			r.BlobID, r.Original, r.ContentType, r.FileID, r.Version, r.Size, instanceID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("db.MarkReady: %w", err)
+		}
+		if tag.RowsAffected() == 1 {
+			written = append(written, r.Size)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db.MarkReady: commit: %w", err)
+	}
+	return written, nil
+}
+
+func (s *Store) execClaimed(ctx context.Context, op, set string, args ...any) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='READY', preview_id=$1,
-             claimed_by=NULL, claimed_at=NULL, updated_at=now(), last_accessed_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='GENERATING' AND claimed_by=$4`,
-		previewID, fileID, version, instanceID,
+		`UPDATE thumbnail SET `+set+`, updated_at=now()
+         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
+		args...,
 	)
 	if err != nil {
-		return fmt.Errorf("db.MarkReady: %w", err)
+		return fmt.Errorf("db.%s: %w", op, err)
 	}
 	return nil
 }
 
-// MarkUnsupported transitions a GENERATING row owned by instanceID to UNSUPPORTED
-// (terminal — ffmpeg cannot decode this format). The caller is responsible for
-// logging the underlying reason (e.g. via slog) — it is not persisted to the DB.
+// MarkUnsupported moves the claimed rows to UNSUPPORTED (terminal until the
+// codec list grows). The caller logs the reason; it is not persisted.
 func (s *Store) MarkUnsupported(ctx context.Context, fileID string, version int, instanceID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='UNSUPPORTED',
-             claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.MarkUnsupported: %w", err)
-	}
-	return nil
+	return s.execClaimed(ctx, "MarkUnsupported", `status='UNSUPPORTED', claimed_by=NULL, claimed_at=NULL`,
+		fileID, version, instanceID)
 }
 
-// MarkFailed transitions a GENERATING row owned by instanceID to FAILED
-// (terminal — max attempts exhausted).  Guards on claimed_by=$inst to match
-// WSC's EbeanVideoPreviewRepository.markFailed semantics. The caller is
-// responsible for logging the underlying reason (e.g. via slog) — it is not
-// persisted to the DB.
+// MarkFailed moves the claimed rows to FAILED (terminal: attempts exhausted or
+// source gone). The caller logs the reason; it is not persisted.
 func (s *Store) MarkFailed(ctx context.Context, fileID string, version int, instanceID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='FAILED',
-             claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.MarkFailed: %w", err)
-	}
-	return nil
+	return s.execClaimed(ctx, "MarkFailed", `status='FAILED', claimed_by=NULL, claimed_at=NULL`,
+		fileID, version, instanceID)
 }
 
-// Release returns a GENERATING row owned by instanceID back to PENDING without
-// incrementing attempts (used for transient/storage/deadline errors). The
-// caller is responsible for logging the underlying reason (e.g. via slog) —
-// it is not persisted to the DB.
+// Release returns the claimed rows to PENDING without counting an attempt.
 func (s *Store) Release(ctx context.Context, fileID string, version int, instanceID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.Release: %w", err)
-	}
-	return nil
+	return s.execClaimed(ctx, "Release", `status='PENDING', claimed_by=NULL, claimed_at=NULL`,
+		fileID, version, instanceID)
 }
 
-// ReenqueueReady moves a READY row back to PENDING for regeneration
-// (e.g. when its preview blob is missing from storage). Clears preview_id
-// so a stale blob id is never reused. Guarded on status='READY'. The caller
-// is responsible for logging the underlying reason (e.g. via slog) — it is
-// not persisted to the DB.
-func (s *Store) ReenqueueReady(ctx context.Context, fileID string, version int) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='PENDING', preview_id=NULL, claimed_by=NULL, claimed_at=NULL,
-             updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='READY'`,
-		fileID, version,
-	)
-	if err != nil {
-		return fmt.Errorf("db.ReenqueueReady: %w", err)
-	}
-	return nil
+// ReleaseWithAttempt returns the claimed rows to PENDING and counts an attempt.
+func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID string) error {
+	return s.execClaimed(ctx, "ReleaseWithAttempt", `status='PENDING', claimed_by=NULL, claimed_at=NULL, attempts=attempts+1`,
+		fileID, version, instanceID)
 }
 
-// SetCodec persists the detected codec string for a GENERATING row owned by
-// instanceID. Guarded on status='GENERATING' AND claimed_by=$inst so that a
-// stolen/reclaimed row is never accidentally updated. No-op on wrong instance.
+// SetCodec records the detected codec on the claimed rows.
 func (s *Store) SetCodec(ctx context.Context, fileID string, version int, instanceID, codec string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET codec=$4, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID, codec,
-	)
-	if err != nil {
-		return fmt.Errorf("db.SetCodec: %w", err)
-	}
-	return nil
+	return s.execClaimed(ctx, "SetCodec", `codec=$4`, fileID, version, instanceID, codec)
 }
 
-// ReenqueueUnsupported moves an UNSUPPORTED row back to PENDING for re-generation
-// (used when the codec list has been expanded to now include the row's codec).
-// The codec column is intentionally preserved so the worker can skip re-probe.
-// Guarded on status='UNSUPPORTED' — no-op on any other status. The caller is
-// responsible for logging the underlying reason (e.g. via slog) — it is not
-// persisted to the DB.
+// Heartbeat refreshes claimed_at of the claimed rows so ReclaimStale never
+// takes over a job that is making progress.
+func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, instanceID string) error {
+	return s.execClaimed(ctx, "Heartbeat", `claimed_at=now()`, fileID, version, instanceID)
+}
+
+// ReenqueueUnsupported moves UNSUPPORTED rows back to PENDING keeping the
+// stored codec, so the worker skips the probe.
 func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version int) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
+		`UPDATE thumbnail
          SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now()
          WHERE file_id=$1 AND version=$2 AND status='UNSUPPORTED'`,
 		fileID, version,
@@ -438,70 +436,11 @@ func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version
 	return nil
 }
 
-// Heartbeat refreshes claimed_at (and updated_at) for a GENERATING row owned
-// by instanceID.  It is called periodically during the download phase to prove
-// liveness to ReclaimStale: a row whose claimed_at is being refreshed is making
-// real progress and must never be reclaimed.
-//
-// Guarded on status='GENERATING' AND claimed_by=$inst so that a row stolen by
-// another instance (rare edge, after a previous stale-reclaim) is never
-// accidentally touched.  A no-op on wrong instance is safe.
-func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, instanceID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET claimed_at=now(), updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.Heartbeat: %w", err)
-	}
-	return nil
-}
-
-// ReleaseWithAttempt releases a GENERATING row back to PENDING AND increments
-// attempts. Guarded on status='GENERATING' AND claimed_by=$inst. Used for
-// soft/transient failures so that repeated fast failures eventually hit
-// maxAttempts (unlike plain Release which never increments). The caller is
-// responsible for logging the underlying reason (e.g. via slog) — it is not
-// persisted to the DB.
-func (s *Store) ReleaseWithAttempt(ctx context.Context, fileID string, version int, instanceID string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview
-         SET status='PENDING', claimed_by=NULL, claimed_at=NULL,
-             attempts=attempts+1, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
-		fileID, version, instanceID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.ReleaseWithAttempt: %w", err)
-	}
-	return nil
-}
-
-// InsertReady inserts a READY row directly (used by the copy endpoint).
-// If a row already exists (any status) the INSERT is silently skipped.
-func (s *Store) InsertReady(ctx context.Context, fileID string, version int, ownerID, serviceType, previewID string) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO video_preview
-            (file_id, version, status, owner_id, service_type, preview_id,
-             attempts, created_at, updated_at)
-         VALUES ($1, $2, 'READY', $3, $4, $5, 0, now(), now())
-         ON CONFLICT (file_id, version) DO NOTHING`,
-		fileID, version, ownerID, serviceType, previewID,
-	)
-	if err != nil {
-		return fmt.Errorf("db.InsertReady: %w", err)
-	}
-	return nil
-}
-
-// DeleteClaimed deletes a GENERATING row owned by instanceID, as if the preview
-// had never been requested. A row owned by another instance, or in any other
-// status, is left untouched.
+// DeleteClaimed deletes the claimed rows as if the thumbnail had never been
+// requested; rows owned by another instance or in another status are kept.
 func (s *Store) DeleteClaimed(ctx context.Context, fileID string, version int, instanceID string) error {
 	_, err := s.pool.Exec(ctx,
-		`DELETE FROM video_preview
+		`DELETE FROM thumbnail
          WHERE file_id=$1 AND version=$2 AND status='GENERATING' AND claimed_by=$3`,
 		fileID, version, instanceID,
 	)
@@ -513,15 +452,23 @@ func (s *Store) DeleteClaimed(ctx context.Context, fileID string, version int, i
 
 // TouchReady records an access on a READY row whose last access is older than
 // one day. It writes nothing otherwise.
-func (s *Store) TouchReady(ctx context.Context, fileID string, version int) error {
+func (s *Store) TouchReady(ctx context.Context, fileID string, version int, size string) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE video_preview SET last_accessed_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='READY'
+		`UPDATE thumbnail SET last_accessed_at=now()
+         WHERE file_id=$1 AND version=$2 AND size=$3 AND status='READY'
            AND last_accessed_at < now() - interval '1 day'`,
-		fileID, version,
+		fileID, version, size,
 	)
 	if err != nil {
 		return fmt.Errorf("db.TouchReady: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DeleteByFile(ctx context.Context, fileID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM thumbnail WHERE file_id=$1`, fileID)
+	if err != nil {
+		return fmt.Errorf("db.DeleteByFile: %w", err)
 	}
 	return nil
 }
@@ -532,54 +479,53 @@ type CleanupConn struct {
 	conn *pgxpool.Conn
 }
 
-// FindExpiredReady returns up to limit READY rows not accessed for 30 days,
-// ordered by (last_accessed_at, file_id, version) and strictly after the
-// cursor row when after is non-nil.
-func (s *CleanupConn) FindExpiredReady(ctx context.Context, after *VideoPreview, limit int) ([]VideoPreview, error) {
+// FindExpired returns up to limit READY or LEGACY rows not accessed for 30
+// days, ordered by (last_accessed_at, file_id, version, size) and strictly
+// after the cursor row when after is non-nil.
+func (s *CleanupConn) FindExpired(ctx context.Context, after *Thumbnail, limit int) ([]Thumbnail, error) {
 	var (
 		rows pgx.Rows
 		err  error
 	)
 	if after == nil {
 		rows, err = s.conn.Query(ctx,
-			`SELECT `+selectCols+` FROM video_preview
-             WHERE status='READY' AND last_accessed_at < now() - interval '30 days'
-             ORDER BY last_accessed_at, file_id, version
+			`SELECT `+selectCols+` FROM thumbnail
+             WHERE status IN ('READY','LEGACY') AND last_accessed_at < now() - interval '30 days'
+             ORDER BY last_accessed_at, file_id, version, size
              LIMIT $1`,
 			limit,
 		)
 	} else {
 		rows, err = s.conn.Query(ctx,
-			`SELECT `+selectCols+` FROM video_preview
-             WHERE status='READY' AND last_accessed_at < now() - interval '30 days'
-               AND (last_accessed_at, file_id, version) > ($2, $3, $4)
-             ORDER BY last_accessed_at, file_id, version
+			`SELECT `+selectCols+` FROM thumbnail
+             WHERE status IN ('READY','LEGACY') AND last_accessed_at < now() - interval '30 days'
+               AND (last_accessed_at, file_id, version, size) > ($2, $3, $4, $5)
+             ORDER BY last_accessed_at, file_id, version, size
              LIMIT $1`,
-			limit, after.LastAccessedAt, after.FileID, after.Version,
+			limit, after.LastAccessedAt, after.FileID, after.Version, after.Size,
 		)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("db.FindExpiredReady: %w", err)
+		return nil, fmt.Errorf("db.FindExpired: %w", err)
 	}
-	vps, err := scanAll(rows)
+	out, err := scanAll(rows)
 	if err != nil {
-		return nil, fmt.Errorf("db.FindExpiredReady: scan: %w", err)
+		return nil, fmt.Errorf("db.FindExpired: scan: %w", err)
 	}
-	return vps, nil
+	return out, nil
 }
 
-// DeleteExpiredReady deletes the row only if it is still READY and still not
-// accessed for 30 days, so an access that happened after FindExpiredReady
-// saves it.
-func (s *CleanupConn) DeleteExpiredReady(ctx context.Context, fileID string, version int) error {
+// DeleteExpired deletes the row only if it is still READY or LEGACY and still
+// not accessed for 30 days, so an access after FindExpired saves it.
+func (s *CleanupConn) DeleteExpired(ctx context.Context, fileID string, version int, size string) error {
 	_, err := s.conn.Exec(ctx,
-		`DELETE FROM video_preview
-         WHERE file_id=$1 AND version=$2 AND status='READY'
+		`DELETE FROM thumbnail
+         WHERE file_id=$1 AND version=$2 AND size=$3 AND status IN ('READY','LEGACY')
            AND last_accessed_at < now() - interval '30 days'`,
-		fileID, version,
+		fileID, version, size,
 	)
 	if err != nil {
-		return fmt.Errorf("db.DeleteExpiredReady: %w", err)
+		return fmt.Errorf("db.DeleteExpired: %w", err)
 	}
 	return nil
 }
@@ -617,16 +563,4 @@ func (s *Store) WithCleanupLock(ctx context.Context, fn func(context.Context, *C
 		}
 	}()
 	return true, fn(ctx, &CleanupConn{conn: conn})
-}
-
-// DeleteByFileId deletes the row for (fileID, version).
-func (s *Store) DeleteByFileId(ctx context.Context, fileID string, version int) error {
-	_, err := s.pool.Exec(ctx,
-		`DELETE FROM video_preview WHERE file_id=$1 AND version=$2`,
-		fileID, version,
-	)
-	if err != nil {
-		return fmt.Errorf("db.DeleteByFileId: %w", err)
-	}
-	return nil
 }

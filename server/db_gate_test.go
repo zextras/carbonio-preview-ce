@@ -2,18 +2,17 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// db_gate_test.go covers the DB-resilience behaviour of the video endpoints.
+// db_gate_test.go covers the DB-resilience behaviour of the thumbnail endpoint.
 //
-// When the video-preview DB is absent or unreachable the video preview +
-// thumbnail handlers must degrade to HTTP 424 (Failed Dependency) — an
-// OPERATIONAL "the DB dependency is down" signal, distinct from 415 (which means
-// the file's codec is genuinely unsupported and requires a working DB to probe).
-// copy/delete must no-op with success so the fire-and-forget WSC caller never
-// sees an error. It also verifies that flipping the readiness gate (DB comes up
-// after boot) re-enables the normal resolve() path with no restart.
+// When the thumbnail DB is absent or unreachable the async GET /thumbnail
+// handler must degrade to HTTP 424 (Failed Dependency) — an OPERATIONAL "the DB
+// dependency is down" signal, distinct from 415 (which means the file's codec is
+// genuinely unsupported and requires a working DB to probe). It also verifies
+// that flipping the readiness gate (DB comes up after boot) re-enables the
+// normal resolve path with no restart.
 //
-// The genuine-unsupported-codec → 415 mapping is unchanged and covered in
-// thumbnail_api_test.go (TestResolve_Unsupported_Returns415).
+// The no-DB no-op of DELETE /thumbnail/{id} is covered in thumbnail_api_test.go
+// (TestDeleteThumbnails_NoDB_NoOp204).
 
 package server
 
@@ -26,7 +25,6 @@ import (
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
-	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 )
 
 // statusOf extracts the HTTP status carried by a huma error.
@@ -41,18 +39,6 @@ func statusOf(t *testing.T, err error) int {
 		t.Fatalf("error %T does not implement GetStatus()", err)
 	}
 	return se.GetStatus()
-}
-
-// noDBDeps builds a Deps with NO video DB (store nil / gate not ready).
-func noDBDeps() Deps {
-	return Deps{
-		Cfg:      testCfg(),
-		Store:    &mockStore{blob: []byte("src")},
-		Cache:    cache.New(0),
-		DB:       nil,
-		DBGate:   newDBGate(),
-		AsyncSem: nil,
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -112,78 +98,6 @@ func TestIsDBConnError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Handler behaviour with NO DB → 424 (operational failed-dependency), NOT 415
-// ---------------------------------------------------------------------------
-
-func TestGetVideoPreview_NoDB_Returns424(t *testing.T) {
-	deps := noDBDeps()
-	handler := buildGetVideoPreview(deps, nil)
-	_, err := handler(context.Background(), &apispec.VideoGetPreviewInput{
-		ID:           validUUID,
-		Version:      1,
-		Area:         "100x100",
-		ServiceType:  "files",
-		Quality:      "medium",
-		OutputFormat: "jpeg",
-	})
-	if got := statusOf(t, err); got != http.StatusFailedDependency {
-		t.Errorf("status: got %d, want 424 (DB down, not 415 unsupported)", got)
-	}
-}
-
-func TestGetVideoThumbnail_NoDB_Returns424(t *testing.T) {
-	deps := noDBDeps()
-	handler := buildGetVideoThumbnail(deps, nil)
-	_, err := handler(context.Background(), &apispec.VideoGetThumbnailInput{
-		ID:           validUUID,
-		Version:      1,
-		Area:         "100x100",
-		ServiceType:  "files",
-		Quality:      "medium",
-		OutputFormat: "jpeg",
-		Shape:        "rectangular",
-	})
-	if got := statusOf(t, err); got != http.StatusFailedDependency {
-		t.Errorf("status: got %d, want 424 (DB down, not 415 unsupported)", got)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// copy / delete with NO DB → success no-op (WSC fire-and-forget must not error)
-// ---------------------------------------------------------------------------
-
-func TestDeleteVideoPreview_NoDB_NoOpSuccess(t *testing.T) {
-	deps := noDBDeps()
-	handler := buildDeleteVideoPreview(deps)
-	out, err := handler(context.Background(), &apispec.VideoDeleteInput{
-		ID:          validUUID,
-		Version:     1,
-		ServiceType: "files",
-	})
-	if err != nil {
-		t.Fatalf("delete with no DB must not error, got %v (status %d)", err, statusOf(t, err))
-	}
-	_ = out // nil output → 204
-}
-
-func TestCopyVideoPreview_NoDB_NoOpSuccess(t *testing.T) {
-	deps := noDBDeps()
-	handler := buildCopyVideoPreview(deps)
-	out, err := handler(context.Background(), &apispec.VideoCopyInput{
-		ID:          validUUID,
-		Target:      "223e4567-e89b-12d3-a456-426614174111",
-		Version:     1,
-		ServiceType: "files",
-	})
-	if err != nil {
-		t.Fatalf("copy with no DB must not error, got %v (status %d)", err, statusOf(t, err))
-	}
-	if out == nil {
-		t.Fatal("copy no-op should still return a (empty) output body")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // End-to-end over the real mux: no DB configured ⇒ image works AND video → 424.
 // ---------------------------------------------------------------------------
 
@@ -207,14 +121,19 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 		t.Errorf("image preview status=%d, want 200 (must be unaffected by absent DB)", iresp.StatusCode)
 	}
 
-	// Video preview → 424.
-	vresp, err := http.Get(ts.URL + "/preview/video/" + validUUID + "/1/100x100/?service_type=files")
+	// Video thumbnail → 424.
+	vreq, err := http.NewRequest(http.MethodGet, ts.URL+"/thumbnail/"+validUUID+"/1/m?service_type=files&mime=video/mp4", nil)
 	if err != nil {
-		t.Fatalf("GET video preview: %v", err)
+		t.Fatalf("new request: %v", err)
+	}
+	vreq.Header.Set("fileownerid", testOwner)
+	vresp, err := http.DefaultClient.Do(vreq)
+	if err != nil {
+		t.Fatalf("GET video thumbnail: %v", err)
 	}
 	vresp.Body.Close()
 	if vresp.StatusCode != http.StatusFailedDependency {
-		t.Errorf("video preview status=%d, want 424 (DB absent)", vresp.StatusCode)
+		t.Errorf("video thumbnail status=%d, want 424 (DB absent)", vresp.StatusCode)
 	}
 
 	// Health stays 200.
@@ -229,56 +148,42 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// DB becomes ready after boot ⇒ video proceeds through the normal resolve()
+// DB becomes ready after boot ⇒ video proceeds through the normal resolve
 // path with no restart (readiness gate flip).
 // ---------------------------------------------------------------------------
 
-func TestGetVideoPreview_GateFlipsReady_Proceeds(t *testing.T) {
+func gateHarness(t *testing.T, gate *dbGate) *harness {
+	t.Helper()
+	return newHarness(t, harnessOpts{noDB: true, cfg: func(_ *testing.T, d Deps) Deps {
+		d.DB = nil
+		d.DBGate = gate
+		return d
+	}})
+}
+
+func TestThumbnailGet_GateFlipsReady_Proceeds(t *testing.T) {
 	dbStore := startDBStore(t)
-	ctx := context.Background()
 
-	// Start with a NOT-ready gate: handler must return 424.
 	gate := newDBGate()
-	deps := Deps{
-		Cfg:      testCfg(),
-		Store:    &mockStore{blob: []byte("src")},
-		Cache:    cache.New(0),
-		DB:       nil,
-		DBGate:   gate,
-		AsyncSem: nil,
-	}
-	handler := buildGetVideoPreview(deps, nil)
+	h := gateHarness(t, gate)
+	fileID := newID()
 
-	// Use a real UUID so validateUUID passes.
-	const fileID = "b1b2c3d4-e5f6-7890-abcd-ef1234567890"
-
-	_, err := handler(ctx, &apispec.VideoGetPreviewInput{
-		ID: fileID, Version: 1, Area: "100x100",
-		ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-	})
-	if got := statusOf(t, err); got != http.StatusFailedDependency {
-		t.Fatalf("before flip: status %d, want 424", got)
+	if rec := h.get(thumbReq{id: fileID, version: 1, mime: videoMime}); rec.Code != http.StatusFailedDependency {
+		t.Fatalf("before flip: status %d, want 424", rec.Code)
 	}
 
-	// Flip the gate ready (simulates the background init succeeding).
 	gate.Set(dbStore)
 
-	// Same handler instance, no restart: a not-found row now enqueues + returns 202.
-	_, err = handler(ctx, &apispec.VideoGetPreviewInput{
-		ID: fileID, Version: 1, Area: "100x100",
-		ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-	})
-	if got := statusOf(t, err); got != http.StatusAccepted {
-		t.Fatalf("after flip: status %d, want 202 (normal resolve path)", got)
+	if rec := h.get(thumbReq{id: fileID, version: 1, mime: videoMime}); rec.Code != http.StatusAccepted {
+		t.Fatalf("after flip: status %d, want 202 (normal resolve path)", rec.Code)
 	}
 
-	// The row must have been enqueued (proof the DB path ran).
-	row, ferr := dbStore.Find(ctx, fileID, 1)
+	rows, ferr := dbStore.FindPair(context.Background(), fileID, 1)
 	if ferr != nil {
-		t.Fatalf("Find: %v", ferr)
+		t.Fatalf("FindPair: %v", ferr)
 	}
-	if row == nil {
-		t.Fatal("expected an enqueued row after gate flip, got nil")
+	if len(rows) != 2 {
+		t.Fatalf("expected both sizes enqueued after gate flip, got %d rows", len(rows))
 	}
 }
 
@@ -287,31 +192,16 @@ func TestGetVideoPreview_GateFlipsReady_Proceeds(t *testing.T) {
 // Simulated by closing the pool out from under a ready gate.
 // ---------------------------------------------------------------------------
 
-func TestGetVideoPreview_RuntimeConnError_Returns424(t *testing.T) {
+func TestThumbnailGet_RuntimeConnError_Returns424(t *testing.T) {
 	dbStore := startDBStore(t)
-	ctx := context.Background()
 
 	gate := newDBGate()
 	gate.Set(dbStore)
-	deps := Deps{
-		Cfg:      testCfg(),
-		Store:    &mockStore{blob: []byte("src")},
-		Cache:    cache.New(0),
-		DB:       nil,
-		DBGate:   gate,
-		AsyncSem: nil,
-	}
-	handler := buildGetVideoPreview(deps, nil)
+	h := gateHarness(t, gate)
 
-	// Kill the DB connection: subsequent queries fail with a conn-type error.
 	dbStore.Close()
 
-	const fileID = "c1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	_, err := handler(ctx, &apispec.VideoGetPreviewInput{
-		ID: fileID, Version: 1, Area: "100x100",
-		ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-	})
-	if got := statusOf(t, err); got != http.StatusFailedDependency {
-		t.Errorf("runtime conn error: status %d, want 424 (graceful degrade, not 500/503)", got)
+	if rec := h.get(thumbReq{id: newID(), version: 1, mime: videoMime}); rec.Code != http.StatusFailedDependency {
+		t.Errorf("runtime conn error: status %d, want 424 (graceful degrade, not 500/503)", rec.Code)
 	}
 }

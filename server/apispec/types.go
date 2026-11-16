@@ -335,57 +335,64 @@ type DocPostThumbnailInput struct {
 }
 
 // ---------------------------------------------------------------------------
-// Input/output structs — Video GET preview / thumbnail / delete / copy
+// Thumbnails
 // ---------------------------------------------------------------------------
 
-// VideoGetPreviewInput holds all path + query params for GET video preview.
-// Mirrors ImageGetPreviewInput, adding service_type (already present on image inputs).
-type VideoGetPreviewInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video attachment"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the video (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Crop         bool        `query:"crop"          default:"false"             doc:"Crop to fill (true) or scale to fit (false)"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
+type ThumbnailSize string
+
+const (
+	ThumbnailSizeS ThumbnailSize = "s"
+	ThumbnailSizeM ThumbnailSize = "m"
+)
+
+func (ThumbnailSize) Schema(huma.Registry) *huma.Schema {
+	return enumStringSchema("Thumbnail size: s = 320 px, m = 1280 px long side",
+		string(ThumbnailSizeS), string(ThumbnailSizeM))
 }
 
-// VideoGetThumbnailInput holds all path + query params for GET video thumbnail.
-// Mirrors ImageGetThumbnailInput.
-type VideoGetThumbnailInput struct {
-	ID           string      `path:"id"             format:"uuid"              doc:"UUID of the video attachment"`
-	Version      int         `path:"version"        minimum:"0"                doc:"Version of the video (non-negative integer)"`
-	Area         string      `path:"area"           pattern:"^[0-9]+x[0-9]+$" doc:"Width x height in pixels, e.g. 100x200"`
-	ServiceType  ServiceType `query:"service_type"  required:"true"            doc:"Service that owns the resource"`
-	Quality      Quality     `query:"quality"       default:"medium"            doc:"Output quality"`
-	OutputFormat ImageType   `query:"output_format" default:"jpeg"              doc:"Output image format"`
-	Shape        Shape       `query:"shape"         default:"rectangular"       doc:"Thumbnail border shape"`
-	FileOwnerID  string      `header:"fileownerid"                             doc:"File owner ID for Advanced storage routing" required:"false"`
+type ThumbnailGetInput struct {
+	ID          string        `path:"id" format:"uuid" doc:"UUID of the file (UUID1-UUID4)"`
+	Version     int           `path:"version" minimum:"0" doc:"Version of the file (non-negative integer)"`
+	Size        ThumbnailSize `path:"size" doc:"Thumbnail size"`
+	ServiceType ServiceType   `query:"service_type" required:"true" doc:"Service that owns the resource"`
+	Mime        string        `query:"mime" required:"true" maxLength:"255" doc:"MIME type of the file as recorded by the caller"`
+	Digest      string        `query:"digest" maxLength:"128" pattern:"^[A-Za-z0-9+/=_.:-]+$" doc:"Content digest of the version; a different digest regenerates the thumbnail"`
+	Lang        string        `query:"lang" default:"en-US" maxLength:"35" pattern:"^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$" doc:"Language tag for office conversions"`
+	FileOwnerID string        `header:"fileownerid" required:"false" doc:"File owner ID for Advanced storage routing"`
 }
 
-// VideoDeleteInput holds path + query params for DELETE video preview.
-type VideoDeleteInput struct {
-	ID          string      `path:"id"            format:"uuid"   doc:"UUID of the video attachment"`
-	Version     int         `path:"version"       minimum:"0"     doc:"Version (non-negative)"`
-	ServiceType ServiceType `query:"service_type" required:"true" doc:"Service that owns the resource"`
-	FileOwnerID string      `header:"fileownerid"                doc:"File owner ID for Advanced storage routing" required:"false"`
+type ThumbnailDeleteInput struct {
+	ID string `path:"id" format:"uuid" doc:"UUID of the file whose thumbnails (all versions, both sizes) are deleted"`
 }
 
-// VideoCopyInput holds path + query params + headers for POST video copy.
-// {id} is the SOURCE attachment file_id; target is the DESTINATION file_id.
-type VideoCopyInput struct {
-	ID            string      `path:"id"             format:"uuid"   doc:"UUID of the SOURCE video attachment"`
-	Version       int         `path:"version"        minimum:"0"     doc:"Source version (non-negative)"`
-	ServiceType   ServiceType `query:"service_type"  required:"true" doc:"Service that owns the resource"`
-	Target        string      `query:"target"        format:"uuid" required:"true" doc:"UUID of the DESTINATION attachment (new file_id)"`
-	FileOwnerID   string      `header:"fileownerid"                 doc:"Source file owner ID" required:"false"`
-	TargetOwnerID string      `header:"targetownerid"               doc:"Destination file owner ID" required:"false"`
+// Unused headers of ThumbnailOutput are left empty, which huma does not write.
+type ThumbnailOutput struct {
+	Status       int
+	ContentType  string `header:"Content-Type"`
+	CacheControl string `header:"Cache-Control"`
+	RetryAfter   string `header:"Retry-After"`
+	Body         []byte
 }
 
-// VideoCopyOutput is the JSON body for a successful POST copy response.
-type VideoCopyOutput struct {
-	Body struct {
-		PreviewID string `json:"preview_id" doc:"Storage node id of the copied preview frame"`
-	}
+var thumbnailAcceptedHeaders = map[string]*huma.Param{
+	"Retry-After":   {Description: "Seconds to wait before polling again", Schema: &huma.Schema{Type: "string"}},
+	"Cache-Control": {Description: "no-store", Schema: &huma.Schema{Type: "string"}},
+}
+
+var ThumbnailOK = &huma.Response{
+	Description: "Successful Response — the thumbnail rendition",
+	Content: map[string]*huma.MediaType{
+		"image/jpeg": {Schema: imageBinaryResponseSchema},
+		"image/png":  {Schema: imageBinaryResponseSchema},
+		"image/gif":  {Schema: imageBinaryResponseSchema},
+	},
+}
+
+var ThumbnailAccepted = &huma.Response{
+	Description: "The thumbnail is being generated; poll again after Retry-After seconds",
+	Headers:     thumbnailAcceptedHeaders,
+	Content: map[string]*huma.MediaType{
+		"image/jpeg": {Schema: imageBinaryResponseSchema},
+		"image/png":  {Schema: imageBinaryResponseSchema},
+	},
 }

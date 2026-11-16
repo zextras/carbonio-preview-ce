@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package db contains integration tests for the video_preview DB layer.
+// Package db contains integration tests for the thumbnail DB layer.
 //
 // Each test uses a real Postgres 16 container spun up via the Docker CLI.
 // A fresh schema (via Migrate) is applied once per test-helper call.
@@ -42,6 +42,15 @@ type pgContainer struct {
 // ready to accept connections, runs Migrate, and returns a connected *Store.
 // t.Cleanup stops and removes the container automatically.
 func startPostgres(t *testing.T) *Store {
+	t.Helper()
+	store := startPostgresRaw(t)
+	if err := store.Migrate(context.Background()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	return store
+}
+
+func startPostgresRaw(t *testing.T) *Store {
 	t.Helper()
 
 	// Require Docker.
@@ -106,11 +115,6 @@ func startPostgres(t *testing.T) *Store {
 		t.Fatalf("postgres not ready after 30s (DSN: %s)", dsn)
 	}
 	t.Cleanup(store.Close)
-
-	// Apply migrations.
-	if err := store.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
 	return store
 }
 
@@ -133,12 +137,39 @@ func uid(t *testing.T, suffix string) string {
 	return s
 }
 
+func enqueuePair(t *testing.T, st *Store, id string, version int) {
+	t.Helper()
+	for _, size := range []string{SizeS, SizeM} {
+		if ok, err := st.Enqueue(context.Background(), newPending(id, version, size, "video"), nil); err != nil || !ok {
+			t.Fatalf("Enqueue %s: ok=%v err=%v", size, ok, err)
+		}
+	}
+}
+
+func claimPair(t *testing.T, st *Store, id string, version int, inst string) []Thumbnail {
+	t.Helper()
+	rows, err := st.Claim(context.Background(), id, version, inst)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Claim: rows=%d err=%v, want both sizes", len(rows), err)
+	}
+	return rows
+}
+
+func pairOf(t *testing.T, st *Store, id string, version int) map[string]*Thumbnail {
+	t.Helper()
+	got, err := st.FindPair(context.Background(), id, version)
+	if err != nil || len(got) != 2 || got[SizeS] == nil || got[SizeM] == nil {
+		t.Fatalf("FindPair: %v err=%v, want both sizes", got, err)
+	}
+	return got
+}
+
 // ---------------------------------------------------------------------------
 // Claim atomicity / single-flight
 // ---------------------------------------------------------------------------
 
-// TestClaim_Atomicity fires N concurrent Claim calls and asserts exactly one
-// wins while the row ends up in GENERATING claimed by that winner.
+// TestClaim_Atomicity fires N concurrent Claim calls on a pair with both sizes
+// enqueued and asserts exactly one wins both rows while the others get none.
 func TestClaim_Atomicity(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -147,13 +178,11 @@ func TestClaim_Atomicity(t *testing.T) {
 	const version = 1
 	const N = 20
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
+	enqueuePair(t, store, fileID, version)
 
 	type result struct {
 		instanceID string
-		claimed    bool
+		rows       []Thumbnail
 	}
 	results := make([]result, N)
 	var wg sync.WaitGroup
@@ -163,12 +192,12 @@ func TestClaim_Atomicity(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			instID := fmt.Sprintf("inst-%02d", i)
-			ok, err := store.Claim(ctx, fileID, version, instID)
+			rows, err := store.Claim(ctx, fileID, version, instID)
 			if err != nil {
 				t.Errorf("Claim[%d]: %v", i, err)
 				return
 			}
-			results[i] = result{instID, ok}
+			results[i] = result{instID, rows}
 		}()
 	}
 	wg.Wait()
@@ -176,9 +205,13 @@ func TestClaim_Atomicity(t *testing.T) {
 	winners := 0
 	var winnerID string
 	for _, r := range results {
-		if r.claimed {
+		switch len(r.rows) {
+		case 0:
+		case 2:
 			winners++
 			winnerID = r.instanceID
+		default:
+			t.Fatalf("%s got %d rows, want 0 or 2", r.instanceID, len(r.rows))
 		}
 	}
 
@@ -186,152 +219,14 @@ func TestClaim_Atomicity(t *testing.T) {
 		t.Fatalf("expected exactly 1 winner, got %d", winners)
 	}
 
-	// Verify DB state: status=GENERATING, claimed_by=winner.
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row == nil {
-		t.Fatal("row not found after Claim")
-	}
-	if row.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING", row.Status)
-	}
-	if row.ClaimedBy == nil || *row.ClaimedBy != winnerID {
-		t.Errorf("claimed_by: got %v, want %q", row.ClaimedBy, winnerID)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// EnqueueIfAbsent ON CONFLICT
-// ---------------------------------------------------------------------------
-
-// TestEnqueueIfAbsent_Idempotent asserts that concurrent enqueues for the same
-// (file_id, version) produce exactly one row and no errors.
-func TestEnqueueIfAbsent_Idempotent(t *testing.T) {
-	store := startPostgres(t)
-	ctx := context.Background()
-
-	fileID := uid(t, "enqueue")
-	const version = 2
-	const N = 10
-
-	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-				t.Errorf("EnqueueIfAbsent: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	// Exactly one row must exist.
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row == nil {
-		t.Fatal("expected a row, got nil")
-	}
-	if row.Status != StatusPending {
-		t.Errorf("status: got %q, want PENDING", row.Status)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// ReenqueueReady (the BLOCKER fix)
-// ---------------------------------------------------------------------------
-
-// TestReenqueueReady_FromReady asserts that a READY row with a preview_id
-// becomes PENDING with preview_id cleared.
-func TestReenqueueReady_FromReady(t *testing.T) {
-	store := startPostgres(t)
-	ctx := context.Background()
-
-	fileID := uid(t, "reenq_ready")
-	const version = 1
-	const previewID = "prev-abc-123"
-
-	// Insert a READY row directly.
-	if err := store.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
-		t.Fatalf("InsertReady: %v", err)
-	}
-
-	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueReady: %v", err)
-	}
-
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row == nil {
-		t.Fatal("row disappeared after ReenqueueReady")
-	}
-	if row.Status != StatusPending {
-		t.Errorf("status: got %q, want PENDING", row.Status)
-	}
-	if row.PreviewID != nil {
-		t.Errorf("preview_id: got %v, want nil (must be cleared)", row.PreviewID)
-	}
-}
-
-// TestReenqueueReady_NoopOnGenerating asserts that ReenqueueReady on a
-// GENERATING row is a no-op (RowsAffected=0 implicit, row status unchanged).
-func TestReenqueueReady_NoopOnGenerating(t *testing.T) {
-	store := startPostgres(t)
-	ctx := context.Background()
-
-	fileID := uid(t, "reenq_generating")
-	const version = 1
-
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	if _, err := store.Claim(ctx, fileID, version, "inst-1"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-
-	// Row is now GENERATING. ReenqueueReady must be a no-op.
-	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueReady: unexpected error: %v", err)
-	}
-
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING (no-op)", row.Status)
-	}
-}
-
-// TestReenqueueReady_NoopOnPending asserts that ReenqueueReady on a PENDING
-// row is a no-op (row remains PENDING).
-func TestReenqueueReady_NoopOnPending(t *testing.T) {
-	store := startPostgres(t)
-	ctx := context.Background()
-
-	fileID := uid(t, "reenq_pending")
-	const version = 1
-
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-
-	if err := store.ReenqueueReady(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueReady: unexpected error: %v", err)
-	}
-
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusPending {
-		t.Errorf("status: got %q, want PENDING (no-op)", row.Status)
+	pair := pairOf(t, store, fileID, version)
+	for size, row := range pair {
+		if row.Status != StatusGenerating {
+			t.Errorf("%s status: got %q, want GENERATING", size, row.Status)
+		}
+		if row.ClaimedBy == nil || *row.ClaimedBy != winnerID {
+			t.Errorf("%s claimed_by: got %v, want %q", size, row.ClaimedBy, winnerID)
+		}
 	}
 }
 
@@ -340,8 +235,8 @@ func TestReenqueueReady_NoopOnPending(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestReleaseWithAttempt_IncrementsAttempts asserts that ReleaseWithAttempt on
-// a GENERATING row owned by the right instance transitions to PENDING and
-// increments attempts by 1.
+// the GENERATING rows owned by the right instance transitions both sizes to
+// PENDING and increments attempts by 1.
 func TestReleaseWithAttempt_IncrementsAttempts(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -350,41 +245,30 @@ func TestReleaseWithAttempt_IncrementsAttempts(t *testing.T) {
 	const version = 1
 	const instID = "inst-1"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	before, err := store.Find(ctx, fileID, version)
-	if err != nil || before == nil {
-		t.Fatalf("Find before: %v", err)
-	}
-	attempsBefore := before.Attempts
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
+	before := pairOf(t, store, fileID, version)
 
 	if err := store.ReleaseWithAttempt(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("ReleaseWithAttempt: %v", err)
 	}
 
-	after, err := store.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after: %v", err)
-	}
-	if after.Status != StatusPending {
-		t.Errorf("status: got %q, want PENDING", after.Status)
-	}
-	if after.Attempts != attempsBefore+1 {
-		t.Errorf("attempts: got %d, want %d (incremented by 1)", after.Attempts, attempsBefore+1)
-	}
-	if after.ClaimedBy != nil {
-		t.Errorf("claimed_by: got %v, want nil", after.ClaimedBy)
+	after := pairOf(t, store, fileID, version)
+	for size, row := range after {
+		if row.Status != StatusPending {
+			t.Errorf("%s status: got %q, want PENDING", size, row.Status)
+		}
+		if row.Attempts != before[size].Attempts+1 {
+			t.Errorf("%s attempts: got %d, want %d (incremented by 1)", size, row.Attempts, before[size].Attempts+1)
+		}
+		if row.ClaimedBy != nil {
+			t.Errorf("%s claimed_by: got %v, want nil", size, row.ClaimedBy)
+		}
 	}
 }
 
 // TestReleaseWithAttempt_WrongInstanceNoop asserts that ReleaseWithAttempt from
-// the wrong instance ID is a no-op: the row stays GENERATING, attempts unchanged.
+// the wrong instance ID is a no-op: the rows stay GENERATING, attempts unchanged.
 func TestReleaseWithAttempt_WrongInstanceNoop(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -394,33 +278,22 @@ func TestReleaseWithAttempt_WrongInstanceNoop(t *testing.T) {
 	const ownerInst = "inst-owner"
 	const wrongInst = "inst-intruder"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, ownerInst)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, ownerInst)
+	before := pairOf(t, store, fileID, version)
 
-	before, err := store.Find(ctx, fileID, version)
-	if err != nil || before == nil {
-		t.Fatalf("Find before: %v", err)
-	}
-
-	// Wrong instance: must be a no-op.
 	if err := store.ReleaseWithAttempt(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("ReleaseWithAttempt (wrong inst): unexpected error: %v", err)
 	}
 
-	after, err := store.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after: %v", err)
-	}
-	if after.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING (no-op)", after.Status)
-	}
-	if after.Attempts != before.Attempts {
-		t.Errorf("attempts: got %d, want %d (unchanged)", after.Attempts, before.Attempts)
+	after := pairOf(t, store, fileID, version)
+	for size, row := range after {
+		if row.Status != StatusGenerating {
+			t.Errorf("%s status: got %q, want GENERATING (no-op)", size, row.Status)
+		}
+		if row.Attempts != before[size].Attempts {
+			t.Errorf("%s attempts: got %d, want %d (unchanged)", size, row.Attempts, before[size].Attempts)
+		}
 	}
 }
 
@@ -428,8 +301,8 @@ func TestReleaseWithAttempt_WrongInstanceNoop(t *testing.T) {
 // Release (plain — attempts UNCHANGED)
 // ---------------------------------------------------------------------------
 
-// TestRelease_DoesNotIncrementAttempts verifies that plain Release returns a
-// GENERATING row to PENDING without touching the attempts counter.
+// TestRelease_DoesNotIncrementAttempts verifies that plain Release returns the
+// GENERATING rows to PENDING without touching the attempts counter.
 func TestRelease_DoesNotIncrementAttempts(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -438,32 +311,22 @@ func TestRelease_DoesNotIncrementAttempts(t *testing.T) {
 	const version = 1
 	const instID = "inst-rel"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	before, err := store.Find(ctx, fileID, version)
-	if err != nil || before == nil {
-		t.Fatalf("Find before: %v", err)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
+	before := pairOf(t, store, fileID, version)
 
 	if err := store.Release(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
-	after, err := store.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after: %v", err)
-	}
-	if after.Status != StatusPending {
-		t.Errorf("status: got %q, want PENDING", after.Status)
-	}
-	if after.Attempts != before.Attempts {
-		t.Errorf("attempts: got %d, want %d (UNCHANGED by plain Release)", after.Attempts, before.Attempts)
+	after := pairOf(t, store, fileID, version)
+	for size, row := range after {
+		if row.Status != StatusPending {
+			t.Errorf("%s status: got %q, want PENDING", size, row.Status)
+		}
+		if row.Attempts != before[size].Attempts {
+			t.Errorf("%s attempts: got %d, want %d (UNCHANGED by plain Release)", size, row.Attempts, before[size].Attempts)
+		}
 	}
 }
 
@@ -471,9 +334,9 @@ func TestRelease_DoesNotIncrementAttempts(t *testing.T) {
 // ReclaimStale
 // ---------------------------------------------------------------------------
 
-// TestReclaimStale_ReclaimsOldRow verifies that a GENERATING row with an old
-// claimed_at is returned by ReclaimStale, its attempts are incremented, and the
-// claimed_by is updated to the new instance.
+// TestReclaimStale_ReclaimsOldRow verifies that GENERATING rows with an old
+// claimed_at are returned by ReclaimStale, their attempts are incremented, and
+// the claimed_by is updated to the new instance.
 func TestReclaimStale_ReclaimsOldRow(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -483,17 +346,11 @@ func TestReclaimStale_ReclaimsOldRow(t *testing.T) {
 	const originalInst = "inst-original"
 	const newInst = "inst-new"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, originalInst)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, originalInst)
 
-	// Backdate claimed_at to simulate a stale row.
-	_, err = store.pool.Exec(ctx,
-		`UPDATE video_preview SET claimed_at = now() - interval '1 hour'
+	_, err := store.pool.Exec(ctx,
+		`UPDATE thumbnail SET claimed_at = now() - interval '1 hour'
 		 WHERE file_id=$1 AND version=$2`,
 		fileID, version,
 	)
@@ -501,31 +358,30 @@ func TestReclaimStale_ReclaimsOldRow(t *testing.T) {
 		t.Fatalf("backdate claimed_at: %v", err)
 	}
 
-	// ReclaimStale with a 1-minute TTL — the row's claimed_at is 1 hour old.
 	reclaimed, err := store.ReclaimStale(ctx, newInst, 1*time.Minute)
 	if err != nil {
 		t.Fatalf("ReclaimStale: %v", err)
 	}
 
-	found := false
+	found := map[string]bool{}
 	for _, r := range reclaimed {
 		if r.FileID == fileID && r.Version == version {
-			found = true
+			found[r.Size] = true
 			if r.ClaimedBy == nil || *r.ClaimedBy != newInst {
-				t.Errorf("claimed_by: got %v, want %q", r.ClaimedBy, newInst)
+				t.Errorf("%s claimed_by: got %v, want %q", r.Size, r.ClaimedBy, newInst)
 			}
 			if r.Attempts != 1 {
-				t.Errorf("attempts: got %d, want 1 (incremented once)", r.Attempts)
+				t.Errorf("%s attempts: got %d, want 1 (incremented once)", r.Size, r.Attempts)
 			}
 		}
 	}
-	if !found {
-		t.Errorf("stale row (%s, %d) not returned by ReclaimStale", fileID, version)
+	if !found[SizeS] || !found[SizeM] {
+		t.Errorf("stale rows (%s, %d) not all returned by ReclaimStale: %v", fileID, version, found)
 	}
 }
 
-// TestReclaimStale_FreshRowNotReclaimed verifies that a GENERATING row with a
-// recent claimed_at is NOT returned by ReclaimStale.
+// TestReclaimStale_FreshRowNotReclaimed verifies that GENERATING rows with a
+// recent claimed_at are NOT returned by ReclaimStale.
 func TestReclaimStale_FreshRowNotReclaimed(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -534,15 +390,9 @@ func TestReclaimStale_FreshRowNotReclaimed(t *testing.T) {
 	const version = 1
 	const instID = "inst-fresh"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
 
-	// Use a 1-hour TTL — the just-claimed row was claimed a moment ago.
 	reclaimed, err := store.ReclaimStale(ctx, "other-inst", 1*time.Hour)
 	if err != nil {
 		t.Fatalf("ReclaimStale: %v", err)
@@ -560,8 +410,9 @@ func TestReclaimStale_FreshRowNotReclaimed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestMarkReady_OnlyAffectsOwnedRow verifies that MarkReady only transitions
-// the GENERATING row owned by the matching instanceID. A stolen row (different
-// claimed_by) must remain unchanged.
+// the GENERATING rows owned by the matching instanceID. Stolen rows (different
+// claimed_by) must remain unchanged, and a size that was never claimed is not
+// written.
 func TestMarkReady_OnlyAffectsOwnedRow(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -571,47 +422,59 @@ func TestMarkReady_OnlyAffectsOwnedRow(t *testing.T) {
 	const realInst = "inst-real"
 	const wrongInst = "inst-impostor"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, realInst)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, realInst)
+
+	rows := []Thumbnail{
+		{FileID: fileID, Version: version, Size: SizeS, BlobID: strp("preview-s"), ContentType: strp("image/jpeg")},
+		{FileID: fileID, Version: version, Size: SizeM, BlobID: strp("preview-m"), ContentType: strp("image/jpeg")},
 	}
 
-	// Wrong instance tries to MarkReady: must be a no-op, no error.
-	if err := store.MarkReady(ctx, fileID, version, wrongInst, "preview-xxx"); err != nil {
+	written, err := store.MarkReady(ctx, wrongInst, rows)
+	if err != nil {
 		t.Fatalf("MarkReady (wrong inst): unexpected error: %v", err)
 	}
+	if len(written) != 0 {
+		t.Errorf("written (wrong inst): got %v, want none", written)
+	}
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusGenerating {
+			t.Errorf("%s status: got %q, want GENERATING (MarkReady with wrong inst must be no-op)", size, row.Status)
+		}
+		if row.BlobID != nil {
+			t.Errorf("%s blob_id: got %v, want nil (no-op)", size, row.BlobID)
+		}
+	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING (MarkReady with wrong inst must be no-op)", row.Status)
-	}
-	if row.PreviewID != nil {
-		t.Errorf("preview_id: got %v, want nil (no-op)", row.PreviewID)
-	}
-
-	// Correct instance can mark ready.
-	if err := store.MarkReady(ctx, fileID, version, realInst, "preview-yyy"); err != nil {
+	written, err = store.MarkReady(ctx, realInst, rows[1:])
+	if err != nil {
 		t.Fatalf("MarkReady (correct inst): %v", err)
 	}
-	row2, err := store.Find(ctx, fileID, version)
-	if err != nil || row2 == nil {
-		t.Fatalf("Find after correct MarkReady: %v", err)
+	if len(written) != 1 || written[0] != SizeM {
+		t.Fatalf("written: got %v, want [m]", written)
 	}
-	if row2.Status != StatusReady {
-		t.Errorf("status: got %q, want READY", row2.Status)
+	pair := pairOf(t, store, fileID, version)
+	if pair[SizeM].Status != StatusReady || pair[SizeM].BlobID == nil || *pair[SizeM].BlobID != "preview-m" {
+		t.Errorf("m row not READY with blob: %+v", pair[SizeM])
 	}
-	if row2.PreviewID == nil || *row2.PreviewID != "preview-yyy" {
-		t.Errorf("preview_id: got %v, want %q", row2.PreviewID, "preview-yyy")
+	if pair[SizeS].Status != StatusGenerating || pair[SizeS].BlobID != nil {
+		t.Errorf("s row was not passed to MarkReady and must be untouched: %+v", pair[SizeS])
+	}
+
+	written, err = store.MarkReady(ctx, realInst, rows)
+	if err != nil {
+		t.Fatalf("MarkReady (both): %v", err)
+	}
+	if len(written) != 1 || written[0] != SizeS {
+		t.Errorf("written: got %v, want [s] (m is already READY)", written)
+	}
+	pair = pairOf(t, store, fileID, version)
+	if pair[SizeS].Status != StatusReady || *pair[SizeS].BlobID != "preview-s" {
+		t.Errorf("s row not READY with blob: %+v", pair[SizeS])
 	}
 }
 
-// TestMarkUnsupported_TerminatesRow verifies MarkUnsupported transitions GENERATING→UNSUPPORTED.
+// TestMarkUnsupported_TerminatesRow verifies MarkUnsupported transitions GENERATING→UNSUPPORTED on both sizes.
 func TestMarkUnsupported_TerminatesRow(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -620,26 +483,19 @@ func TestMarkUnsupported_TerminatesRow(t *testing.T) {
 	const version = 1
 	const instID = "inst-u"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
 	if err := store.MarkUnsupported(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkUnsupported: %v", err)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusUnsupported {
-		t.Errorf("status: got %q, want UNSUPPORTED", row.Status)
-	}
-	if row.ClaimedBy != nil {
-		t.Errorf("claimed_by: got %v, want nil (cleared on terminal)", row.ClaimedBy)
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusUnsupported {
+			t.Errorf("%s status: got %q, want UNSUPPORTED", size, row.Status)
+		}
+		if row.ClaimedBy != nil {
+			t.Errorf("%s claimed_by: got %v, want nil (cleared on terminal)", size, row.ClaimedBy)
+		}
 	}
 }
 
@@ -653,27 +509,20 @@ func TestMarkUnsupported_WrongInstanceNoop(t *testing.T) {
 	const realInst = "inst-real"
 	const wrongInst = "inst-wrong"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, realInst)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, realInst)
 	if err := store.MarkUnsupported(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("MarkUnsupported (wrong inst): unexpected error: %v", err)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING (no-op)", row.Status)
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusGenerating {
+			t.Errorf("%s status: got %q, want GENERATING (no-op)", size, row.Status)
+		}
 	}
 }
 
-// TestMarkFailed_TerminatesRow verifies MarkFailed transitions GENERATING→FAILED.
+// TestMarkFailed_TerminatesRow verifies MarkFailed transitions GENERATING→FAILED on both sizes.
 func TestMarkFailed_TerminatesRow(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -682,26 +531,19 @@ func TestMarkFailed_TerminatesRow(t *testing.T) {
 	const version = 1
 	const instID = "inst-f"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
 	if err := store.MarkFailed(ctx, fileID, version, instID); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusFailed {
-		t.Errorf("status: got %q, want FAILED", row.Status)
-	}
-	if row.ClaimedBy != nil {
-		t.Errorf("claimed_by: got %v, want nil", row.ClaimedBy)
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusFailed {
+			t.Errorf("%s status: got %q, want FAILED", size, row.Status)
+		}
+		if row.ClaimedBy != nil {
+			t.Errorf("%s claimed_by: got %v, want nil", size, row.ClaimedBy)
+		}
 	}
 }
 
@@ -724,13 +566,8 @@ func TestMarkFailed_TerminatesRow_RegressionLongErrorNoLongerStored(t *testing.T
 	const version = 1
 	const instID = "inst-longerr"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, instID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, instID)
 
 	// Simulate what used to be a >512-char error message (e.g. multi-line
 	// ffmpeg stderr / pgx connection error). MarkFailed no longer accepts (or
@@ -741,15 +578,13 @@ func TestMarkFailed_TerminatesRow_RegressionLongErrorNoLongerStored(t *testing.T
 		t.Fatalf("MarkFailed: unexpected error (terminal transition must always succeed): %v", err)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusFailed {
-		t.Errorf("status: got %q, want FAILED (row must not be stranded in GENERATING)", row.Status)
-	}
-	if row.ClaimedBy != nil {
-		t.Errorf("claimed_by: got %v, want nil", row.ClaimedBy)
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusFailed {
+			t.Errorf("%s status: got %q, want FAILED (row must not be stranded in GENERATING)", size, row.Status)
+		}
+		if row.ClaimedBy != nil {
+			t.Errorf("%s claimed_by: got %v, want nil", size, row.ClaimedBy)
+		}
 	}
 }
 
@@ -763,23 +598,16 @@ func TestMarkFailed_WrongInstanceNoop(t *testing.T) {
 	const realInst = "inst-real"
 	const wrongInst = "inst-thief"
 
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := store.Claim(ctx, fileID, version, realInst)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, store, fileID, version)
+	claimPair(t, store, fileID, version, realInst)
 	if err := store.MarkFailed(ctx, fileID, version, wrongInst); err != nil {
 		t.Fatalf("MarkFailed (wrong inst): unexpected error: %v", err)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if row.Status != StatusGenerating {
-		t.Errorf("status: got %q, want GENERATING (no-op)", row.Status)
+	for size, row := range pairOf(t, store, fileID, version) {
+		if row.Status != StatusGenerating {
+			t.Errorf("%s status: got %q, want GENERATING (no-op)", size, row.Status)
+		}
 	}
 }
 
@@ -793,7 +621,6 @@ func TestFindPendingNewest_OrderAndLimit(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
 
-	// Insert 5 rows with explicit created_at values.
 	base := uid(t, "pending_order")
 	type entry struct {
 		fileID    string
@@ -809,10 +636,10 @@ func TestFindPendingNewest_OrderAndLimit(t *testing.T) {
 	}
 	for _, e := range entries {
 		_, err := store.pool.Exec(ctx,
-			`INSERT INTO video_preview
-			    (file_id, version, status, owner_id, service_type, attempts, created_at, updated_at)
-			 VALUES ($1, 1, 'PENDING', 'owner1', 'files', 0, $2, $2)
-			 ON CONFLICT (file_id, version) DO NOTHING`,
+			`INSERT INTO thumbnail
+			    (file_id, version, size, status, kind, owner_id, service_type, attempts, created_at, updated_at)
+			 VALUES ($1, 1, 'm', 'PENDING', 'video', 'owner1', 'files', 0, $2, $2)
+			 ON CONFLICT (file_id, version, size) DO NOTHING`,
 			e.fileID, e.createdAt,
 		)
 		if err != nil {
@@ -820,7 +647,6 @@ func TestFindPendingNewest_OrderAndLimit(t *testing.T) {
 		}
 	}
 
-	// Request 3 — should be E, D, C (newest first).
 	rows, err := store.FindPendingNewest(ctx, 3)
 	if err != nil {
 		t.Fatalf("FindPendingNewest: %v", err)
@@ -828,79 +654,227 @@ func TestFindPendingNewest_OrderAndLimit(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3", len(rows))
 	}
-	// Verify created_at is monotonically non-increasing.
 	for i := 1; i < len(rows); i++ {
 		if rows[i].CreatedAt.After(rows[i-1].CreatedAt) {
 			t.Errorf("row[%d].created_at=%v > row[%d].created_at=%v (not newest-first)",
 				i, rows[i].CreatedAt, i-1, rows[i-1].CreatedAt)
 		}
 	}
-	// Newest should be the one with the highest created_at.
 	if rows[0].FileID != base+"_E" {
 		t.Errorf("first row file_id: got %q, want %q", rows[0].FileID, base+"_E")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DeleteByFileId
-// ---------------------------------------------------------------------------
+func newPending(id string, version int, size, kind string) Thumbnail {
+	return Thumbnail{FileID: id, Version: version, Size: size, Kind: kind, OwnerID: "o", ServiceType: "files"}
+}
 
-// TestDeleteByFileId removes a row and verifies Find returns nil afterwards.
-func TestDeleteByFileId(t *testing.T) {
-	store := startPostgres(t)
+func strp(s string) *string { return &s }
+
+func TestPutReady_InsertAndConflict(t *testing.T) {
+	st := startPostgres(t)
 	ctx := context.Background()
+	id := uid(t, "put")
 
-	fileID := uid(t, "delete")
-	const version = 1
-
-	if err := store.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
+	row := newPending(id, 1, SizeM, "office")
+	row.BlobID, row.ContentType, row.Digest = strp("b1"), strp("image/jpeg"), strp("d1")
+	ok, err := st.PutReady(ctx, row, nil)
+	if err != nil || !ok {
+		t.Fatalf("first PutReady: ok=%v err=%v", ok, err)
 	}
-	if err := store.DeleteByFileId(ctx, fileID, version); err != nil {
-		t.Fatalf("DeleteByFileId: %v", err)
-	}
-
-	row, err := store.Find(ctx, fileID, version)
+	got, err := st.FindPair(ctx, id, 1)
 	if err != nil {
-		t.Fatalf("Find after delete: %v", err)
+		t.Fatal(err)
 	}
-	if row != nil {
-		t.Errorf("expected nil after delete, got: %+v", row)
+	r := got[SizeM]
+	if r == nil || r.Status != StatusReady || *r.BlobID != "b1" || *r.Digest != "d1" || *r.ContentType != "image/jpeg" || r.Kind != "office" {
+		t.Fatalf("stored row = %+v", r)
+	}
+	if got[SizeS] != nil {
+		t.Errorf("size s must be absent")
+	}
+
+	row.BlobID = strp("b2")
+	ok, err = st.PutReady(ctx, row, nil)
+	if err != nil || ok {
+		t.Fatalf("conflicting PutReady: ok=%v err=%v, want false", ok, err)
+	}
+	got, _ = st.FindPair(ctx, id, 1)
+	if *got[SizeM].BlobID != "b1" {
+		t.Errorf("conflicting insert must not overwrite the row")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// InsertReady / Find basic round-trip
-// ---------------------------------------------------------------------------
-
-// TestInsertReady_RoundTrip verifies InsertReady creates a READY row with the
-// expected fields, and Find returns it faithfully.
-func TestInsertReady_RoundTrip(t *testing.T) {
-	store := startPostgres(t)
+func TestPutReady_CASReplacesAndLoses(t *testing.T) {
+	st := startPostgres(t)
 	ctx := context.Background()
+	id := uid(t, "cas")
 
-	fileID := uid(t, "insert_ready")
-	const version = 3
-	const previewID = "prev-xyz-789"
+	first := newPending(id, 1, SizeS, "video")
+	first.BlobID, first.Digest, first.Lang = strp("b1"), strp("d1"), strp("it")
+	if ok, err := st.PutReady(ctx, first, nil); err != nil || !ok {
+		t.Fatalf("seed: ok=%v err=%v", ok, err)
+	}
+	cur, _ := st.FindPair(ctx, id, 1)
+	expected := cur[SizeS]
 
-	if err := store.InsertReady(ctx, fileID, version, "owner42", "chats", previewID); err != nil {
-		t.Fatalf("InsertReady: %v", err)
+	next := newPending(id, 1, SizeS, "office")
+	next.BlobID, next.Digest, next.ContentType, next.OwnerID, next.ServiceType = strp("b2"), strp("d2"), strp("image/png"), "o2", "chats"
+	ok, err := st.PutReady(ctx, next, expected)
+	if err != nil || !ok {
+		t.Fatalf("CAS replace: ok=%v err=%v", ok, err)
+	}
+	cur, _ = st.FindPair(ctx, id, 1)
+	r := cur[SizeS]
+	if *r.BlobID != "b2" || *r.Digest != "d2" || r.Kind != "office" || r.OwnerID != "o2" || r.ServiceType != "chats" || r.Lang != nil || r.Attempts != 0 || r.Status != StatusReady {
+		t.Fatalf("replaced row = %+v", r)
 	}
 
-	row, err := store.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: err=%v row=%v", err, row)
+	third := next
+	third.BlobID = strp("b3")
+	ok, err = st.PutReady(ctx, third, expected)
+	if err != nil || ok {
+		t.Fatalf("stale CAS: ok=%v err=%v, want false", ok, err)
 	}
-	if row.Status != StatusReady {
-		t.Errorf("status: got %q, want READY", row.Status)
+	cur, _ = st.FindPair(ctx, id, 1)
+	if *cur[SizeS].BlobID != "b2" {
+		t.Errorf("a lost CAS must not write")
 	}
-	if row.PreviewID == nil || *row.PreviewID != previewID {
-		t.Errorf("preview_id: got %v, want %q", row.PreviewID, previewID)
+}
+
+func TestFindPair(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "pair")
+
+	got, err := st.FindPair(ctx, id, 1)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v %v", got, err)
 	}
-	if row.OwnerID != "owner42" {
-		t.Errorf("owner_id: got %q, want %q", row.OwnerID, "owner42")
+	for _, size := range []string{SizeS, SizeM} {
+		if ok, err := st.Enqueue(ctx, newPending(id, 1, size, "video"), nil); err != nil || !ok {
+			t.Fatalf("Enqueue %s: ok=%v err=%v", size, ok, err)
+		}
 	}
-	if row.ServiceType != "chats" {
-		t.Errorf("service_type: got %q, want %q", row.ServiceType, "chats")
+	if ok, err := st.Enqueue(ctx, newPending(id, 2, SizeS, "video"), nil); err != nil || !ok {
+		t.Fatal(err)
+	}
+	got, err = st.FindPair(ctx, id, 1)
+	if err != nil || len(got) != 2 || got[SizeS] == nil || got[SizeM] == nil {
+		t.Fatalf("pair = %v err=%v", got, err)
+	}
+	if got[SizeS].Status != StatusPending || got[SizeS].Version != 1 {
+		t.Errorf("row = %+v", got[SizeS])
+	}
+}
+
+func TestClaim_ReturnsOnlyPendingRows(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "claimpair")
+
+	for _, size := range []string{SizeS, SizeM} {
+		if ok, err := st.Enqueue(ctx, newPending(id, 1, size, "office"), nil); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	st.exec(t, `UPDATE thumbnail SET status='READY' WHERE file_id=$1 AND size='s'`, id)
+
+	rows, err := st.Claim(ctx, id, 1, "inst-a")
+	if err != nil || len(rows) != 1 || rows[0].Size != SizeM || rows[0].Status != StatusGenerating {
+		t.Fatalf("Claim = %+v err=%v, want only the PENDING m row", rows, err)
+	}
+	rows, err = st.Claim(ctx, id, 1, "inst-b")
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("second Claim = %+v err=%v, want none", rows, err)
+	}
+}
+
+func TestEnqueue_CASReplacesReadyAndKeepsOthers(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "enq")
+
+	ready := newPending(id, 1, SizeM, "video")
+	ready.BlobID, ready.Digest = strp("old"), strp("d1")
+	if ok, err := st.PutReady(ctx, ready, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	cur, _ := st.FindPair(ctx, id, 1)
+
+	again := newPending(id, 1, SizeM, "video")
+	again.Digest = strp("d2")
+	if ok, err := st.Enqueue(ctx, again, nil); err != nil || ok {
+		t.Fatalf("insert over existing row: ok=%v err=%v, want false", ok, err)
+	}
+	if ok, err := st.Enqueue(ctx, again, cur[SizeM]); err != nil || !ok {
+		t.Fatalf("CAS enqueue: ok=%v err=%v", ok, err)
+	}
+	cur2, _ := st.FindPair(ctx, id, 1)
+	r := cur2[SizeM]
+	if r.Status != StatusPending || r.BlobID != nil || *r.Digest != "d2" || r.Original || r.ContentType != nil {
+		t.Fatalf("enqueued row = %+v", r)
+	}
+	if ok, err := st.Enqueue(ctx, again, cur[SizeM]); err != nil || ok {
+		t.Fatalf("stale expected row: ok=%v err=%v, want false", ok, err)
+	}
+}
+
+func TestMarkReady_WritesOnlyClaimedSizes(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "mr")
+
+	for _, size := range []string{SizeS, SizeM} {
+		if ok, err := st.Enqueue(ctx, newPending(id, 1, size, "video"), nil); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	st.exec(t, `UPDATE thumbnail SET status='GENERATING', claimed_by='inst-a' WHERE file_id=$1 AND size='m'`, id)
+
+	rows := []Thumbnail{
+		{FileID: id, Version: 1, Size: SizeS, BlobID: strp("bs"), ContentType: strp("image/jpeg")},
+		{FileID: id, Version: 1, Size: SizeM, BlobID: strp("bm"), ContentType: strp("image/jpeg")},
+	}
+	written, err := st.MarkReady(ctx, "inst-a", rows)
+	if err != nil || len(written) != 1 || written[0] != SizeM {
+		t.Fatalf("written = %v err=%v, want [m]", written, err)
+	}
+	cur, _ := st.FindPair(ctx, id, 1)
+	if cur[SizeS].Status != StatusPending || cur[SizeS].BlobID != nil {
+		t.Errorf("unclaimed size must be untouched: %+v", cur[SizeS])
+	}
+	if cur[SizeM].Status != StatusReady || *cur[SizeM].BlobID != "bm" || cur[SizeM].ClaimedBy != nil {
+		t.Errorf("claimed size not ready: %+v", cur[SizeM])
+	}
+}
+
+func TestDeleteByFile_AllVersionsAndSizes(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id, other := uid(t, "del"), uid(t, "other")
+
+	for _, v := range []int{1, 2} {
+		for _, size := range []string{SizeS, SizeM} {
+			if ok, err := st.Enqueue(ctx, newPending(id, v, size, "video"), nil); err != nil || !ok {
+				t.Fatal(ok, err)
+			}
+		}
+	}
+	if ok, err := st.Enqueue(ctx, newPending(other, 1, SizeS, "video"), nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	rows, err := st.FindByFile(ctx, id)
+	if err != nil || len(rows) != 4 {
+		t.Fatalf("FindByFile = %d rows err=%v, want 4", len(rows), err)
+	}
+	if err := st.DeleteByFile(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ := st.FindByFile(ctx, id); len(rows) != 0 {
+		t.Errorf("rows left: %v", rows)
+	}
+	if rows, _ := st.FindByFile(ctx, other); len(rows) != 1 {
+		t.Errorf("other file must be kept: %v", rows)
 	}
 }

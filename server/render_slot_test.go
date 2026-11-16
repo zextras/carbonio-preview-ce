@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
-	"github.com/zextras/carbonio-preview-ce/v4/db"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
@@ -835,130 +834,6 @@ func TestFlight_PanicBecomes500AndReleasesSlots(t *testing.T) {
 	if len(lim.render) != 0 {
 		t.Errorf("render slots still held after panic=%d", len(lim.render))
 	}
-}
-
-func TestVideoGet_Slots(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	t.Run("resize holds the render slot", func(t *testing.T) {
-		const fileID = "b1b2c3d4-e5f6-7890-abcd-ef1234567890"
-		if err := dbStore.InsertReady(ctx, fileID, 1, "owner1", "files", "frame-blob"); err != nil {
-			t.Fatalf("InsertReady: %v", err)
-		}
-		lim := newLimits(1)
-		var renderHeld atomic.Int32
-		stubRender(t, func([]byte) ([]byte, error) {
-			renderHeld.Store(int32(len(lim.render)))
-			return []byte("frame-jpeg"), nil
-		})
-		deps := Deps{Cfg: testCfg(), Store: newGatedStore(), Cache: cache.New(0), DB: dbStore, Limits: lim}
-
-		out, err := buildGetVideoPreview(deps, nil)(ctx, &apispec.VideoGetPreviewInput{
-			ID: fileID, Version: 1, Area: "100x100", ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-		})
-		if err != nil || string(out.Body) != "frame-jpeg" {
-			t.Fatalf("preview: out=%v err=%v", out, err)
-		}
-		if renderHeld.Load() != 1 {
-			t.Errorf("preview resize saw render=%d, want 1", renderHeld.Load())
-		}
-
-		renderHeld.Store(0)
-		out, err = buildGetVideoThumbnail(deps, nil)(ctx, &apispec.VideoGetThumbnailInput{
-			ID: fileID, Version: 1, Area: "100x100", ServiceType: "files", Quality: "medium", OutputFormat: "jpeg", Shape: "rectangular",
-		})
-		if err != nil || string(out.Body) != "frame-jpeg" {
-			t.Fatalf("thumbnail: out=%v err=%v", out, err)
-		}
-		if renderHeld.Load() != 1 {
-			t.Errorf("thumbnail resize saw render=%d, want 1", renderHeld.Load())
-		}
-		if len(lim.render) != 0 {
-			t.Errorf("render slots still held=%d", len(lim.render))
-		}
-	})
-
-	t.Run("missing blob re-enqueues even after the waiter left", func(t *testing.T) {
-		const fileID = "c1b2c3d4-e5f6-7890-abcd-ef1234567890"
-		if err := dbStore.InsertReady(ctx, fileID, 1, "owner1", "files", "frame-gone"); err != nil {
-			t.Fatalf("InsertReady: %v", err)
-		}
-		store := newGatedStore()
-		store.err = storage.ErrNotFound
-		gate := store.gate(1)
-		handler := buildGetVideoPreview(Deps{Cfg: testCfg(), Store: store, Cache: cache.New(0), DB: dbStore, Limits: newLimits(1)}, nil)
-		input := &apispec.VideoGetPreviewInput{
-			ID: fileID, Version: 1, Area: "100x100", ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-		}
-
-		reqCtx, cancel := context.WithCancel(ctx)
-		errCh := make(chan error, 1)
-		go func() {
-			_, err := handler(reqCtx, input)
-			errCh <- err
-		}()
-		waitFetch(t, store, 1)
-		cancel()
-		if got := statusOf(t, <-errCh); got != http.StatusServiceUnavailable {
-			t.Fatalf("disconnected waiter: status %d, want 503", got)
-		}
-		close(gate)
-
-		deadline := time.Now().Add(slotWatchdog)
-		for {
-			row, err := dbStore.Find(ctx, fileID, 1)
-			if err != nil {
-				t.Fatalf("Find: %v", err)
-			}
-			if row != nil && row.Status == db.StatusPending {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("row never re-enqueued: %+v", row)
-			}
-			runtime.Gosched()
-		}
-
-		_, err := handler(ctx, input)
-		if got := statusOf(t, err); got != http.StatusAccepted {
-			t.Errorf("follow-up: status %d, want 202", got)
-		}
-	})
-	t.Run("missing blob 202 is shared by all waiters", func(t *testing.T) {
-		const fileID = "d1b2c3d4-e5f6-7890-abcd-ef1234567890"
-		const previewID = "frame-gone-shared"
-		if err := dbStore.InsertReady(ctx, fileID, 1, "owner1", "files", previewID); err != nil {
-			t.Fatalf("InsertReady: %v", err)
-		}
-		store := newGatedStore()
-		store.err = storage.ErrNotFound
-		gate := store.gate(1)
-		lim := newLimits(1)
-		handler := buildGetVideoPreview(Deps{Cfg: testCfg(), Store: store, Cache: cache.New(0), DB: dbStore, Limits: lim}, nil)
-		key := cacheKey("vid-preview", previewID, 1, "files", 100, 100, "medium", "jpeg", false, "rectangular", 1, 0, "en-US", "")
-
-		errs := make(chan error, 2)
-		for i := 0; i < 2; i++ {
-			go func() {
-				_, err := handler(ctx, &apispec.VideoGetPreviewInput{
-					ID: fileID, Version: 1, Area: "100x100", ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-				})
-				errs <- err
-			}()
-			waitWaiters(t, lim, key, i+1)
-		}
-		close(gate)
-		for i := 0; i < 2; i++ {
-			if got := statusOf(t, <-errs); got != http.StatusAccepted {
-				t.Errorf("waiter %d: status %d, want 202", i, got)
-			}
-		}
-		if n := store.callsFor(1); n != 1 {
-			t.Errorf("RetrieveData calls=%d, want 1", n)
-		}
-		assertNoFlights(t, lim)
-	})
 }
 
 func waitParkedN(t *testing.T, l *limits, n int32) {

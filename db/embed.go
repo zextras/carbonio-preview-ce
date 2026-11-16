@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package db provides the database connection pool, migration runner, and
-// all video_preview SQL operations for carbonio-preview-ce.
+// all thumbnail SQL operations for carbonio-preview-ce.
 package db
 
 import "embed"

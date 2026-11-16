@@ -22,22 +22,20 @@ func (s *Store) exec(t *testing.T, sql string, args ...any) {
 
 func (s *Store) setAccessed(t *testing.T, fileID string, ago time.Duration) {
 	t.Helper()
-	s.exec(t, `UPDATE video_preview SET last_accessed_at = now() - $2::interval WHERE file_id=$1`,
+	s.exec(t, `UPDATE thumbnail SET last_accessed_at = now() - $2::interval WHERE file_id=$1`,
 		fileID, fmt.Sprintf("%d seconds", int(ago.Seconds())))
 }
 
 func (s *Store) setStatus(t *testing.T, fileID, status string) {
 	t.Helper()
-	s.exec(t, `UPDATE video_preview SET status=$2 WHERE file_id=$1`, fileID, status)
+	s.exec(t, `UPDATE thumbnail SET status=$2 WHERE file_id=$1`, fileID, status)
 }
 
 func TestMigration2_DropsFailedKeepsOthersAndStampsLastAccess(t *testing.T) {
-	st := startPostgres(t)
+	st := startPostgresRaw(t)
 	ctx := context.Background()
 
-	st.exec(t, `DROP INDEX idx_video_preview_cleanup`)
-	st.exec(t, `ALTER TABLE video_preview DROP COLUMN last_accessed_at`)
-	st.exec(t, `UPDATE schema_migrations SET version=1`)
+	migrateTo(t, st, 1)
 	for _, status := range []string{StatusFailed, StatusReady, StatusPending} {
 		st.exec(t, `INSERT INTO video_preview (file_id, version, status, owner_id, service_type, attempts, created_at, updated_at)
                     VALUES ($1, 1, $2, 'o', 'files', 0, now() - interval '90 days', now() - interval '90 days')`,
@@ -45,21 +43,30 @@ func TestMigration2_DropsFailedKeepsOthersAndStampsLastAccess(t *testing.T) {
 	}
 
 	before := time.Now().Add(-time.Minute)
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
+	migrateTo(t, st, 2)
 
-	if vp, err := st.Find(ctx, "v1_"+StatusFailed, 1); err != nil || vp != nil {
-		t.Fatalf("FAILED row must be gone: vp=%v err=%v", vp, err)
+	count := func(id string) int {
+		var n int
+		if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM video_preview WHERE file_id=$1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count("v1_" + StatusFailed); n != 0 {
+		t.Fatalf("FAILED row must be gone, found %d", n)
 	}
 	for _, status := range []string{StatusReady, StatusPending} {
-		vp, err := st.Find(ctx, "v1_"+status, 1)
-		if err != nil || vp == nil {
-			t.Fatalf("%s row must be kept: vp=%v err=%v", status, vp, err)
+		var accessed time.Time
+		if err := st.pool.QueryRow(ctx, `SELECT last_accessed_at FROM video_preview WHERE file_id=$1`, "v1_"+status).Scan(&accessed); err != nil {
+			t.Fatalf("%s row must be kept: %v", status, err)
 		}
-		if vp.LastAccessedAt.Before(before) {
-			t.Errorf("%s: last_accessed_at %v must be the migration time, not the old created_at", status, vp.LastAccessedAt)
+		if accessed.Before(before) {
+			t.Errorf("%s: last_accessed_at %v must be the migration time, not the old created_at", status, accessed)
 		}
+	}
+
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
 	}
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate: %v", err)
@@ -72,17 +79,17 @@ func TestDeleteClaimed_OnlyOwnGeneratingRow(t *testing.T) {
 
 	own, other, pending, ready := uid(t, "own"), uid(t, "other"), uid(t, "pend"), uid(t, "ready")
 	for _, id := range []string{own, other, pending, ready} {
-		if err := st.EnqueueIfAbsent(ctx, id, 1, "o", "files"); err != nil {
-			t.Fatal(err)
-		}
+		enqueuePair(t, st, id, 1)
 	}
 	for _, c := range []struct{ id, inst string }{{own, "inst-a"}, {other, "inst-b"}, {ready, "inst-a"}} {
-		if ok, err := st.Claim(ctx, c.id, 1, c.inst); err != nil || !ok {
-			t.Fatalf("Claim %s: ok=%v err=%v", c.id, ok, err)
-		}
+		claimPair(t, st, c.id, 1, c.inst)
 	}
-	if err := st.MarkReady(ctx, ready, 1, "inst-a", "blob"); err != nil {
-		t.Fatal(err)
+	written, err := st.MarkReady(ctx, "inst-a", []Thumbnail{
+		{FileID: ready, Version: 1, Size: SizeS, BlobID: strp("blob-s")},
+		{FileID: ready, Version: 1, Size: SizeM, BlobID: strp("blob-m")},
+	})
+	if err != nil || len(written) != 2 {
+		t.Fatalf("MarkReady: written=%v err=%v", written, err)
 	}
 
 	for _, id := range []string{own, other, pending, ready} {
@@ -90,22 +97,36 @@ func TestDeleteClaimed_OnlyOwnGeneratingRow(t *testing.T) {
 			t.Fatalf("DeleteClaimed %s: %v", id, err)
 		}
 	}
-	want := map[string]bool{own: false, other: true, pending: true, ready: true}
-	for id, kept := range want {
-		vp, err := st.Find(ctx, id, 1)
+	want := map[string]int{own: 0, other: 2, pending: 2, ready: 2}
+	for id, n := range want {
+		rows, err := st.FindPair(ctx, id, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (vp != nil) != kept {
-			t.Errorf("%s: present=%v, want %v", id, vp != nil, kept)
+		if len(rows) != n {
+			t.Errorf("%s: rows=%d, want %d", id, len(rows), n)
 		}
 	}
 }
 
 func readyRow(t *testing.T, st *Store, id string, ago time.Duration) {
 	t.Helper()
-	if err := st.InsertReady(context.Background(), id, 1, "o", "files", "blob-"+id); err != nil {
-		t.Fatal(err)
+	row := newPending(id, 1, SizeM, "video")
+	row.BlobID = strp("blob-" + id)
+	if ok, err := st.PutReady(context.Background(), row, nil); err != nil || !ok {
+		t.Fatalf("PutReady: ok=%v err=%v", ok, err)
+	}
+	st.setAccessed(t, id, ago)
+}
+
+func readyPair(t *testing.T, st *Store, id string, ago time.Duration) {
+	t.Helper()
+	for _, size := range []string{SizeS, SizeM} {
+		row := newPending(id, 1, size, "video")
+		row.BlobID = strp("blob-" + size + "-" + id)
+		if ok, err := st.PutReady(context.Background(), row, nil); err != nil || !ok {
+			t.Fatalf("PutReady %s: ok=%v err=%v", size, ok, err)
+		}
 	}
 	st.setAccessed(t, id, ago)
 }
@@ -120,33 +141,40 @@ func TestTouchReady_OnlyReadyOlderThanOneDay(t *testing.T) {
 	readyRow(t, st, notReady, 2*24*time.Hour)
 	st.setStatus(t, notReady, StatusUnsupported)
 
-	freshBefore, _ := st.Find(ctx, fresh, 1)
-	notReadyBefore, _ := st.Find(ctx, notReady, 1)
+	freshBefore, _ := st.FindPair(ctx, fresh, 1)
+	notReadyBefore, _ := st.FindPair(ctx, notReady, 1)
 
 	for _, id := range []string{old, fresh, notReady} {
-		if err := st.TouchReady(ctx, id, 1); err != nil {
+		if err := st.TouchReady(ctx, id, 1, SizeM); err != nil {
 			t.Fatalf("TouchReady %s: %v", id, err)
 		}
 	}
 
-	if vp, _ := st.Find(ctx, old, 1); time.Since(vp.LastAccessedAt) > time.Minute {
-		t.Errorf("old READY row not touched: %v", vp.LastAccessedAt)
+	if p, _ := st.FindPair(ctx, old, 1); time.Since(p[SizeM].LastAccessedAt) > time.Minute {
+		t.Errorf("old READY row not touched: %v", p[SizeM].LastAccessedAt)
 	}
-	if vp, _ := st.Find(ctx, fresh, 1); !vp.LastAccessedAt.Equal(freshBefore.LastAccessedAt) {
+	if p, _ := st.FindPair(ctx, fresh, 1); !p[SizeM].LastAccessedAt.Equal(freshBefore[SizeM].LastAccessedAt) {
 		t.Errorf("fresh row must not be written")
 	}
-	if vp, _ := st.Find(ctx, notReady, 1); !vp.LastAccessedAt.Equal(notReadyBefore.LastAccessedAt) {
+	if p, _ := st.FindPair(ctx, notReady, 1); !p[SizeM].LastAccessedAt.Equal(notReadyBefore[SizeM].LastAccessedAt) {
 		t.Errorf("non-READY row must not be touched")
 	}
 }
 
-func TestExpiredReady_SelectionDeletionAndPaging(t *testing.T) {
+type rowKey struct{ id, size string }
+
+func TestExpired_SelectionDeletionAndPaging(t *testing.T) {
 	st := startPostgres(t)
 
 	expired := []string{uid(t, "e1"), uid(t, "e2"), uid(t, "e3")}
 	for i, id := range expired {
 		readyRow(t, st, id, time.Duration(40+i)*24*time.Hour)
 	}
+	legacy := uid(t, "legacy")
+	readyRow(t, st, legacy, 43*24*time.Hour)
+	st.setStatus(t, legacy, StatusLegacy)
+	both := uid(t, "both")
+	readyPair(t, st, both, 50*24*time.Hour)
 	recent := uid(t, "recent")
 	readyRow(t, st, recent, 29*24*time.Hour)
 	others := map[string]string{}
@@ -158,7 +186,56 @@ func TestExpiredReady_SelectionDeletionAndPaging(t *testing.T) {
 	}
 
 	withCleanupConn(t, st, func(c *CleanupConn) {
-		cleanupSelectionAndDeletion(t, st, c, expired, recent, others)
+		ctx := context.Background()
+		wantOrder := []rowKey{{both, SizeM}, {both, SizeS}, {legacy, SizeM}, {expired[2], SizeM}, {expired[1], SizeM}, {expired[0], SizeM}}
+
+		for _, pageSize := range []int{1, 2} {
+			var got []rowKey
+			var cursor *Thumbnail
+			for {
+				rows, err := c.FindExpired(ctx, cursor, pageSize)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, r := range rows {
+					got = append(got, rowKey{r.FileID, r.Size})
+				}
+				if len(rows) < pageSize {
+					break
+				}
+				cursor = &rows[len(rows)-1]
+			}
+			if len(got) != len(wantOrder) {
+				t.Fatalf("page size %d: expired selection: got %v, want %v", pageSize, got, wantOrder)
+			}
+			for i := range wantOrder {
+				if got[i] != wantOrder[i] {
+					t.Fatalf("page size %d: expired selection (oldest first, paged): got %v, want %v", pageSize, got, wantOrder)
+				}
+			}
+		}
+
+		if err := st.TouchReady(ctx, expired[0], 1, SizeM); err != nil {
+			t.Fatal(err)
+		}
+		all := append(append([]string{recent, legacy, both}, expired...), keys(others)...)
+		for _, id := range all {
+			for _, size := range []string{SizeS, SizeM} {
+				if err := c.DeleteExpired(ctx, id, 1, size); err != nil {
+					t.Fatalf("DeleteExpired %s/%s: %v", id, size, err)
+				}
+			}
+		}
+		for _, id := range []string{both, legacy, expired[1], expired[2]} {
+			if rows, _ := st.FindByFile(ctx, id); len(rows) != 0 {
+				t.Errorf("%s should be deleted: %v", id, rows)
+			}
+		}
+		for _, id := range append([]string{recent, expired[0]}, keys(others)...) {
+			if rows, _ := st.FindByFile(ctx, id); len(rows) != 1 {
+				t.Errorf("%s must be kept: %v", id, rows)
+			}
+		}
 	})
 }
 
@@ -170,47 +247,6 @@ func withCleanupConn(t *testing.T, st *Store, fn func(*CleanupConn)) {
 	})
 	if err != nil || !locked {
 		t.Fatalf("WithCleanupLock: locked=%v err=%v", locked, err)
-	}
-}
-
-func cleanupSelectionAndDeletion(t *testing.T, st *Store, c *CleanupConn, expired []string, recent string, others map[string]string) {
-	ctx := context.Background()
-	var got []string
-	var cursor *VideoPreview
-	for {
-		rows, err := c.FindExpiredReady(ctx, cursor, 2)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range rows {
-			got = append(got, r.FileID)
-		}
-		if len(rows) < 2 {
-			break
-		}
-		cursor = &rows[len(rows)-1]
-	}
-	if len(got) != 3 || got[0] != expired[2] || got[1] != expired[1] || got[2] != expired[0] {
-		t.Fatalf("expired selection (oldest first, paged): got %v", got)
-	}
-
-	if err := st.TouchReady(ctx, expired[0], 1); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range append(append([]string{recent}, expired...), keys(others)...) {
-		if err := c.DeleteExpiredReady(ctx, id, 1); err != nil {
-			t.Fatalf("DeleteExpiredReady %s: %v", id, err)
-		}
-	}
-	for _, id := range expired[1:] {
-		if vp, _ := st.Find(ctx, id, 1); vp != nil {
-			t.Errorf("%s should be deleted", id)
-		}
-	}
-	for _, id := range append([]string{recent, expired[0]}, keys(others)...) {
-		if vp, _ := st.Find(ctx, id, 1); vp == nil {
-			t.Errorf("%s must be kept", id)
-		}
 	}
 }
 
@@ -275,21 +311,21 @@ func TestCleanupRun_WorksWithSingleConnectionPool(t *testing.T) {
 	readyRow(t, st, id, 40*24*time.Hour)
 
 	locked, err := st.WithCleanupLock(ctx, func(ctx context.Context, c *CleanupConn) error {
-		rows, err := c.FindExpiredReady(ctx, nil, 10)
+		rows, err := c.FindExpired(ctx, nil, 10)
 		if err != nil {
 			return err
 		}
 		if len(rows) != 1 {
 			t.Errorf("expired rows: got %d, want 1", len(rows))
 		}
-		return c.DeleteExpiredReady(ctx, id, 1)
+		return c.DeleteExpired(ctx, id, 1, SizeM)
 	})
 	if err != nil || !locked {
 		t.Fatalf("run: locked=%v err=%v", locked, err)
 	}
-	vp, err := st.Find(ctx, id, 1)
-	if err != nil || vp != nil {
-		t.Fatalf("Find after run: vp=%v err=%v", vp, err)
+	rows, err := st.FindByFile(ctx, id)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("FindByFile after run: rows=%v err=%v", rows, err)
 	}
 }
 
@@ -298,21 +334,19 @@ func TestMarkReady_RefreshesLastAccessedAt(t *testing.T) {
 	ctx := context.Background()
 
 	id := uid(t, "re")
-	if err := st.EnqueueIfAbsent(ctx, id, 1, "o", "files"); err != nil {
-		t.Fatal(err)
-	}
+	enqueuePair(t, st, id, 1)
 	st.setAccessed(t, id, 90*24*time.Hour)
-	if ok, err := st.Claim(ctx, id, 1, "inst"); err != nil || !ok {
-		t.Fatalf("Claim: %v %v", ok, err)
+	rows := claimPair(t, st, id, 1, "inst")
+	for i := range rows {
+		rows[i].BlobID = strp("blob-" + rows[i].Size)
 	}
-	if err := st.MarkReady(ctx, id, 1, "inst", "blob"); err != nil {
-		t.Fatal(err)
+	written, err := st.MarkReady(ctx, "inst", rows)
+	if err != nil || len(written) != 2 {
+		t.Fatalf("MarkReady: written=%v err=%v", written, err)
 	}
-	vp, err := st.Find(ctx, id, 1)
-	if err != nil || vp == nil {
-		t.Fatal(err)
-	}
-	if time.Since(vp.LastAccessedAt) > time.Minute {
-		t.Errorf("MarkReady must refresh last_accessed_at, got %v", vp.LastAccessedAt)
+	for size, r := range pairOf(t, st, id, 1) {
+		if time.Since(r.LastAccessedAt) > time.Minute {
+			t.Errorf("%s: MarkReady must refresh last_accessed_at, got %v", size, r.LastAccessedAt)
+		}
 	}
 }

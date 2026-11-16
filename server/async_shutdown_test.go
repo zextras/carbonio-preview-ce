@@ -60,14 +60,14 @@ func (s *stageStore) StoreData(ctx context.Context, _ string, _ int, _, _ string
 	return "", ctx.Err()
 }
 
-func startJob(w *AsyncWorker, ctx context.Context, row db.VideoPreview) {
-	key := liveKey(row.FileID, row.Version)
+func startJob(w *AsyncWorker, ctx context.Context, rows []db.Thumbnail) {
+	key := liveKey(rows[0].FileID, rows[0].Version)
 	if w.reserve(key) != reserveOK {
 		panic("reserve")
 	}
 	go func() {
 		defer w.unreserve(key)
-		w.attempt(ctx, row)
+		w.attempt(ctx, rows)
 	}()
 }
 
@@ -90,6 +90,7 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	bg := context.Background()
 	var probes atomic.Int32
 	inFFmpeg := make(chan struct{})
+	stubVideoPipeline(t)
 	swap(t, &videoDetectCodecFromFileFunc, func(ctx context.Context, _ string) (string, error) {
 		if probes.Add(1) == 1 {
 			return "h264", nil
@@ -111,23 +112,21 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	defer cancel()
 	w.bind(ctx)
 
-	startJob(w, ctx, claimedRow(t, st, w, idUpload, 0))
+	startJob(w, ctx, claimedRows(t, st, w, idUpload, 0))
 	select {
 	case <-store.uploadStarted:
 	case <-time.After(slotWatchdog):
 		t.Fatal("upload stage never reached")
 	}
-	startJob(w, ctx, claimedRow(t, st, w, idFFmpeg, 0))
+	startJob(w, ctx, claimedRows(t, st, w, idFFmpeg, 0))
 	select {
 	case <-inFFmpeg:
 	case <-time.After(slotWatchdog):
 		t.Fatal("ffmpeg stage never reached")
 	}
-	startJob(w, ctx, claimedRow(t, st, w, idSlot, 0))
+	startJob(w, ctx, claimedRows(t, st, w, idSlot, 0))
 	store.waitEOF(t, 3)
-	if err := st.EnqueueIfAbsent(bg, idDownload, 1, "owner1", "files"); err != nil {
-		t.Fatal(err)
-	}
+	enqueuePair(t, st, idDownload, 1)
 	w.runOne(idDownload, 1)
 	select {
 	case <-store.dlStarted:
@@ -135,7 +134,7 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 		t.Fatal("download stage never reached")
 	}
 
-	startJob(w, ctx, claimedRow(t, st, w, idHeaders, 0))
+	startJob(w, ctx, claimedRows(t, st, w, idHeaders, 0))
 	select {
 	case <-store.hdrStarted:
 	case <-time.After(slotWatchdog):
@@ -155,13 +154,15 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	}
 
 	for stage, id := range map[string]string{"upload": idUpload, "ffmpeg": idFFmpeg, "slot wait": idSlot, "download": idDownload, "headers": idHeaders} {
-		r, err := st.Find(bg, id, 1)
-		if err != nil || r == nil {
-			t.Errorf("%s: row missing (err=%v)", stage, err)
+		pair := pairOf(t, st, id, 1)
+		if len(pair) != 2 {
+			t.Errorf("%s: rows missing (%d of 2)", stage, len(pair))
 			continue
 		}
-		if r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
-			t.Errorf("%s: status=%s attempts=%d claimed_by=%v, want PENDING/0/nil", stage, r.Status, r.Attempts, r.ClaimedBy)
+		for size, r := range pair {
+			if r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
+				t.Errorf("%s/%s: status=%s attempts=%d claimed_by=%v, want PENDING/0/nil", stage, size, r.Status, r.Attempts, r.ClaimedBy)
+			}
 		}
 	}
 	if len(w.deps.AsyncSem) != 0 || w.liveCount() != 0 {
@@ -200,8 +201,7 @@ func TestAsyncShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 	s.StartAsyncWorker(ctx)
 
 	id := testUID(t, "job")
-	row := claimedRow(t, st, s.worker, id, 0)
-	startJob(s.worker, ctx, row)
+	startJob(s.worker, ctx, claimedRows(t, st, s.worker, id, 0))
 	select {
 	case <-inFFmpeg:
 	case <-time.After(slotWatchdog):
@@ -230,11 +230,11 @@ func TestAsyncShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 		t.Fatal("stopAsync never returned")
 	}
 
-	r, err := chk.Find(bg, id, 1)
-	if err != nil || r == nil || r.Status != db.StatusPending || r.Attempts != 0 {
-		t.Fatalf("row after shutdown: %+v err=%v, want PENDING with 0 attempts (the pool was closed before the job released it)", r, err)
+	pair, err := chk.FindPair(bg, id, 1)
+	if r := pair[db.SizeM]; err != nil || r == nil || r.Status != db.StatusPending || r.Attempts != 0 {
+		t.Fatalf("rows after shutdown: %+v err=%v, want PENDING with 0 attempts (the pool was closed before the job released it)", pair, err)
 	}
-	if _, err := st.Find(bg, id, 1); err == nil {
+	if _, err := st.FindPair(bg, id, 1); err == nil {
 		t.Error("the video DB pool was not closed")
 	}
 }
@@ -252,11 +252,11 @@ func TestAsyncShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
 				store = &stageStore{eofStore: newEOFStore(), hdrID: id, hdrStarted: make(chan struct{}), deleteCtxs: make(chan bool, 1)}
 			}
 			w := slotWorker(st, store, 1)
-			row := claimedRow(t, st, w, id, 0)
+			rows := claimedRows(t, st, w, id, 0)
 			ctx, cancel := context.WithCancel(bg)
 			cancel()
-			w.attempt(ctx, row)
-			r, _ := st.Find(bg, id, 1)
+			w.attempt(ctx, rows)
+			r := findRow(st, id, 1)
 			if r == nil || r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
 				t.Errorf("%s: row after attempt on an ended context: %+v, want PENDING/0/nil", name, r)
 			}
@@ -264,22 +264,18 @@ func TestAsyncShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
 	})
 
 	t.Run("stale_row_reclaimed_after_context_ended", func(t *testing.T) {
-		sqlExec(t, dsn, `DELETE FROM video_preview WHERE status='PENDING'`)
+		sqlExec(t, dsn, `DELETE FROM thumbnail WHERE status='PENDING'`)
 		w := slotWorker(st, newEOFStore(), 1)
 		w.staleTTL = time.Minute
 		id := testUID(t, "stale")
-		if err := st.EnqueueIfAbsent(bg, id, 1, "owner1", "files"); err != nil {
-			t.Fatal(err)
-		}
-		if ok, err := st.Claim(bg, id, 1, "dead-instance"); err != nil || !ok {
-			t.Fatalf("Claim: %v %v", ok, err)
-		}
-		sqlExec(t, dsn, `UPDATE video_preview SET claimed_at = now() - interval '1 hour' WHERE file_id=$1`, id)
+		enqueuePair(t, st, id, 1)
+		claimPair(t, st, "dead-instance", id, 1)
+		sqlExec(t, dsn, `UPDATE thumbnail SET claimed_at = now() - interval '1 hour' WHERE file_id=$1`, id)
 		ctx, cancel := context.WithCancel(bg)
 		cancel()
 		w.tick(ctx)
 		w.Wait()
-		r, _ := st.Find(bg, id, 1)
+		r := findRow(st, id, 1)
 		if r == nil || r.Status != db.StatusPending || r.ClaimedBy != nil {
 			t.Fatalf("stale row after a tick on an ended context: %+v, want PENDING and unowned", r)
 		}

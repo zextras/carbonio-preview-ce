@@ -41,22 +41,22 @@ type Deps struct {
 	Cache *cache.Cache
 	// Limits bounds render (CPU) work and coalesces identical GETs; nil = unlimited (tests).
 	Limits *limits
-	// AsyncSem is the DEDICATED video semaphore (capacity =
+	// AsyncSem is the DEDICATED async semaphore (capacity =
 	// async.max-concurrent-jobs, default NumCPU) bounding ffmpeg work
-	// (codec probe and first-frame extraction) only. nil = unlimited (tests).
+	// (codec probe and first-frame extraction) and Collabora conversions of async jobs. nil = unlimited (tests).
 	AsyncSem chan struct{}
-	// DB is the video_preview database store.  nil means the video DB layer is
-	// disabled (spec-only gendocs mode or unit tests that do not exercise video
-	// endpoints). The video worker and video HTTP handlers must check for nil and
+	// DB is the thumbnail database store.  nil means the thumbnail DB layer is
+	// disabled (spec-only gendocs mode or unit tests that do not exercise the
+	// asynchronous thumbnails). The async worker and thumbnail HTTP handlers must check for nil and
 	// either skip or return an appropriate error.
 	//
 	// Prefer Deps.dbStore() over reading DB directly: when a DBGate is
 	// attached (production) it is the authoritative, request-time readiness
 	// signal; DB is the static fallback used by tests.
 	DB *db.Store
-	// DBGate, when non-nil, is the request-time readiness signal for the video
+	// DBGate, when non-nil, is the request-time readiness signal for the thumbnail
 	// DB. Its store may start nil and flip to ready after boot (background init),
-	// re-enabling video with no restart. When nil, handlers fall back to DB.
+	// re-enabling asynchronous thumbnails with no restart. When nil, handlers fall back to DB.
 	DBGate *dbGate
 }
 
@@ -68,7 +68,7 @@ type Deps struct {
 // RegisterOperations registers all huma-managed operations onto api.
 // It is called by both the live server and cmd/gendocs.
 //
-// The video worker is ALWAYS constructed (it is gate-aware: it no-ops each tick
+// The async worker is ALWAYS constructed (it is gate-aware: it no-ops each tick
 // while the DB is not ready) and returned so the caller can start it once the DB
 // is up. It is NOT started here — the server owns the worker lifecycle via
 // Server.EnableDB / StartAsyncWorker so a transient DB outage at boot never
@@ -86,7 +86,6 @@ func RegisterOperations(api huma.API, deps Deps) *AsyncWorker {
 		buildGetDocumentPreview(deps), buildGetDocumentThumbnail(deps),
 		buildPostDocumentPreview(deps), buildPostDocumentThumbnail(deps))
 
-	// Video GET / DELETE / copy endpoints (Q5: generate endpoint removed).
 	// Build the worker whenever a config is present (spec-only gendocs has none).
 	// The worker resolves its store through deps.dbStore() at tick time, so it
 	// is safe to construct before the DB is ready; it processes rows only once the
@@ -95,12 +94,7 @@ func RegisterOperations(api huma.API, deps Deps) *AsyncWorker {
 	if deps.Cfg != nil {
 		w = NewAsyncWorker(deps)
 	}
-	apispec.RegisterVideoOps(api,
-		buildGetVideoPreview(deps, w),
-		buildGetVideoThumbnail(deps, w),
-		buildDeleteVideoPreview(deps),
-		buildCopyVideoPreview(deps),
-	)
+	apispec.RegisterThumbnailOps(api, buildGetThumbnail(deps, w), buildDeleteThumbnails(deps))
 	return w
 }
 
@@ -654,37 +648,4 @@ func buildPostDocumentThumbnail(deps Deps) func(context.Context, *apispec.DocPos
 		}
 		return &apispec.BinOut{ContentType: thumbnailContentType(outputFormat, shape), Body: out}, nil
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Video operations — generate (extract first frame → JPEG → store)
-// ---------------------------------------------------------------------------
-
-// storeFrame stores the JPEG frame produced by ffmpeg. On failure it fires a
-// best-effort cleanup Delete of the partially-written node; the storage client's
-// inactivity bound is the only time limit. When ctx ended (shutdown) the Delete
-// runs before returning, bounded by releaseTimeout, so it is not lost.
-func storeFrame(
-	ctx context.Context,
-	store storage.Client,
-	jpg []byte,
-	version int,
-	serviceType string,
-	ownerID string,
-	targetNodeID string,
-) (string, error) {
-	storedID, err := store.StoreData(ctx, targetNodeID, version, serviceType, ownerID, jpg)
-	if err != nil {
-		if ctx.Err() != nil {
-			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
-			defer cancel()
-			_ = store.Delete(dctx, targetNodeID, version, serviceType, ownerID)
-			return "", err
-		}
-		go func() {
-			_ = store.Delete(context.Background(), targetNodeID, version, serviceType, ownerID)
-		}()
-		return "", err
-	}
-	return storedID, nil
 }

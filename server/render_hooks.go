@@ -23,6 +23,8 @@ import (
 )
 
 // imageThumbnailFunc is the seam for render.ImageThumbnail.
+var imagePairFunc = render.ImagePair
+
 var imageThumbnailFunc = func(
 	data []byte,
 	width, height int,

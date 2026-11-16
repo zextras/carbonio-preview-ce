@@ -2,608 +2,785 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// thumbnail_api_test.go tests resolve() and the attempt() outcome mapping in
-// AsyncWorker, driven through a real DB (Postgres 16 container) + a fake
-// storage.Client.
-//
-// Structure:
-//   - fakeVideoStore — implements storage.Client for the video path.
-//   - startDBStore (postgres_test.go) — spins up the Postgres testcontainer and returns a *db.Store.
-//   - Tests for resolve() covering all 6 states.
-//   - Tests for attempt() outcome mapping (success, ErrExtractFailed,
-//     storage.ErrNotFound, transient reaching cap, transient below cap).
-//
-// Tests run in the `server` package (same package as the production code) so
-// they can call resolve() and other unexported helpers directly without
-// requiring HTTP wiring.
-
 package server
 
 import (
 	"context"
-	"errors"
-	"io"
+	"fmt"
 	"net/http"
-	"strings"
+	"net/http/httptest"
+	"net/url"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
-	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
-	"github.com/zextras/carbonio-preview-ce/v4/storage"
-	"github.com/zextras/carbonio-preview-ce/v4/video"
+	"github.com/zextras/carbonio-preview-ce/v4/render"
 )
 
-// ---------------------------------------------------------------------------
-// fakeVideoStore — minimal storage.Client for video layer tests.
-// ---------------------------------------------------------------------------
+const (
+	testVersion = 7
+	testOwner   = "owner-a"
+	videoMime   = "video/mp4"
+	docxMime    = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
 
-// fakeVideoStore drives storage responses for resolve() tests.
-// retrieveErr controls the result of RetrieveData (the "verify blob" call in resolve).
-// storeErr controls StoreData (used by attempt via generateFirstFrameJPEG).
-type fakeVideoStore struct {
-	retrieveErr error
-	storeErr    error
-	// blob returned when retrieveErr==nil
-	blob []byte
+var (
+	stubS = render.Rendition{Body: []byte("S-rendition"), ContentType: "image/jpeg", Width: 320, Height: 180}
+	stubM = render.Rendition{Body: []byte("M-rendition"), ContentType: "image/png", Width: 1280, Height: 720}
+)
+
+type harness struct {
+	t      *testing.T
+	st     *db.Store
+	dsn    string
+	store  *memStore
+	deps   Deps
+	mux    *http.ServeMux
+	worker *AsyncWorker
+	cancel context.CancelFunc
 }
 
-func (f *fakeVideoStore) RetrieveData(_ context.Context, _ string, _ int, _ string, _ string) (storage.Blob, error) {
-	if f.retrieveErr != nil {
-		return nil, f.retrieveErr
-	}
-	if f.blob == nil {
-		return []byte("fake-frame-bytes"), nil
-	}
-	return f.blob, nil
+type harnessOpts struct {
+	noWorker bool
+	noDB     bool
+	cfg      func(*testing.T, Deps) Deps
 }
 
-func (f *fakeVideoStore) RetrieveDataStreaming(_ context.Context, _ string, _ int, _ string, _ string) (io.ReadCloser, error) {
-	if f.retrieveErr != nil {
-		return nil, f.retrieveErr
-	}
-	b := f.blob
-	if b == nil {
-		b = []byte("fake-video-stream")
-	}
-	return io.NopCloser(strings.NewReader(string(b))), nil
-}
-
-func (f *fakeVideoStore) StoreData(_ context.Context, nodeID string, _ int, _ string, _ string, _ []byte) (string, error) {
-	if f.storeErr != nil {
-		return "", f.storeErr
-	}
-	return nodeID, nil
-}
-
-func (f *fakeVideoStore) Delete(_ context.Context, _ string, _ int, _ string, _ string) error {
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// resolve() state machine tests
-// ---------------------------------------------------------------------------
-
-// buildResolveDeps creates a Deps wired for resolve() tests.
-func buildResolveDeps(dbStore *db.Store, storeClient storage.Client) Deps {
-	return Deps{
+func newHarness(t *testing.T, o harnessOpts) *harness {
+	t.Helper()
+	h := &harness{t: t, store: newMemStore()}
+	deps := Deps{
 		Cfg:      testCfg(),
-		Store:    storeClient,
-		Cache:    cache.New(0),
-		DB:       dbStore,
-		AsyncSem: nil,
+		Store:    h.store,
+		Cache:    cache.New(1 << 24),
+		Limits:   newLimits(4),
+		AsyncSem: make(chan struct{}, 4),
 	}
+	if !o.noDB {
+		h.st, h.dsn = startDBStoreWithDSN(t)
+		deps.DB = h.st
+	}
+	if o.cfg != nil {
+		deps = o.cfg(t, deps)
+	}
+	h.deps = deps
+	h.mux = http.NewServeMux()
+	h.worker = RegisterOperations(newHumaAPI(h.mux), deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.cancel = cancel
+	if !o.noWorker && !o.noDB {
+		h.worker.Start(ctx)
+	}
+	t.Cleanup(func() {
+		cancel()
+		h.worker.Wait()
+	})
+	return h
 }
 
-// TestResolve_NotFound_Returns202AndEnqueues verifies that a missing row causes
-// EnqueueIfAbsent to create a PENDING row and resolve returns 202.
-func TestResolve_NotFound_Returns202AndEnqueues(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
+func stubVideoPipeline(t *testing.T) {
+	t.Helper()
+	prevCodec, prevFrame, prevPair := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc
+	videoDetectCodecFromFileFunc = func(context.Context, string) (string, error) { return "h264", nil }
+	videoFirstFrameFromFileFunc = func(context.Context, string) ([]byte, error) { return []byte("frame"), nil }
+	imagePairFunc = func([]byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
+	t.Cleanup(func() {
+		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc = prevCodec, prevFrame, prevPair
+	})
+}
 
-	fileID := testUID(t, "nf")
-	const version = 1
+type thumbReq struct {
+	id, mime, digest, lang, serviceType, owner string
+	version                                    int
+	size                                       string
+}
 
-	fakeStore := &fakeVideoStore{}
-	deps := buildResolveDeps(dbStore, fakeStore)
-
-	// No worker needed for the state check (fire-and-forget goroutine races with Find below).
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusAccepted {
-		t.Errorf("httpStatus: got %d, want 202", res.httpStatus)
+func (r thumbReq) path() string {
+	if r.size == "" {
+		r.size = "m"
 	}
+	if r.serviceType == "" {
+		r.serviceType = "files"
+	}
+	q := url.Values{}
+	q.Set("service_type", r.serviceType)
+	if r.mime != "-" {
+		q.Set("mime", r.mime)
+	}
+	if r.digest != "" {
+		q.Set("digest", r.digest)
+	}
+	if r.lang != "" {
+		q.Set("lang", r.lang)
+	}
+	return fmt.Sprintf("/thumbnail/%s/%d/%s?%s", r.id, r.version, r.size, q.Encode())
+}
 
-	// Row must now exist as PENDING (or GENERATING if the background goroutine ran,
-	// but nil worker means fireAsyncAttempt is a no-op).
-	row, err := dbStore.Find(ctx, fileID, version)
+func (h *harness) get(r thumbReq) *httptest.ResponseRecorder {
+	h.t.Helper()
+	if r.owner == "" {
+		r.owner = testOwner
+	}
+	req := httptest.NewRequest(http.MethodGet, r.path(), nil)
+	req.Header.Set("fileownerid", r.owner)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func (h *harness) pair(id string, version int) map[string]*db.Thumbnail {
+	h.t.Helper()
+	rows, err := h.st.FindPair(context.Background(), id, version)
 	if err != nil {
-		t.Fatalf("Find: %v", err)
+		h.t.Fatalf("FindPair: %v", err)
 	}
-	if row == nil {
-		t.Fatal("expected a row to be enqueued, got nil")
-	}
-	if row.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING", row.Status)
-	}
+	return rows
 }
 
-// TestResolve_Pending_Returns202 verifies that a PENDING row returns 202.
-func TestResolve_Pending_Returns202(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "pend")
-	const version = 1
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusAccepted {
-		t.Errorf("httpStatus: got %d, want 202", res.httpStatus)
-	}
-}
-
-// TestResolve_Generating_Returns202 verifies that a GENERATING row returns 202.
-func TestResolve_Generating_Returns202(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "gen")
-	const version = 1
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	if _, err := dbStore.Claim(ctx, fileID, version, "inst-worker"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusAccepted {
-		t.Errorf("httpStatus: got %d, want 202", res.httpStatus)
-	}
-}
-
-// TestResolve_Ready_BlobPresent_Returns200 verifies that a READY row returns 200
-// with the previewID set. resolve() is now DB-only — it does not touch storage.
-func TestResolve_Ready_BlobPresent_Returns200(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "ready_ok")
-	const version = 1
-	const previewID = "preview-ok-1"
-
-	if err := dbStore.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
-		t.Fatalf("InsertReady: %v", err)
-	}
-
-	// resolve() no longer calls Store for READY rows; storage is irrelevant here.
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusOK {
-		t.Errorf("httpStatus: got %d, want 200", res.httpStatus)
-	}
-	if res.previewID != previewID {
-		t.Errorf("previewID: got %q, want %q", res.previewID, previewID)
-	}
-}
-
-// TestResolve_Ready_Returns200_DBOnly verifies that a READY row returns 200 with
-// the previewID set. After the fix, resolve() is DB-only for READY rows — it does
-// NOT check storage. Blob existence is verified lazily by the handler.
-func TestResolve_Ready_Returns200_DBOnly(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "ready_dbonly")
-	const version = 1
-	const previewID = "preview-dbonly"
-
-	if err := dbStore.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
-		t.Fatalf("InsertReady: %v", err)
-	}
-
-	// Even with a store that would return ErrNotFound, resolve() must return 200
-	// because it no longer touches storage for READY rows.
-	fakeStore := &fakeVideoStore{retrieveErr: storage.ErrNotFound}
-	deps := buildResolveDeps(dbStore, fakeStore)
-
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusOK {
-		t.Errorf("httpStatus: got %d, want 200 (DB-only, no storage call in resolve)", res.httpStatus)
-	}
-	if res.previewID != previewID {
-		t.Errorf("previewID: got %q, want %q", res.previewID, previewID)
-	}
-}
-
-// TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202 verifies the blob-gone
-// path at the handler level: when resolve() returns 200 (READY) but the handler's
-// own RetrieveData call returns ErrNotFound, the handler re-enqueues the row via
-// ReenqueueReady and returns 202 (Accepted).
-//
-// This test covers the robustness path previously tested in resolve(): the
-// behavior is identical — a READY row with a missing blob is re-enqueued — but the
-// check now happens in the handler (single fetch point), not resolve().
-func TestGetVideoPreview_BlobMissing_ReenqueuesAndReturns202(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	// Use a real UUID so validateUUID passes.
-	const fileID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-	const version = 1
-	const previewID = "preview-blob-gone"
-
-	if err := dbStore.InsertReady(ctx, fileID, version, "owner1", "files", previewID); err != nil {
-		t.Fatalf("InsertReady: %v", err)
-	}
-
-	// Storage returns ErrNotFound — simulates orphaned READY row (blob manually deleted
-	// or PowerStore glitch).
-	fakeStore := &fakeVideoStore{retrieveErr: storage.ErrNotFound}
-	deps := buildResolveDeps(dbStore, fakeStore)
-
-	handler := buildGetVideoPreview(deps, nil)
-	_, herr := handler(ctx, &apispec.VideoGetPreviewInput{
-		ID:           fileID,
-		Version:      version,
-		Area:         "100x100",
-		ServiceType:  "files",
-		Quality:      "medium",
-		OutputFormat: "jpeg",
+func (h *harness) waitStatus(id string, version int, status string) map[string]*db.Thumbnail {
+	h.t.Helper()
+	var rows map[string]*db.Thumbnail
+	eventually(h.t, "both sizes "+status, func() bool {
+		rows = h.pair(id, version)
+		return len(rows) == 2 && rows[db.SizeS].Status == status && rows[db.SizeM].Status == status
 	})
+	return rows
+}
 
-	// Handler must return a 202 Accepted error.
-	if herr == nil {
-		t.Fatal("expected a huma error (202), got nil")
+func (h *harness) seedReady(id string, version int, size, kind, blob, owner, serviceType string, data []byte, digest string) {
+	h.t.Helper()
+	row := db.Thumbnail{FileID: id, Version: version, Size: size, Kind: kind, OwnerID: owner, ServiceType: serviceType,
+		BlobID: &blob, ContentType: strp("image/jpeg")}
+	if digest != "" {
+		row.Digest = &digest
 	}
-	type statusGetter interface{ GetStatus() int }
-	se, ok := herr.(statusGetter)
-	if !ok {
-		t.Fatalf("error %T does not implement GetStatus()", herr)
+	if ok, err := h.st.PutReady(context.Background(), row, nil); err != nil || !ok {
+		h.t.Fatalf("seed READY: ok=%v err=%v", ok, err)
 	}
-	if se.GetStatus() != http.StatusAccepted {
-		t.Errorf("HTTP status: got %d, want 202", se.GetStatus())
-	}
+	h.store.seed(blob, version, serviceType, owner, data)
+}
 
-	// Row must have been moved back to PENDING with preview_id cleared.
-	row, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || row == nil {
-		t.Fatalf("Find: err=%v row=%v", ferr, row)
-	}
-	if row.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING (re-enqueued by handler)", row.Status)
-	}
-	if row.PreviewID != nil {
-		t.Errorf("preview_id: got %v, want nil (cleared by ReenqueueReady)", row.PreviewID)
+func (h *harness) age(id string, ago time.Duration) {
+	h.t.Helper()
+	h.exec(`UPDATE thumbnail SET last_accessed_at = now() - $2::interval WHERE file_id=$1`, id, fmt.Sprintf("%d seconds", int(ago.Seconds())))
+}
+
+func (h *harness) exec(q string, args ...any) {
+	h.t.Helper()
+	sqlExec(h.t, h.dsn, q, args...)
+}
+
+func strp(s string) *string { return &s }
+
+func newID() string { return uuid.NewString() }
+
+func TestThumbnailGet_UnsupportedMIME415(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	for _, mime := range []string{"application/octet-stream", "image/bmp", "image/jpeg", "image/png", "application/pdf", "garbage"} {
+		rec := h.get(thumbReq{id: newID(), version: 1, mime: mime})
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("mime %q: status %d, want 415 (body %s)", mime, rec.Code, rec.Body)
+		}
 	}
 }
 
-// TestResolve_Unsupported_Returns415 verifies that an UNSUPPORTED row returns 415.
-func TestResolve_Unsupported_Returns415(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "unsup")
-	const version = 1
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	if _, err := dbStore.Claim(ctx, fileID, version, "inst-1"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if err := dbStore.MarkUnsupported(ctx, fileID, version, "inst-1"); err != nil {
-		t.Fatalf("MarkUnsupported: %v", err)
-	}
-
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusUnsupportedMediaType {
-		t.Errorf("httpStatus: got %d, want 415", res.httpStatus)
+func TestThumbnailGet_InvalidSize422(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	rec := h.get(thumbReq{id: newID(), version: 1, mime: videoMime, size: "l"})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", rec.Code)
 	}
 }
 
-// TestResolve_Failed_Returns422 verifies that a FAILED row returns 422.
-func TestResolve_Failed_Returns422(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "fail")
-	const version = 1
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	if _, err := dbStore.Claim(ctx, fileID, version, "inst-1"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if err := dbStore.MarkFailed(ctx, fileID, version, "inst-1"); err != nil {
-		t.Fatalf("MarkFailed: %v", err)
-	}
-
-	deps := buildResolveDeps(dbStore, &fakeVideoStore{})
-	res := resolve(ctx, deps, nil, fileID, version, "files", "owner1")
-	if res.httpStatus != http.StatusUnprocessableEntity {
-		t.Errorf("httpStatus: got %d, want 422", res.httpStatus)
+func TestThumbnailGet_MissingMIME422(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	rec := h.get(thumbReq{id: newID(), version: 1, mime: "-"})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", rec.Code)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// attempt() outcome mapping tests
-// ---------------------------------------------------------------------------
+func TestThumbnailGet_NoDB_AsyncKind424(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	for _, mime := range []string{videoMime, docxMime} {
+		rec := h.get(thumbReq{id: newID(), version: 1, mime: mime})
+		if rec.Code != http.StatusFailedDependency {
+			t.Errorf("mime %q: status %d, want 424", mime, rec.Code)
+		}
+	}
+}
 
-// makeWorkerWithDB builds a AsyncWorker with a real DB store and the given
-// storage fake. maxAttempts can be overridden via the config field.
-func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts int) *AsyncWorker {
-	cfg := testCfg()
-	cfg.AsyncMaxAttempts = maxAttempts
-	return NewAsyncWorker(Deps{
-		Cfg:      cfg,
-		Store:    storeClient,
-		Cache:    cache.New(0),
-		DB:       dbStore,
-		AsyncSem: nil,
+func TestThumbnailGet_OfficeDisabledByFlag400(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true, cfg: func(_ *testing.T, d Deps) Deps {
+		d.Cfg.ServiceEnableDocumentThumbnail = false
+		return d
+	}})
+	rec := h.get(thumbReq{id: newID(), version: 1, mime: docxMime})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+}
+
+func TestThumbnailGet_VideoMissEnqueuesBothSizes202(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime, size: "s", serviceType: "chats", owner: "owner-x", lang: "it-IT", digest: "dg1"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202 (%s)", rec.Code, rec.Body)
+	}
+	rows := h.pair(id, testVersion)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want both sizes", len(rows))
+	}
+	for size, r := range rows {
+		if r.Status != db.StatusPending || r.Kind != "video" || r.OwnerID != "owner-x" || r.ServiceType != "chats" ||
+			r.Digest == nil || *r.Digest != "dg1" || r.Lang == nil || *r.Lang != "it-IT" {
+			t.Errorf("size %s row = %+v", size, r)
+		}
+	}
+}
+
+func TestThumbnailGet_202Headers(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	for _, mime := range []string{videoMime, docxMime} {
+		rec := h.get(thumbReq{id: newID(), version: 1, mime: mime})
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("%s: status %d, want 202", mime, rec.Code)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q", mime, got)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "3" {
+			t.Errorf("%s: Retry-After = %q", mime, got)
+		}
+		if rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
+			t.Errorf("%s: 202 must have no body and no Content-Type: %q %q", mime, rec.Body, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestThumbnailGet_PendingAndGeneratingAnswer202(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	req := thumbReq{id: id, version: 1, mime: videoMime}
+	if rec := h.get(req); rec.Code != http.StatusAccepted {
+		t.Fatalf("first: %d", rec.Code)
+	}
+	if _, err := h.st.Claim(context.Background(), id, 1, "inst"); err != nil {
+		t.Fatal(err)
+	}
+	rec := h.get(req)
+	if rec.Code != http.StatusAccepted || rec.Header().Get("Retry-After") != "3" {
+		t.Fatalf("generating: %d %v", rec.Code, rec.Header())
+	}
+}
+
+func TestThumbnailGet_ReadyServesStoredRendition(t *testing.T) {
+	stubVideoPipeline(t)
+	h := newHarness(t, harnessOpts{})
+	src := newID()
+	h.store.seed(src, testVersion, "files", "owner-a", []byte("fake-video"))
+
+	if rec := h.get(thumbReq{id: src, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
+		t.Fatalf("miss: %d", rec.Code)
+	}
+	rows := h.waitStatus(src, testVersion, db.StatusReady)
+
+	for size, want := range map[string]render.Rendition{"s": stubS, "m": stubM} {
+		rec := h.get(thumbReq{id: src, version: testVersion, mime: videoMime, size: size})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("size %s: %d", size, rec.Code)
+		}
+		if rec.Body.String() != string(want.Body) || rec.Header().Get("Content-Type") != want.ContentType {
+			t.Errorf("size %s: %q %q", size, rec.Body, rec.Header().Get("Content-Type"))
+		}
+		if rec.Header().Get("Cache-Control") != "" {
+			t.Errorf("200 must carry no cache headers: %v", rec.Header())
+		}
+		r := rows[size]
+		if r.BlobID == nil || r.OwnerID != "owner-a" || r.ServiceType != "files" || *r.ContentType != want.ContentType {
+			t.Errorf("row %s = %+v", size, r)
+		}
+		if !h.store.has(*r.BlobID, testVersion, "files", "owner-a") {
+			t.Errorf("blob %s not stored under the request owner", *r.BlobID)
+		}
+	}
+	for _, k := range h.store.putKeys() {
+		if k.Version != testVersion || k.ServiceType != "files" || k.Owner != "owner-a" {
+			t.Errorf("blob written with %+v, want the source version and request owner", k)
+		}
+	}
+	if n := len(h.store.putKeys()); n != 2 {
+		t.Errorf("blobs written = %d, want 2", n)
+	}
+}
+
+func TestThumbnailGet_ReadyTakesNoRenderSlot(t *testing.T) {
+	h := newHarness(t, harnessOpts{cfg: func(_ *testing.T, d Deps) Deps {
+		d.Limits = newLimits(1)
+		return d
+	}})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M-bytes"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S-bytes"), "")
+	h.deps.Limits.render <- struct{}{}
+	defer func() { <-h.deps.Limits.render }()
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- h.get(thumbReq{id: id, version: 1, mime: videoMime}) }()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK || rec.Body.String() != "M-bytes" {
+			t.Fatalf("%d %q", rec.Code, rec.Body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("READY read waited for a render slot")
+	}
+}
+
+func TestThumbnailGet_ReadyBlobMissingReenqueuesThatSize(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
+	h.store.mu.Lock()
+	delete(h.store.blobs, memKey{"blob-m", 1, "files", "o"})
+	h.store.mu.Unlock()
+
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, size: "m"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202", rec.Code)
+	}
+	rows := h.pair(id, 1)
+	if rows["m"].Status != db.StatusPending || rows["m"].BlobID != nil {
+		t.Errorf("m = %+v, want PENDING without blob", rows["m"])
+	}
+	if rows["s"].Status != db.StatusReady {
+		t.Errorf("s must be untouched: %+v", rows["s"])
+	}
+}
+
+func TestThumbnailGet_ReadyBlobStorageError502(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.store.getErr = func(memKey) error { return fmt.Errorf("storage down") }
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502", rec.Code)
+	}
+}
+
+func TestThumbnailGet_ReadReadsBlobWithRowOwnerNotRequestOwner(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "row-owner", "chats", []byte("M-bytes"), "")
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, owner: "request-owner", serviceType: "files"})
+	if rec.Code != http.StatusOK || rec.Body.String() != "M-bytes" {
+		t.Fatalf("%d %q", rec.Code, rec.Body)
+	}
+}
+
+func TestThumbnailGet_LegacyRowRegeneratesAndDeletesFrameBlob(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.exec(`INSERT INTO thumbnail (file_id, version, size, status, kind, blob_id, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+        VALUES ($1, 1, 'm', 'LEGACY', 'video', 'legacy-frame', 'legacy-owner', 'chats', 0, now(), now(), now())`, id)
+	h.store.seed("legacy-frame", 1, "chats", "legacy-owner", []byte("big-frame"))
+
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, owner: "request-owner"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202", rec.Code)
+	}
+	if h.store.has("legacy-frame", 1, "chats", "legacy-owner") {
+		t.Errorf("legacy frame blob must be deleted at once, using the row's owner and service type")
+	}
+	rows := h.pair(id, 1)
+	if len(rows) != 2 || rows["m"].Status != db.StatusPending || rows["m"].BlobID != nil || rows["m"].OwnerID != "request-owner" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestThumbnailGet_DigestMismatchReenqueuesAndDeletesOldBlob(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "row-owner", "files", []byte("M"), "d1")
+	h.seedReady(id, 1, "s", "video", "blob-s", "row-owner", "files", []byte("S"), "d1")
+
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, digest: "d2", owner: "request-owner"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202", rec.Code)
+	}
+	if h.store.has("blob-m", 1, "files", "row-owner") || h.store.has("blob-s", 1, "files", "row-owner") {
+		t.Errorf("old blobs must be deleted at once")
+	}
+	for size, r := range h.pair(id, 1) {
+		if r.Status != db.StatusPending || r.Digest == nil || *r.Digest != "d2" || r.BlobID != nil {
+			t.Errorf("size %s = %+v", size, r)
+		}
+	}
+	for _, k := range h.store.deletedKeys() {
+		if k.Owner != "row-owner" {
+			t.Errorf("blob deleted with owner %q, want the row's", k.Owner)
+		}
+	}
+}
+
+func TestThumbnailGet_SameDigestAndNoDigestNeverRegenerate(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "d1")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "d1")
+	for _, d := range []string{"", "d1"} {
+		rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, digest: d})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("digest %q: %d", d, rec.Code)
+		}
+	}
+	if n := len(h.store.deletedKeys()); n != 0 {
+		t.Errorf("deletes = %d, want 0", n)
+	}
+}
+
+func TestThumbnailGet_NoDigestNeverRegenerates(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "stored-digest")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "stored-digest")
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime})
+	if rec.Code != http.StatusOK || rec.Body.String() != "M" {
+		t.Fatalf("%d %q", rec.Code, rec.Body)
+	}
+	if n := len(h.store.deletedKeys()); n != 0 {
+		t.Errorf("deletes = %d, want 0", n)
+	}
+}
+
+func TestThumbnailGet_StoredNullDigestMismatchesProvidedOne(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, digest: "d1"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202", rec.Code)
+	}
+}
+
+func TestThumbnailGet_DigestOnPendingRowAnswers202(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, digest: "d1"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("first: %d", rec.Code)
+	}
+	rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, digest: "d2"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d, want 202", rec.Code)
+	}
+	for size, r := range h.pair(id, 1) {
+		if *r.Digest != "d1" {
+			t.Errorf("size %s digest = %q, a PENDING row keeps its digest", size, *r.Digest)
+		}
+	}
+}
+
+func TestThumbnailGet_FailedAnswers422AndUnsupported415(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusAccepted {
+		t.Fatal(rec.Code)
+	}
+	h.exec(`UPDATE thumbnail SET status='FAILED' WHERE file_id=$1`, id)
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("FAILED: %d, want 422", rec.Code)
+	}
+	h.exec(`UPDATE thumbnail SET status='UNSUPPORTED', codec='hevc-unknown' WHERE file_id=$1`, id)
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("UNSUPPORTED: %d, want 415", rec.Code)
+	}
+}
+
+func TestThumbnailGet_CacheHitSkipsDBAndStorage(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
+	req := thumbReq{id: id, version: 1, mime: videoMime}
+	if rec := h.get(req); rec.Code != http.StatusOK {
+		t.Fatal(rec.Code)
+	}
+	gets := h.store.getCount()
+	h.exec(`DELETE FROM thumbnail WHERE file_id=$1`, id)
+	rec := h.get(req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "M" {
+		t.Fatalf("%d %q", rec.Code, rec.Body)
+	}
+	if h.store.getCount() != gets {
+		t.Errorf("a cache hit must not read storage")
+	}
+}
+
+func TestThumbnailGet_CacheKeysAreScopedByOwnerAndServiceType(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "row-owner", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "row-owner", "files", []byte("S"), "")
+	read := func(owner, serviceType string) {
+		t.Helper()
+		if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime, owner: owner, serviceType: serviceType}); rec.Code != http.StatusOK {
+			t.Fatalf("%s/%s: %d", owner, serviceType, rec.Code)
+		}
+	}
+	read("owner-a", "files")
+	read("owner-a", "files")
+	if n := h.store.getCount(); n != 1 {
+		t.Fatalf("same caller: reads = %d, want 1", n)
+	}
+	read("owner-b", "files")
+	if n := h.store.getCount(); n != 2 {
+		t.Fatalf("other owner must miss the cache: reads = %d, want 2", n)
+	}
+	read("owner-a", "chats")
+	if n := h.store.getCount(); n != 3 {
+		t.Fatalf("other service type must miss the cache: reads = %d, want 3", n)
+	}
+	read("owner-b", "files")
+	if n := h.store.getCount(); n != 3 {
+		t.Fatalf("repeat must hit: reads = %d, want 3", n)
+	}
+}
+
+func TestThumbnailGet_CacheHitTouchesAtMostDaily(t *testing.T) {
+	prev := touchEvery
+	touchEvery = 400 * time.Millisecond
+	t.Cleanup(func() { touchEvery = prev })
+
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
+	req := thumbReq{id: id, version: 1, mime: videoMime}
+
+	age := func() { h.age(id, 48*time.Hour) }
+	touched := func() bool {
+		rows, err := h.st.FindByFile(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if r.Size == "m" {
+				return time.Since(r.LastAccessedAt) < time.Hour
+			}
+		}
+		return false
+	}
+	hits := func(n int) {
+		for i := 0; i < n; i++ {
+			if rec := h.get(req); rec.Code != http.StatusOK {
+				t.Fatal(rec.Code)
+			}
+		}
+	}
+
+	age()
+	hits(1)
+	age()
+	hits(20)
+	time.Sleep(100 * time.Millisecond)
+	if touched() {
+		t.Fatalf("hits inside the interval must not touch the row")
+	}
+
+	time.Sleep(touchEvery)
+	hits(20)
+	eventually(t, "one touch after the interval", touched)
+
+	age()
+	hits(20)
+	time.Sleep(100 * time.Millisecond)
+	if touched() {
+		t.Fatalf("a second touch inside the new interval must not happen")
+	}
+}
+
+func TestThumbnailGet_ReadyTouchesOnlyWhenOlderThanOneDay(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true, cfg: func(_ *testing.T, d Deps) Deps {
+		d.Cache = nil
+		return d
+	}})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "blob-m", "o", "files", []byte("M"), "")
+	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
+	read := func() { h.get(thumbReq{id: id, version: 1, mime: videoMime}) }
+	last := func() time.Time {
+		rows, _ := h.st.FindByFile(context.Background(), id)
+		for _, r := range rows {
+			if r.Size == "m" {
+				return r.LastAccessedAt
+			}
+		}
+		return time.Time{}
+	}
+
+	h.age(id, time.Hour)
+	before := last()
+	read()
+	if !last().Equal(before) {
+		t.Errorf("an access within a day must not write")
+	}
+	h.age(id, 2*24*time.Hour)
+	read()
+	if time.Since(last()) > time.Minute {
+		t.Errorf("an access after a day must refresh last_accessed_at")
+	}
+}
+
+func TestDeleteThumbnails_AllVersionsAndSizes(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id, other := newID(), newID()
+	h.seedReady(id, 1, "s", "video", "b1s", "owner-1", "files", []byte("x"), "")
+	h.seedReady(id, 1, "m", "video", "b1m", "owner-1", "files", []byte("x"), "")
+	h.seedReady(id, 2, "s", "office", "b2s", "owner-2", "chats", []byte("x"), "")
+	h.exec(`INSERT INTO thumbnail (file_id, version, size, status, kind, original, content_type, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+        VALUES ($1, 2, 'm', 'READY', 'image', true, 'image/jpeg', 'owner-2', 'chats', 0, now(), now(), now())`, id)
+	h.seedReady(other, 1, "m", "video", "keep", "o", "files", []byte("x"), "")
+
+	req := httptest.NewRequest(http.MethodDelete, "/thumbnail/"+id, nil)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", rec.Code)
+	}
+	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
+		t.Errorf("rows left: %+v", rows)
+	}
+	if rows, _ := h.st.FindByFile(context.Background(), other); len(rows) != 1 {
+		t.Errorf("another file's rows must be kept")
+	}
+	deleted := map[memKey]bool{}
+	for _, k := range h.store.deletedKeys() {
+		deleted[k] = true
+	}
+	want := []memKey{{"b1s", 1, "files", "owner-1"}, {"b1m", 1, "files", "owner-1"}, {"b2s", 2, "chats", "owner-2"}}
+	for _, k := range want {
+		if !deleted[k] {
+			t.Errorf("blob %+v not deleted with the row's owner and service type", k)
+		}
+	}
+	if len(deleted) != len(want) {
+		t.Errorf("deleted %v, want exactly %v (original rows have no blob)", deleted, want)
+	}
+	if !h.store.has("keep", 1, "files", "o") {
+		t.Errorf("another file's blob must be kept")
+	}
+}
+
+func TestDeleteThumbnails_StorageErrorIsSwallowed(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	h.seedReady(id, 1, "m", "video", "b", "o", "files", []byte("x"), "")
+	h.store.deleteErr = func(memKey) error { return fmt.Errorf("boom") }
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/thumbnail/"+id, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", rec.Code)
+	}
+	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
+		t.Errorf("rows must be deleted even when a blob delete fails")
+	}
+}
+
+func TestDeleteThumbnails_NoDB_NoOp204(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/thumbnail/"+newID(), nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", rec.Code)
+	}
+}
+
+func TestDeleteThumbnails_InvalidID422(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/thumbnail/not-a-uuid", nil))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", rec.Code)
+	}
+}
+
+func TestDeleteThumbnails_RunningJobDeletesItsBlobs(t *testing.T) {
+	stubVideoPipeline(t)
+	h := newHarness(t, harnessOpts{})
+	id := newID()
+	h.store.seed(id, testVersion, "files", testOwner, []byte("fake-video"))
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	prev := videoFirstFrameFromFileFunc
+	videoFirstFrameFromFileFunc = func(ctx context.Context, p string) ([]byte, error) {
+		entered <- struct{}{}
+		<-release
+		return prev(ctx, p)
+	}
+	t.Cleanup(func() { videoFirstFrameFromFileFunc = prev })
+
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
+		t.Fatalf("miss: %d", rec.Code)
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("job did not start")
+	}
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/thumbnail/"+id, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	close(release)
+
+	eventually(t, "the job deleted the blobs it uploaded", func() bool {
+		return len(h.store.putKeys()) == 2 && h.store.blobCount() == 1
 	})
-}
-
-// TestAttempt_Success_MarksReady verifies that a successful generate
-// (probe returns supported codec, extract returns valid PNG, StoreData succeeds) →
-// MarkReady → row becomes READY with a non-empty preview_id.
-func TestAttempt_Success_MarksReady(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "att_ok")
-	const version = 1
-
-	// Stub probe to return a supported codec.
-	origProbe := videoDetectCodecFromFileFunc
-	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
-		return "h264", nil
-	}
-	defer func() { videoDetectCodecFromFileFunc = origProbe }()
-
-	// Stub extract to return a minimal PNG.
-	origExtract := videoFirstFrameFromFileFunc
-	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return tinyJPEG(t), nil
-	}
-	defer func() { videoFirstFrameFromFileFunc = origExtract }()
-
-	// Enqueue + Claim so we have a GENERATING row.
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
-	}
-	if after.Status != db.StatusReady {
-		t.Errorf("status: got %q, want READY", after.Status)
-	}
-	if after.PreviewID == nil || *after.PreviewID == "" {
-		t.Errorf("preview_id: got %v, want non-empty", after.PreviewID)
+	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
+		t.Errorf("a deleted file must stay without rows: %+v", rows)
 	}
 }
 
-// TestAttempt_ErrExtractFailed_NoCodecInRow_ReleasesWithAttempt verifies that
-// when the probe step itself fails (not the extract step), the row is treated as
-// a transient failure → ReleaseWithAttempt. This replaces the old
-// ErrExtractFailed→UNSUPPORTED mapping: ErrExtractFailed now means corruption
-// of a supported codec (→ retry), not an unsupported codec.
-func TestAttempt_ErrExtractFailed_NoCodecInRow_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "att_probe_transient")
-	const version = 1
-
-	// Probe fails → transient error path.
-	origProbe := videoDetectCodecFromFileFunc
-	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
-		return "", video.ErrExtractFailed
-	}
-	defer func() { videoDetectCodecFromFileFunc = origProbe }()
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
-	}
-	// Probe failure is transient: row must be PENDING (released with attempt increment).
-	if after.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING (probe failure → ReleaseWithAttempt)", after.Status)
-	}
-	if after.Attempts != row.Attempts+1 {
-		t.Errorf("Attempts: got %d, want %d", after.Attempts, row.Attempts+1)
+func TestRoutes_VideoAndCopyAre404(t *testing.T) {
+	h := newHarness(t, harnessOpts{noDB: true})
+	id := newID()
+	for _, c := range []struct{ method, path string }{
+		{http.MethodGet, "/preview/video/" + id + "/1/100x100/?service_type=files"},
+		{http.MethodGet, "/preview/video/" + id + "/1/100x100/thumbnail/?service_type=files"},
+		{http.MethodDelete, "/preview/video/" + id + "/1/?service_type=files"},
+		{http.MethodPost, "/preview/video/" + id + "/1/copy/?service_type=files&target=" + newID()},
+	} {
+		rec := httptest.NewRecorder()
+		h.mux.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s: %d, want 404", c.method, c.path, rec.Code)
+		}
 	}
 }
 
-// TestAttempt_StorageNotFound_MarksFailed verifies that storage.ErrNotFound from
-// the source blob transitions the row to FAILED (terminal, no retry).
-func TestAttempt_StorageNotFound_MarksFailed(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "att_notfound")
-	const version = 1
-
-	// RetrieveDataStreaming returns ErrNotFound → no extract attempted.
-	fakeStore := &fakeVideoStore{retrieveErr: storage.ErrNotFound}
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
+func TestThumbnailGet_ConcurrentMissesEnqueueOnce(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	id := newID()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusAccepted {
+				t.Errorf("status %d", rec.Code)
+			}
+		}()
 	}
-	w := makeWorkerWithDB(dbStore, fakeStore, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
-	}
-	if after.Status != db.StatusFailed {
-		t.Errorf("status: got %q, want FAILED (source blob gone → terminal)", after.Status)
-	}
-}
-
-// TestAttempt_Transient_BelowCap_ReleasesWithAttempt verifies that a transient
-// error during extract (not ErrNotFound) below maxAttempts calls
-// ReleaseWithAttempt → PENDING + attempts incremented.
-func TestAttempt_Transient_BelowCap_ReleasesWithAttempt(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "att_transient")
-	const version = 1
-
-	// Probe succeeds (supported codec), extract fails transiently.
-	origProbe := videoDetectCodecFromFileFunc
-	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
-		return "h264", nil
-	}
-	defer func() { videoDetectCodecFromFileFunc = origProbe }()
-
-	origExtract := videoFirstFrameFromFileFunc
-	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return nil, errors.New("transient network hiccup")
-	}
-	defer func() { videoFirstFrameFromFileFunc = origExtract }()
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	// maxAttempts=3; row starts with attempts=0, so 0+1=1 < 3 → ReleaseWithAttempt.
-	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
-	}
-	if after.Status != db.StatusPending {
-		t.Errorf("status: got %q, want PENDING (released with attempt)", after.Status)
-	}
-	if after.Attempts != row.Attempts+1 {
-		t.Errorf("attempts: got %d, want %d (incremented by ReleaseWithAttempt)", after.Attempts, row.Attempts+1)
-	}
-}
-
-// TestAttempt_Transient_AtCap_MarksFailed verifies that a transient error at
-// maxAttempts causes MarkFailed instead of ReleaseWithAttempt.
-func TestAttempt_Transient_AtCap_MarksFailed(t *testing.T) {
-	dbStore := startDBStore(t)
-	ctx := context.Background()
-
-	fileID := testUID(t, "att_cap")
-	const version = 1
-
-	// Probe succeeds, extract fails transiently (hits cap → FAILED).
-	origProbe := videoDetectCodecFromFileFunc
-	videoDetectCodecFromFileFunc = func(_ context.Context, _ string) (string, error) {
-		return "h264", nil
-	}
-	defer func() { videoDetectCodecFromFileFunc = origProbe }()
-
-	origExtract := videoFirstFrameFromFileFunc
-	videoFirstFrameFromFileFunc = func(_ context.Context, _ string) ([]byte, error) {
-		return nil, errors.New("transient error")
-	}
-	defer func() { videoFirstFrameFromFileFunc = origExtract }()
-
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-
-	// maxAttempts=2; manually bump attempts to 1 so that attempt+1=2>=2 triggers FAILED.
-	const maxAttempts = 2
-	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, maxAttempts)
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-
-	// Simulate attempts=1 already accumulated (e.g. from a prior ReclaimStale).
-	// The worker reads row.Attempts from the DB at attempt() call time; bump it
-	// via the public API: ReleaseWithAttempt to increment attempts to 1, then re-Claim.
-	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
-		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
-	}
-	ok2, err2 := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err2 != nil || !ok2 {
-		t.Fatalf("re-Claim after setup: err=%v ok=%v", err2, ok2)
-	}
-
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
-	// row.Attempts should now be 1 (= maxAttempts-1 for maxAttempts=2).
-	if row.Attempts != 1 {
-		t.Fatalf("setup: expected attempts=1, got %d", row.Attempts)
-	}
-
-	w.attempt(ctx, *row)
-
-	after, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", err)
-	}
-	if after.Status != db.StatusFailed {
-		t.Errorf("status: got %q, want FAILED (cap %d reached)", after.Status, maxAttempts)
+	wg.Wait()
+	if rows := h.pair(id, 1); len(rows) != 2 {
+		t.Errorf("rows = %d, want 2", len(rows))
 	}
 }

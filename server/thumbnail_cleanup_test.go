@@ -17,8 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
-	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
@@ -37,7 +37,7 @@ func sqlExec(t *testing.T, dsn, q string, args ...any) {
 
 func setAccessedAgo(t *testing.T, dsn, fileID string, d time.Duration) {
 	t.Helper()
-	sqlExec(t, dsn, `UPDATE video_preview SET last_accessed_at = now() - $2::interval WHERE file_id=$1`,
+	sqlExec(t, dsn, `UPDATE thumbnail SET last_accessed_at = now() - $2::interval WHERE file_id=$1`,
 		fileID, fmt.Sprintf("%d seconds", int(d.Seconds())))
 }
 
@@ -89,41 +89,80 @@ func (s *scriptedStore) deletedIDs() []string {
 
 func stubSupportedCodec(t *testing.T) {
 	t.Helper()
-	origProbe, origExtract := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc
-	videoDetectCodecFromFileFunc = func(context.Context, string) (string, error) { return "h264", nil }
-	videoFirstFrameFromFileFunc = func(context.Context, string) ([]byte, error) { return tinyJPEG(t), nil }
-	t.Cleanup(func() {
-		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc = origProbe, origExtract
+	stubVideoPipeline(t)
+	swap(t, &videoFirstFrameFromFileFunc, func(context.Context, string) ([]byte, error) { return tinyJPEG(t), nil })
+}
+
+func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts int) *AsyncWorker {
+	cfg := testCfg()
+	cfg.AsyncMaxAttempts = maxAttempts
+	return NewAsyncWorker(Deps{
+		Cfg:      cfg,
+		Store:    storeClient,
+		Cache:    cache.New(0),
+		DB:       dbStore,
+		AsyncSem: nil,
 	})
 }
 
-func claimedRow(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, attempts int) db.VideoPreview {
+func enqueuePair(t *testing.T, st *db.Store, fileID string, version int) {
+	t.Helper()
+	enqueueKind(t, st, fileID, version, "video")
+}
+
+func enqueueKind(t *testing.T, st *db.Store, fileID string, version int, kind string) {
+	t.Helper()
+	for _, size := range []string{db.SizeS, db.SizeM} {
+		row := db.Thumbnail{FileID: fileID, Version: version, Size: size, Kind: kind, OwnerID: "owner1", ServiceType: "files"}
+		if ok, err := st.Enqueue(context.Background(), row, nil); err != nil || !ok {
+			t.Fatalf("Enqueue %s: ok=%v err=%v", size, ok, err)
+		}
+	}
+}
+
+func claimPair(t *testing.T, st *db.Store, instanceID, fileID string, version int) []db.Thumbnail {
+	t.Helper()
+	rows, err := st.Claim(context.Background(), fileID, version, instanceID)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Claim: rows=%d err=%v", len(rows), err)
+	}
+	return rows
+}
+
+func claimedRows(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, attempts int) []db.Thumbnail {
 	t.Helper()
 	ctx := context.Background()
-	if err := st.EnqueueIfAbsent(ctx, fileID, 1, "owner1", "files"); err != nil {
-		t.Fatal(err)
-	}
+	enqueuePair(t, st, fileID, 1)
 	for i := 0; i < attempts; i++ {
-		if ok, err := st.Claim(ctx, fileID, 1, w.instanceID); err != nil || !ok {
-			t.Fatalf("Claim: ok=%v err=%v", ok, err)
-		}
+		claimPair(t, st, w.instanceID, fileID, 1)
 		if err := st.ReleaseWithAttempt(ctx, fileID, 1, w.instanceID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if ok, err := st.Claim(ctx, fileID, 1, w.instanceID); err != nil || !ok {
-		t.Fatalf("Claim: ok=%v err=%v", ok, err)
+	return claimPair(t, st, w.instanceID, fileID, 1)
+}
+
+func pairOf(t *testing.T, st *db.Store, fileID string, version int) map[string]*db.Thumbnail {
+	t.Helper()
+	rows, err := st.FindPair(context.Background(), fileID, version)
+	if err != nil {
+		t.Fatalf("FindPair: %v", err)
 	}
-	row, err := st.Find(ctx, fileID, 1)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
+	return rows
+}
+
+func findRow(st *db.Store, fileID string, version int) *db.Thumbnail {
+	rows, err := st.FindPair(context.Background(), fileID, version)
+	if err != nil {
+		return nil
 	}
-	return *row
+	return rows[db.SizeM]
 }
 
 func TestAttempt_FailureClassification(t *testing.T) {
 	st := startDBStore(t)
 	ctx := context.Background()
+	stubVideoPipeline(t)
 
 	type tc struct {
 		name       string
@@ -154,13 +193,10 @@ func TestAttempt_FailureClassification(t *testing.T) {
 
 			w := makeWorkerWithDB(st, c.store, 3)
 			id := testUID(t, "cls")
-			row := claimedRow(t, st, w, id, c.attempts)
-			w.attempt(ctx, row)
+			rows := claimedRows(t, st, w, id, c.attempts)
+			w.attempt(ctx, rows)
 
-			after, err := st.Find(ctx, id, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
+			after := findRow(st, id, 1)
 			if !c.wantRow {
 				if after != nil {
 					t.Fatalf("row must be deleted, got status %q attempts %d", after.Status, after.Attempts)
@@ -184,11 +220,10 @@ func TestAttempt_ConnectivityFailure_DoesNotDeleteRowOwnedByAnotherInstance(t *t
 
 	w := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
 	id := testUID(t, "foreign")
-	row := claimedRow(t, st, w, id, 0)
-	row2 := row
+	rows := claimedRows(t, st, w, id, 0)
 	w2 := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
-	w2.attempt(ctx, row2)
-	if after, _ := st.Find(ctx, id, 1); after == nil || after.Status != db.StatusGenerating {
+	w2.attempt(ctx, rows)
+	if after := findRow(st, id, 1); after == nil || after.Status != db.StatusGenerating {
 		t.Fatalf("row of another instance must stay GENERATING, got %v", after)
 	}
 }
@@ -207,16 +242,14 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		store := newEOFStore()
 		w := makeWorkerWithSem(st, store, 3)
 		id := testUID(t, "busy")
-		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
-			t.Fatal(err)
-		}
+		enqueuePair(t, st, id, 1)
 		w.deps.AsyncSem <- struct{}{}
 		tickCtx, cancel := context.WithCancel(ctx)
 		t.Cleanup(cancel)
 		w.tick(tickCtx)
 		store.waitEOF(t, 1)
 
-		row, _ := st.Find(ctx, id, 1)
+		row := findRow(st, id, 1)
 		if row.Status != db.StatusGenerating || row.ClaimedBy == nil || *row.ClaimedBy != w.instanceID {
 			t.Fatalf("row must be claimed while the semaphore is busy: %+v", row)
 		}
@@ -225,7 +258,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		}
 		<-w.deps.AsyncSem
 		eventually(t, "row READY", func() bool {
-			r, _ := st.Find(ctx, id, 1)
+			r := findRow(st, id, 1)
 			return r != nil && r.Status == db.StatusReady
 		})
 	})
@@ -234,20 +267,16 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
 		id := testUID(t, "lost")
-		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
-			t.Fatal(err)
-		}
-		if ok, err := st.Claim(ctx, id, 1, "other-instance"); err != nil || !ok {
-			t.Fatalf("Claim: %v %v", ok, err)
-		}
+		enqueuePair(t, st, id, 1)
+		claimPair(t, st, "other-instance", id, 1)
 		w.runOne(id, 1)
 		if w.liveCount() != 0 || len(w.deps.AsyncSem) != 0 {
 			t.Fatalf("lost claim left live=%d slots=%d", w.liveCount(), len(w.deps.AsyncSem))
 		}
-		sqlExec(t, dsn, `UPDATE video_preview SET status='PENDING', claimed_by=NULL WHERE file_id=$1`, id)
+		sqlExec(t, dsn, `UPDATE thumbnail SET status='PENDING', claimed_by=NULL WHERE file_id=$1`, id)
 		w.runOne(id, 1)
 		eventually(t, "row READY", func() bool {
-			r, _ := st.Find(ctx, id, 1)
+			r := findRow(st, id, 1)
 			return r != nil && r.Status == db.StatusReady
 		})
 		eventually(t, "live set empty", func() bool { return w.liveCount() == 0 })
@@ -257,84 +286,71 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
 		id := testUID(t, "full")
-		if err := st.EnqueueIfAbsent(ctx, id, 1, "owner1", "files"); err != nil {
-			t.Fatal(err)
-		}
+		enqueuePair(t, st, id, 1)
 		for i := 0; i < maxInFlight; i++ {
 			w.live[liveKey("busy", i)] = struct{}{}
 		}
-		before, _ := st.Find(ctx, id, 1)
+		before := findRow(st, id, 1)
 		w.runOne(id, 1)
-		after, _ := st.Find(ctx, id, 1)
+		after := findRow(st, id, 1)
 		if after.Status != db.StatusPending || after.ClaimedBy != nil || !after.UpdatedAt.Equal(before.UpdatedAt) {
 			t.Fatalf("row must be untouched while the instance is full: %+v", after)
 		}
 	})
 }
 
-func TestGetVideoPreview_Ready_TouchesLastAccessOnlyWhenOlderThanOneDay(t *testing.T) {
-	st, dsn := startDBStoreWithDSN(t)
-	ctx := context.Background()
-
-	const oldID = "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
-	const freshID = "a1b2c3d4-e5f6-7890-abcd-ef1234567892"
-	for _, id := range []string{oldID, freshID} {
-		if err := st.InsertReady(ctx, id, 1, "owner1", "files", "blob-"+id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setAccessedAgo(t, dsn, oldID, 3*24*time.Hour)
-	setAccessedAgo(t, dsn, freshID, time.Hour)
-	freshBefore, _ := st.Find(ctx, freshID, 1)
-
-	deps := buildResolveDeps(st, &fakeVideoStore{blob: tinyJPEG(t)})
-	handler := buildGetVideoPreview(deps, nil)
-	for _, id := range []string{oldID, freshID} {
-		if _, err := handler(ctx, &apispec.VideoGetPreviewInput{
-			ID: id, Version: 1, Area: "100x100", ServiceType: "files", Quality: "medium", OutputFormat: "jpeg",
-		}); err != nil {
-			t.Fatalf("handler %s: %v", id, err)
-		}
-	}
-	if row, _ := st.Find(ctx, oldID, 1); time.Since(row.LastAccessedAt) > time.Minute {
-		t.Errorf("old READY row not touched: %v", row.LastAccessedAt)
-	}
-	if row, _ := st.Find(ctx, freshID, 1); !row.LastAccessedAt.Equal(freshBefore.LastAccessedAt) {
-		t.Errorf("fresh row must not be written")
-	}
-}
-
 func TestCleanupOnce(t *testing.T) {
 	st, dsn := startDBStoreWithDSN(t)
 	ctx := context.Background()
+	store := newMemStore()
 
-	seed := func(id, status string, ago time.Duration) {
-		if err := st.InsertReady(ctx, id, 1, "owner1", "files", "blob-"+id); err != nil {
-			t.Fatal(err)
+	const (
+		day     = 24 * time.Hour
+		version = 3
+	)
+	type seedOpts struct {
+		status   string
+		original bool
+		noBlob   bool
+	}
+	owner := func(id string) string { return "own-" + id }
+	key := func(id string) memKey { return memKey{"blob-" + id, version, "docs", owner(id)} }
+	seed := func(id string, ago time.Duration, o seedOpts) {
+		t.Helper()
+		row := db.Thumbnail{FileID: id, Version: version, Size: db.SizeM, Kind: "video", OwnerID: owner(id), ServiceType: "docs",
+			Original: o.original, ContentType: strp("image/jpeg")}
+		if !o.original {
+			row.BlobID = strp("blob-" + id)
+			if !o.noBlob {
+				store.seed("blob-"+id, version, "docs", owner(id), []byte("data"))
+			}
 		}
-		sqlExec(t, dsn, `UPDATE video_preview SET status=$2 WHERE file_id=$1`, id, status)
+		if ok, err := st.PutReady(ctx, row, nil); err != nil || !ok {
+			t.Fatalf("seed %s: ok=%v err=%v", id, ok, err)
+		}
+		if o.status != "" {
+			sqlExec(t, dsn, `UPDATE thumbnail SET status=$2 WHERE file_id=$1`, id, o.status)
+		}
 		setAccessedAgo(t, dsn, id, ago)
 	}
-	const day = 24 * time.Hour
-	seed("c_old", db.StatusReady, 31*day)
-	seed("c_old_404", db.StatusReady, 32*day)
-	seed("c_old_err", db.StatusReady, 33*day)
-	seed("c_touched", db.StatusReady, 34*day)
-	seed("c_recent", db.StatusReady, 29*day)
+	seed("c_ready", 31*day, seedOpts{})
+	seed("c_original", 31*day, seedOpts{original: true})
+	seed("c_legacy", 31*day, seedOpts{status: db.StatusLegacy})
+	seed("c_old_404", 32*day, seedOpts{noBlob: true})
+	seed("c_old_err", 33*day, seedOpts{})
+	seed("c_touched", 34*day, seedOpts{})
+	seed("c_recent", 29*day, seedOpts{})
 	for _, status := range []string{db.StatusFailed, db.StatusUnsupported, db.StatusPending, db.StatusGenerating} {
-		seed("c_"+status, status, 90*day)
+		seed("c_"+status, 90*day, seedOpts{status: status})
 	}
-
-	store := &scriptedStore{
-		deleteErr: map[string]error{
-			"blob-c_old_404": storage.ErrNotFound,
-			"blob-c_old_err": errors.New("storage down"),
-		},
-		onDelete: func(id string) {
-			if id == "blob-c_touched" {
-				sqlExec(t, dsn, `UPDATE video_preview SET last_accessed_at = now() WHERE file_id='c_touched'`)
-			}
-		},
+	store.deleteErr = func(k memKey) error {
+		switch k {
+		case key("c_old_err"):
+			return errors.New("storage down")
+		case key("c_touched"):
+			sqlExec(t, dsn, `UPDATE thumbnail SET last_accessed_at = now() WHERE file_id='c_touched'`)
+		}
+		return nil
 	}
 	w := makeWorkerWithDB(st, store, 3)
 
@@ -342,35 +358,49 @@ func TestCleanupOnce(t *testing.T) {
 		t.Fatal("cleanupOnce reported DB not ready")
 	}
 
-	gone := []string{"c_old", "c_old_404"}
+	gone := []string{"c_ready", "c_original", "c_legacy", "c_old_404"}
 	kept := []string{"c_old_err", "c_touched", "c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating}
 	for _, id := range gone {
-		if row, _ := st.Find(ctx, id, 1); row != nil {
+		if row := findRow(st, id, version); row != nil {
 			t.Errorf("%s must be deleted", id)
 		}
 	}
 	for _, id := range kept {
-		if row, _ := st.Find(ctx, id, 1); row == nil {
+		if row := findRow(st, id, version); row == nil {
 			t.Errorf("%s must be kept", id)
 		}
 	}
-	deleted := map[string]bool{}
-	for _, id := range store.deletedIDs() {
-		deleted[id] = true
+	deleted := map[memKey]bool{}
+	for _, k := range store.deletedKeys() {
+		deleted[k] = true
 	}
-	for _, id := range []string{"blob-c_old", "blob-c_old_404", "blob-c_old_err", "blob-c_touched"} {
-		if !deleted[id] {
-			t.Errorf("blob %s: Delete must have been called", id)
+	for _, id := range []string{"c_ready", "c_legacy", "c_old_404", "c_touched"} {
+		if !deleted[key(id)] {
+			t.Errorf("blob of %s: Delete must have been called with the row's version, service type and owner (deleted: %v)", id, store.deletedKeys())
 		}
 	}
-	for _, id := range []string{"blob-c_recent", "blob-c_" + db.StatusFailed, "blob-c_" + db.StatusUnsupported, "blob-c_" + db.StatusPending, "blob-c_" + db.StatusGenerating} {
-		if deleted[id] {
-			t.Errorf("blob %s must not be touched", id)
+	for _, id := range []string{"c_ready", "c_legacy"} {
+		if store.has("blob-"+id, version, "docs", owner(id)) {
+			t.Errorf("blob of %s still stored", id)
 		}
+	}
+	if deleted[key("c_original")] {
+		t.Error("an original row has no blob: no storage call")
+	}
+	if !store.has("blob-c_old_err", version, "docs", owner("c_old_err")) {
+		t.Error("a failed blob delete must leave the blob in place")
+	}
+	for _, id := range []string{"c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating} {
+		if deleted[key(id)] {
+			t.Errorf("blob of %s must not be touched", id)
+		}
+	}
+	if n := len(store.deletedKeys()); n != 4 {
+		t.Errorf("recorded Delete calls = %d, want 4 (ready, legacy, 404, touched; the failing one records nothing)", n)
 	}
 
 	t.Run("skips_when_lock_held", func(t *testing.T) {
-		seed("c_locked", db.StatusReady, 40*day)
+		seed("c_locked", 40*day, seedOpts{})
 		conn, err := pgx.Connect(ctx, dsn)
 		if err != nil {
 			t.Fatal(err)
@@ -381,14 +411,14 @@ func TestCleanupOnce(t *testing.T) {
 			t.Fatalf("holder lock: %v %v", got, err)
 		}
 		w.cleanupOnce(ctx)
-		if row, _ := st.Find(ctx, "c_locked", 1); row == nil {
+		if row := findRow(st, "c_locked", version); row == nil {
 			t.Fatal("run must be skipped while another session holds the lock")
 		}
 		if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, int64(0x7a65787472617663)); err != nil {
 			t.Fatal(err)
 		}
 		w.cleanupOnce(ctx)
-		if row, _ := st.Find(ctx, "c_locked", 1); row != nil {
+		if row := findRow(st, "c_locked", version); row != nil {
 			t.Fatal("run must proceed once the lock is free")
 		}
 	})

@@ -29,13 +29,13 @@ type Server struct {
 	cfg   *config.Config
 	store storage.Client
 	cache *cache.Cache
-	// dbGate is the request-time readiness signal for the video-preview DB.
-	// It always exists (never nil). Its store starts nil (video disabled) and is
+	// dbGate is the request-time readiness signal for the thumbnail DB.
+	// It always exists (never nil). Its store starts nil (asynchronous thumbnails disabled) and is
 	// flipped to ready asynchronously by the caller (main.go) once the background
-	// DB init succeeds. Video handlers and the worker consult it on every use, so
-	// the DB can come up after boot and re-enable video with no process restart.
+	// DB init succeeds. The thumbnail handlers and the worker consult it on every use, so
+	// the DB can come up after boot and re-enable asynchronous thumbnails with no process restart.
 	dbGate *dbGate
-	// worker is the video-preview background sweeper. It is constructed in
+	// worker is the asynchronous thumbnail background sweeper. It is constructed in
 	// buildMux (gate-aware) and only actually processes rows while dbGate is
 	// ready. Started by StartAsyncWorker (called from main once the DB is up).
 	worker *AsyncWorker
@@ -62,7 +62,7 @@ type Server struct {
 	workerStartRequested bool
 	workerStartCtx       context.Context
 
-	// dbMu guards the video DB lifecycle owned by StartDBAsync: its
+	// dbMu guards the thumbnail DB lifecycle owned by StartDBAsync: its
 	// cancellable context, the init goroutine and the pool, closed by stopAsync
 	// only after the worker's jobs have ended.
 	dbMu     sync.Mutex
@@ -76,11 +76,11 @@ type Option func(*Server)
 
 // New constructs a Server. cfg and store must not be nil. c may be nil (cache
 // disabled). Both editions (CE and Advanced) call New from their own main and
-// then call StartDBAsync(ctx, cfg) to enable video previews asynchronously
+// then call StartDBAsync(ctx, cfg) to enable asynchronous thumbnails
 // (background pool-open + Migrate, then gate + worker start).
 //
-// When EnableDB has not yet fired, the video-preview DB layer is disabled:
-// video preview/thumbnail return 424 (Failed Dependency) and the worker does not
+// When EnableDB has not yet fired, the thumbnail DB layer is disabled:
+// asynchronous thumbnails (video, office) return 424 (Failed Dependency) and the worker does not
 // process rows. Image/PDF/document/health are unaffected.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
 	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newDBGate()}
@@ -91,7 +91,7 @@ func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Optio
 }
 
 // EnableDB publishes a ready DB store to the gate and (idempotently) starts
-// the video worker. It is safe to call from a background goroutine after the
+// the async worker. It is safe to call from a background goroutine after the
 // server is already serving: the gate flip is atomic and the handlers pick it up
 // on the next request with no restart. Calling it more than once is harmless.
 func (s *Server) EnableDB(ctx context.Context, dbStore *db.Store) {
@@ -188,7 +188,7 @@ func (s *Server) Run() {
 	s.stopAsync()
 }
 
-// stopAsync ends the video worker and closes the video DB pool, in that order:
+// stopAsync ends the async worker and closes the thumbnail DB pool, in that order:
 // it cancels the context owned by StartDBAsync, waits for the DB init, then
 // for the worker's jobs (each returns its row to PENDING), and only then closes the pool.
 func (s *Server) stopAsync() {
@@ -236,7 +236,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // buildMux assembles the public HTTP mux with all route groups.
-// All resource operations (image, health, pdf, document, video-generate) are
+// All resource operations (image, health, pdf, document, thumbnail) are
 // registered under huma (code-first OpenAPI).
 //
 // huma serves no spec or docs routes: the OpenAPI document is a build-time
@@ -244,16 +244,16 @@ func (s *Server) Handler() http.Handler {
 // on every install. See apispec.NewAPI.
 //
 // The render slots are sized from the image-document.max-concurrent-operations
-// key and bound only CPU work. The dedicated video semaphore is built
+// key and bound only CPU work. The dedicated async semaphore is built
 // here from cfg.AsyncConcurrency (APPLICATION key
 // async.max-concurrent-jobs, default runtime.NumCPU()) so a flood of
-// video jobs can never starve image previews, and vice-versa.
+// async jobs can never starve image previews, and vice-versa.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	asyncSem := make(chan struct{}, s.cfg.AsyncConcurrency)
 
-	// Register all operations under huma. The video worker is constructed here
+	// Register all operations under huma. The async worker is constructed here
 	// (gate-aware) and retained on the Server so it can be started once the DB is
 	// ready (EnableDB / StartAsyncWorker).
 	api := newHumaAPI(mux)

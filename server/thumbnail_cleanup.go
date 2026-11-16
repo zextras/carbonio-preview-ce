@@ -33,8 +33,9 @@ func (w *AsyncWorker) runCleanupLoop(ctx context.Context) {
 	}
 }
 
-// cleanupOnce deletes the blobs and rows of READY previews not accessed for 30
-// days. It reports false only when the DB is not ready. A run is skipped when
+// cleanupOnce deletes the blobs and rows of READY and LEGACY thumbnails not
+// accessed for 30 days. "Use original" rows have no blob: only the row goes.
+// FAILED, UNSUPPORTED, PENDING and GENERATING rows are never swept. It reports false only when the DB is not ready. A run is skipped when
 // another instance holds the advisory lock.
 func (w *AsyncWorker) cleanupOnce(ctx context.Context) bool {
 	defer func() {
@@ -59,10 +60,10 @@ func (w *AsyncWorker) cleanupOnce(ctx context.Context) bool {
 }
 
 func (w *AsyncWorker) cleanupExpired(ctx context.Context, store *db.CleanupConn) error {
-	var cursor *db.VideoPreview
+	var cursor *db.Thumbnail
 	deleted := 0
 	for ctx.Err() == nil {
-		rows, err := store.FindExpiredReady(ctx, cursor, cleanupBatchSize)
+		rows, err := store.FindExpired(ctx, cursor, cleanupBatchSize)
 		if err != nil {
 			return err
 		}
@@ -71,17 +72,17 @@ func (w *AsyncWorker) cleanupExpired(ctx context.Context, store *db.CleanupConn)
 			if ctx.Err() != nil {
 				break
 			}
-			if row.PreviewID != nil && *row.PreviewID != "" {
-				berr := w.deps.Store.Delete(ctx, *row.PreviewID, row.Version, row.ServiceType, row.OwnerID)
+			if row.BlobID != nil && !row.Original {
+				berr := w.deps.Store.Delete(ctx, *row.BlobID, row.Version, row.ServiceType, row.OwnerID)
 				if berr != nil && !errors.Is(berr, storage.ErrNotFound) {
 					slog.Warn("AsyncWorker: cleanup blob delete failed, keeping row",
-						"file_id", row.FileID, "version", row.Version, "preview_id", *row.PreviewID, "err", berr)
+						"file_id", row.FileID, "version", row.Version, "size", row.Size, "blob_id", *row.BlobID, "err", berr)
 					continue
 				}
 			}
-			if derr := store.DeleteExpiredReady(ctx, row.FileID, row.Version); derr != nil {
+			if derr := store.DeleteExpired(ctx, row.FileID, row.Version, row.Size); derr != nil {
 				slog.Warn("AsyncWorker: cleanup row delete failed",
-					"file_id", row.FileID, "version", row.Version, "err", derr)
+					"file_id", row.FileID, "version", row.Version, "size", row.Size, "err", derr)
 				continue
 			}
 			deleted++
@@ -92,7 +93,7 @@ func (w *AsyncWorker) cleanupExpired(ctx context.Context, store *db.CleanupConn)
 		cursor = &rows[len(rows)-1]
 	}
 	if deleted > 0 {
-		slog.Info("AsyncWorker: cleanup removed expired previews", "count", deleted)
+		slog.Info("AsyncWorker: cleanup removed expired thumbnails", "count", deleted)
 	}
 	return nil
 }

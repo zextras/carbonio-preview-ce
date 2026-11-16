@@ -52,15 +52,6 @@ components:
         - ready
         - dependencies
       type: object
-    VideoCopyOutputBody:
-      additionalProperties: false
-      properties:
-        preview_id:
-          description: Storage node id of the copied preview frame
-          type: string
-      required:
-        - preview_id
-      type: object
 info:
   description: Preview service.
   title: preview
@@ -1564,44 +1555,18 @@ paths:
       summary: Get PDF Thumbnail
       tags:
         - pdf
-  /preview/video/{id}/{version}/:
+  /thumbnail/{id}:
     delete:
-      description: "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204. When the video-preview database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error."
-      operationId: deleteVideoPreview
+      description: "Deletes every stored thumbnail (all versions, both sizes) of a file: the blobs and the rows. Idempotent: deleting a file without thumbnails returns 204. When the thumbnail database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error."
+      operationId: deleteThumbnails
       parameters:
-        - description: UUID of the video attachment
+        - description: UUID of the file whose thumbnails (all versions, both sizes) are deleted
           in: path
           name: id
           required: true
           schema:
-            description: UUID of the video attachment
+            description: UUID of the file whose thumbnails (all versions, both sizes) are deleted
             format: uuid
-            type: string
-        - description: Version (non-negative)
-          in: path
-          name: version
-          required: true
-          schema:
-            description: Version (non-negative)
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Service that owns the resource
-          explode: false
-          in: query
-          name: service_type
-          required: true
-          schema:
-            description: Service that owns the resource
-            enum:
-              - files
-              - chats
-            type: string
-        - description: File owner ID for Advanced storage routing
-          in: header
-          name: fileownerid
-          schema:
-            description: File owner ID for Advanced storage routing
             type: string
       responses:
         "204":
@@ -1624,132 +1589,40 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Internal Server Error
-      summary: Delete Video Preview
+      summary: Delete Thumbnails
       tags:
-        - video
-  /preview/video/{id}/{version}/copy/:
-    post:
-      description: Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY. When the video-preview database is unavailable this is a no-op that still returns 200 with an empty body (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.
-      operationId: copyVideoPreview
-      parameters:
-        - description: UUID of the SOURCE video attachment
-          in: path
-          name: id
-          required: true
-          schema:
-            description: UUID of the SOURCE video attachment
-            format: uuid
-            type: string
-        - description: Source version (non-negative)
-          in: path
-          name: version
-          required: true
-          schema:
-            description: Source version (non-negative)
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Service that owns the resource
-          explode: false
-          in: query
-          name: service_type
-          required: true
-          schema:
-            description: Service that owns the resource
-            enum:
-              - files
-              - chats
-            type: string
-        - description: UUID of the DESTINATION attachment (new file_id)
-          explode: false
-          in: query
-          name: target
-          required: true
-          schema:
-            description: UUID of the DESTINATION attachment (new file_id)
-            format: uuid
-            type: string
-        - description: Source file owner ID
-          in: header
-          name: fileownerid
-          schema:
-            description: Source file owner ID
-            type: string
-        - description: Destination file owner ID
-          in: header
-          name: targetownerid
-          schema:
-            description: Destination file owner ID
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/VideoCopyOutputBody"
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Internal Server Error
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Bad Gateway
-      summary: Copy Video Preview
-      tags:
-        - video
-  /preview/video/{id}/{version}/{area}/:
+        - thumbnail
+  /thumbnail/{id}/{version}/{size}:
     get:
-      description: Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed, 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).
-      operationId: getVideoPreview
+      description: "Serves the thumbnail of a file version, stored per file, version and size. Video and office thumbnails are generated asynchronously: 202 with Retry-After while generating, 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail."
+      operationId: getThumbnail
       parameters:
-        - description: UUID of the video attachment
+        - description: UUID of the file (UUID1-UUID4)
           in: path
           name: id
           required: true
           schema:
-            description: UUID of the video attachment
+            description: UUID of the file (UUID1-UUID4)
             format: uuid
             type: string
-        - description: Version of the video (non-negative integer)
+        - description: Version of the file (non-negative integer)
           in: path
           name: version
           required: true
           schema:
-            description: Version of the video (non-negative integer)
+            description: Version of the file (non-negative integer)
             format: int64
             minimum: 0
             type: integer
-        - description: Width x height in pixels, e.g. 100x200
+        - description: Thumbnail size
           in: path
-          name: area
+          name: size
           required: true
           schema:
-            description: Width x height in pixels, e.g. 100x200
-            pattern: ^[0-9]+x[0-9]+$
+            description: Thumbnail size
+            enum:
+              - s
+              - m
             type: string
         - description: Service that owns the resource
           explode: false
@@ -1762,40 +1635,34 @@ paths:
               - files
               - chats
             type: string
-        - description: Output quality
+        - description: MIME type of the file as recorded by the caller
           explode: false
           in: query
-          name: quality
+          name: mime
+          required: true
           schema:
-            default: medium
-            description: Output quality
-            enum:
-              - lowest
-              - low
-              - medium
-              - high
-              - highest
+            description: MIME type of the file as recorded by the caller
+            maxLength: 255
             type: string
-        - description: Output image format
+        - description: Content digest of the version; a different digest regenerates the thumbnail
           explode: false
           in: query
-          name: output_format
+          name: digest
           schema:
-            default: jpeg
-            description: Output image format
-            enum:
-              - jpeg
-              - png
-              - gif
+            description: Content digest of the version; a different digest regenerates the thumbnail
+            maxLength: 128
+            pattern: ^[A-Za-z0-9+/=_.:-]+$
             type: string
-        - description: Crop to fill (true) or scale to fit (false)
+        - description: Language tag for office conversions
           explode: false
           in: query
-          name: crop
+          name: lang
           schema:
-            default: false
-            description: Crop to fill (true) or scale to fit (false)
-            type: boolean
+            default: en-US
+            description: Language tag for office conversions
+            maxLength: 35
+            pattern: ^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$
+            type: string
         - description: File owner ID for Advanced storage routing
           in: header
           name: fileownerid
@@ -1820,17 +1687,39 @@ paths:
                 format: binary
                 type: string
                 x-contentMediaType: application/octet-stream
-          description: Successful Response — binary image data
+          description: Successful Response — the thumbnail rendition
           headers:
+            Cache-Control:
+              schema:
+                type: string
             Content-Type:
+              schema:
+                type: string
+            Retry-After:
               schema:
                 type: string
         "202":
           content:
-            application/json:
+            image/jpeg:
               schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Accepted
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+            image/png:
+              schema:
+                format: binary
+                type: string
+                x-contentMediaType: application/octet-stream
+          description: The thumbnail is being generated; poll again after Retry-After seconds
+          headers:
+            Cache-Control:
+              description: no-store
+              schema:
+                type: string
+            Retry-After:
+              description: Seconds to wait before polling again
+              schema:
+                type: string
         "400":
           content:
             application/json:
@@ -1879,170 +1768,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/FastAPIError"
           description: Service Unavailable
-      summary: Get Video Preview
+      summary: Get Thumbnail
       tags:
-        - video
-  /preview/video/{id}/{version}/{area}/thumbnail/:
-    get:
-      description: Serves a thumbnail of the stored first-frame preview of a video attachment. Returns 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).
-      operationId: getVideoThumbnail
-      parameters:
-        - description: UUID of the video attachment
-          in: path
-          name: id
-          required: true
-          schema:
-            description: UUID of the video attachment
-            format: uuid
-            type: string
-        - description: Version of the video (non-negative integer)
-          in: path
-          name: version
-          required: true
-          schema:
-            description: Version of the video (non-negative integer)
-            format: int64
-            minimum: 0
-            type: integer
-        - description: Width x height in pixels, e.g. 100x200
-          in: path
-          name: area
-          required: true
-          schema:
-            description: Width x height in pixels, e.g. 100x200
-            pattern: ^[0-9]+x[0-9]+$
-            type: string
-        - description: Service that owns the resource
-          explode: false
-          in: query
-          name: service_type
-          required: true
-          schema:
-            description: Service that owns the resource
-            enum:
-              - files
-              - chats
-            type: string
-        - description: Output quality
-          explode: false
-          in: query
-          name: quality
-          schema:
-            default: medium
-            description: Output quality
-            enum:
-              - lowest
-              - low
-              - medium
-              - high
-              - highest
-            type: string
-        - description: Output image format
-          explode: false
-          in: query
-          name: output_format
-          schema:
-            default: jpeg
-            description: Output image format
-            enum:
-              - jpeg
-              - png
-              - gif
-            type: string
-        - description: Thumbnail border shape
-          explode: false
-          in: query
-          name: shape
-          schema:
-            default: rectangular
-            description: Thumbnail border shape
-            enum:
-              - rounded
-              - rectangular
-            type: string
-        - description: File owner ID for Advanced storage routing
-          in: header
-          name: fileownerid
-          schema:
-            description: File owner ID for Advanced storage routing
-            type: string
-      responses:
-        "200":
-          content:
-            image/gif:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/jpeg:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-            image/png:
-              schema:
-                format: binary
-                type: string
-                x-contentMediaType: application/octet-stream
-          description: Successful Response — binary image data
-          headers:
-            Content-Type:
-              schema:
-                type: string
-        "202":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Accepted
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Not Found
-        "415":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Unsupported Media Type
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Unprocessable Entity
-        "424":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Failed Dependency
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Internal Server Error
-        "502":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Bad Gateway
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FastAPIError"
-          description: Service Unavailable
-      summary: Get Video Thumbnail
-      tags:
-        - video
+        - thumbnail

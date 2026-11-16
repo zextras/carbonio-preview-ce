@@ -43,10 +43,8 @@ type Handlers struct {
 	PostDocumentPreview   func(context.Context, *DocPostPreviewInput) (*BinOut, error)
 	PostDocumentThumbnail func(context.Context, *DocPostThumbnailInput) (*BinOut, error)
 
-	GetVideoPreview    func(context.Context, *VideoGetPreviewInput) (*BinOut, error)
-	GetVideoThumbnail  func(context.Context, *VideoGetThumbnailInput) (*BinOut, error)
-	DeleteVideoPreview func(context.Context, *VideoDeleteInput) (*struct{}, error)
-	CopyVideoPreview   func(context.Context, *VideoCopyInput) (*VideoCopyOutput, error)
+	GetThumbnail     func(context.Context, *ThumbnailGetInput) (*ThumbnailOutput, error)
+	DeleteThumbnails func(context.Context, *ThumbnailDeleteInput) (*struct{}, error)
 }
 
 // Register registers all huma-managed operations onto api using the provided
@@ -56,9 +54,7 @@ func Register(api huma.API, h Handlers) {
 	RegisterHealthOps(api, h.GetHealthLive, h.GetHealthReady, h.GetHealth)
 	RegisterPDFOps(api, h.GetPDFPreview, h.GetPDFThumbnail, h.PostPDFPreview, h.PostPDFThumbnail)
 	RegisterDocumentOps(api, h.GetDocumentPreview, h.GetDocumentThumbnail, h.PostDocumentPreview, h.PostDocumentThumbnail)
-	RegisterVideoOps(api, h.GetVideoPreview, h.GetVideoThumbnail, h.DeleteVideoPreview, h.CopyVideoPreview)
-	// NOTE: the public POST /preview/video/generate/... endpoint has been removed
-	// (spec Q5). Generation runs only via the internal worker.
+	RegisterThumbnailOps(api, h.GetThumbnail, h.DeleteThumbnails)
 }
 
 // RegisterStubs registers all operations with no-op stub handlers.
@@ -87,10 +83,8 @@ func RegisterStubs(api huma.API) {
 		PostDocumentPreview:   func(_ context.Context, _ *DocPostPreviewInput) (*BinOut, error) { return nil, nil },
 		PostDocumentThumbnail: func(_ context.Context, _ *DocPostThumbnailInput) (*BinOut, error) { return nil, nil },
 
-		GetVideoPreview:    func(_ context.Context, _ *VideoGetPreviewInput) (*BinOut, error) { return nil, nil },
-		GetVideoThumbnail:  func(_ context.Context, _ *VideoGetThumbnailInput) (*BinOut, error) { return nil, nil },
-		DeleteVideoPreview: func(_ context.Context, _ *VideoDeleteInput) (*struct{}, error) { return nil, nil },
-		CopyVideoPreview:   func(_ context.Context, _ *VideoCopyInput) (*VideoCopyOutput, error) { return nil, nil },
+		GetThumbnail:     func(_ context.Context, _ *ThumbnailGetInput) (*ThumbnailOutput, error) { return nil, nil },
+		DeleteThumbnails: func(_ context.Context, _ *ThumbnailDeleteInput) (*struct{}, error) { return nil, nil },
 	}
 	Register(api, h)
 }
@@ -323,70 +317,36 @@ func RegisterDocumentOps(
 }
 
 // ---------------------------------------------------------------------------
-// Video GET / DELETE / copy operations
+// Thumbnail operations
 // ---------------------------------------------------------------------------
 
-// RegisterVideoOps registers the four video HTTP endpoints onto api:
-//
-//	GET  /preview/video/{id}/{version}/{area}/
-//	GET  /preview/video/{id}/{version}/{area}/thumbnail/
-//	DELETE /preview/video/{id}/{version}/
-//	POST   /preview/video/{id}/{version}/copy/
-func RegisterVideoOps(
+func RegisterThumbnailOps(
 	api huma.API,
-	getPreview func(context.Context, *VideoGetPreviewInput) (*BinOut, error),
-	getThumbnail func(context.Context, *VideoGetThumbnailInput) (*BinOut, error),
-	deletePreview func(context.Context, *VideoDeleteInput) (*struct{}, error),
-	copyPreview func(context.Context, *VideoCopyInput) (*VideoCopyOutput, error),
+	getThumbnail func(context.Context, *ThumbnailGetInput) (*ThumbnailOutput, error),
+	deleteThumbnails func(context.Context, *ThumbnailDeleteInput) (*struct{}, error),
 ) {
-	// GET /preview/video/{id}/{version}/{area}/
 	huma.Register(api, huma.Operation{
-		OperationID: "getVideoPreview",
+		OperationID: "getThumbnail",
 		Method:      http.MethodGet,
-		Path:        "/preview/video/{id}/{version}/{area}/",
-		Summary:     "Get Video Preview",
-		Description: "Serves the stored first-frame preview of a video attachment. Returns 202 while generation is in progress, 415 for unsupported formats, 422 if generation has permanently failed, 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).",
-		Tags:        []string{"video"},
-		Errors:      []int{202, 400, 404, 415, 422, 424, 502, 503},
+		Path:        "/thumbnail/{id}/{version}/{size}",
+		Summary:     "Get Thumbnail",
+		Description: "Serves the thumbnail of a file version, stored per file, version and size. Video and office thumbnails are generated asynchronously: 202 with Retry-After while generating, 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail.",
+		Tags:        []string{"thumbnail"},
+		Errors:      []int{400, 404, 415, 422, 424, 502, 503},
 		Responses: map[string]*huma.Response{
-			"200": ImageBinaryResponse,
-		},
-	}, getPreview)
-
-	// GET /preview/video/{id}/{version}/{area}/thumbnail/
-	huma.Register(api, huma.Operation{
-		OperationID: "getVideoThumbnail",
-		Method:      http.MethodGet,
-		Path:        "/preview/video/{id}/{version}/{area}/thumbnail/",
-		Summary:     "Get Video Thumbnail",
-		Description: "Serves a thumbnail of the stored first-frame preview of a video attachment. Returns 424 when the video-preview database dependency is unavailable (preview core stays healthy; retry once the DB is back).",
-		Tags:        []string{"video"},
-		Errors:      []int{202, 400, 404, 415, 422, 424, 502, 503},
-		Responses: map[string]*huma.Response{
-			"200": ImageBinaryResponse,
+			"200": ThumbnailOK,
+			"202": ThumbnailAccepted,
 		},
 	}, getThumbnail)
 
-	// DELETE /preview/video/{id}/{version}/
 	huma.Register(api, huma.Operation{
-		OperationID:   "deleteVideoPreview",
+		OperationID:   "deleteThumbnails",
 		Method:        http.MethodDelete,
-		Path:          "/preview/video/{id}/{version}/",
-		Summary:       "Delete Video Preview",
-		Description:   "Deletes the stored first-frame preview blob and the video_preview job row. Idempotent: deleting a non-existent preview returns 204. When the video-preview database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.",
-		Tags:          []string{"video"},
+		Path:          "/thumbnail/{id}",
+		Summary:       "Delete Thumbnails",
+		Description:   "Deletes every stored thumbnail (all versions, both sizes) of a file: the blobs and the rows. Idempotent: deleting a file without thumbnails returns 204. When the thumbnail database is unavailable this is a no-op that still returns 204 (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.",
+		Tags:          []string{"thumbnail"},
 		DefaultStatus: http.StatusNoContent,
 		Errors:        []int{422, 424},
-	}, deletePreview)
-
-	// POST /preview/video/{id}/{version}/copy/
-	huma.Register(api, huma.Operation{
-		OperationID: "copyVideoPreview",
-		Method:      http.MethodPost,
-		Path:        "/preview/video/{id}/{version}/copy/",
-		Summary:     "Copy Video Preview",
-		Description: "Copies the stored first-frame preview from source to target attachment. Preview mints a new blob UUID for the copy and returns it. Returns 404 if the source preview is not READY. When the video-preview database is unavailable this is a no-op that still returns 200 with an empty body (safe for fire-and-forget callers); 424 is returned only on a non-connection database error.",
-		Tags:        []string{"video"},
-		Errors:      []int{404, 422, 424, 502},
-	}, copyPreview)
+	}, deleteThumbnails)
 }

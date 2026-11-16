@@ -4,21 +4,21 @@
 
 package server
 
-// db_gate.go implements the DB-resilience layer for the video-preview
+// db_gate.go implements the DB-resilience layer for the thumbnail
 // endpoints.
 //
 // carbonio-preview must boot and serve image/pdf/document/health even when the
-// video-preview database is absent or its connection is temporarily down (e.g.
+// thumbnail database is absent or its connection is temporarily down (e.g.
 // the Consul mesh upstream is not up yet at boot). In that state:
-//   - the video preview + thumbnail endpoints return HTTP 424 (Failed
+//   - the asynchronous thumbnail (video, office) requests return HTTP 424 (Failed
 //     Dependency): an OPERATIONAL "the DB dependency is down" signal, distinct
 //     from 415 (which means the file's codec is genuinely unsupported and
 //     requires a working DB to have been probed);
-//   - the video worker does not run;
-//   - copy/delete no-op with success so the fire-and-forget WSC caller is happy.
+//   - the async worker does not run;
+//   - delete is a no-op with success so the fire-and-forget WSC caller is happy.
 //
 // The gate is the single readiness signal consulted at REQUEST time (not at
-// construction time), so a DB that comes up after boot re-enables video with no
+// construction time), so a DB that comes up after boot re-enables asynchronous thumbnails with no
 // process restart. main.go initialises the DB in a background goroutine with
 // capped-backoff retry and calls dbGate.Set on success.
 
@@ -29,10 +29,10 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 )
 
-// dbGate holds the video-preview DB store behind an atomic pointer so the
+// dbGate holds the thumbnail DB store behind an atomic pointer so the
 // readiness state can flip after boot without racing the request handlers.
 //
-// A nil store means "video DB not ready" (absent creds, or the background init
+// A nil store means "thumbnail DB not ready" (absent creds, or the background init
 // has not yet succeeded). Handlers and the worker must consult Store()/Ready()
 // on every use and degrade gracefully when it is nil.
 type dbGate struct {
@@ -49,7 +49,7 @@ func (g *dbGate) Set(s *db.Store) {
 	g.store.Store(s)
 }
 
-// Store returns the current DB store, or nil when video is disabled/not ready.
+// Store returns the current DB store, or nil when asynchronous thumbnails are disabled/not ready.
 func (g *dbGate) Store() *db.Store {
 	return g.store.Load()
 }
@@ -69,7 +69,7 @@ func (g *dbGate) Ready() bool {
 //     existing unit/integration tests (which build Deps{DB: store} and call the
 //     handlers directly) working unchanged.
 //
-// A nil return means "video is not available right now".
+// A nil return means "the thumbnail DB is not available right now".
 func (d Deps) dbStore() *db.Store {
 	if d.DBGate != nil {
 		return d.DBGate.Store()

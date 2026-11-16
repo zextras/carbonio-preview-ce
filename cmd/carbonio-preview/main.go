@@ -88,19 +88,19 @@ func main() {
 	// Build the in-process rendered-output cache (0 MiB ⇒ nil ⇒ disabled).
 	outCache := cache.New(cfg.CacheMaxBytes)
 
-	// Create the server. The video-preview DB is NEVER a boot-time hard
+	// Create the server. The thumbnail DB is NEVER a boot-time hard
 	// dependency: preview must serve image/pdf/document/health regardless of DB
-	// state. Video previews are enabled asynchronously once the DB is ready.
+	// state. Asynchronous thumbnails are enabled asynchronously once the DB is ready.
 	srv := server.New(cfg, storageClient, outCache)
 
 	// Root context cancelled on shutdown, used by the background DB init and the
-	// video worker sweep goroutine.
+	// async worker sweep goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// StartDBAsync is the SHARED helper (server package) that encapsulates
 	// the DSN-empty-vs-background-retry decision, so CE's and Advanced's main
-	// can never diverge on how the video DB comes up.
+	// can never diverge on how the thumbnail DB comes up.
 	srv.StartDBAsync(ctx, cfg)
 
 	// Run blocks until SIGTERM/SIGINT; it always starts the HTTP listener.

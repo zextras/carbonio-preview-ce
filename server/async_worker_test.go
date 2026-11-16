@@ -5,7 +5,7 @@
 // async_worker_test.go covers:
 //
 //  1. Idle-read watchdog: a stalled download (reader blocks forever) is
-//     cancelled by the watchdog timer → attempt() calls dropRow (row deleted).
+//     cancelled by the watchdog timer → attempt() calls dropRows (row deleted).
 //
 //  2. Flowing download: a reader that delivers bytes slowly but never idles
 //     for readIdleTimeout is NOT cancelled; the attempt proceeds normally
@@ -170,7 +170,7 @@ func makeWorkerWithSem(dbStore *db.Store, store storage.Client, maxAttempts int)
 //   - The idle-read watchdog fires after readIdleTimeout, calling dlCancel().
 //   - dlCancel() propagates through http.NewRequestWithContext → transport aborts
 //     the body read → io.Copy returns a context error.
-//   - attempt() treats the copy error as a connectivity failure (dropRow).
+//   - attempt() treats the copy error as a connectivity failure (dropRows).
 func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 	// Use a tiny idle timeout so the test runs in ms, not seconds.
 	orig := readIdleTimeout
@@ -202,23 +202,14 @@ func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 	})
 
 	// Enqueue + claim so attempt() has a valid row.
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	// Run attempt in a goroutine (it will block until the watchdog fires).
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, *row)
+		w.attempt(ctx, rows)
 	}()
 
 	// attempt() should complete within 1s (watchdog fires at 50ms, HTTP unblocks quickly).
@@ -229,10 +220,7 @@ func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 		t.Fatal("attempt() did not return within 1s after watchdog should have fired")
 	}
 
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil {
-		t.Fatalf("Find after attempt: %v", ferr)
-	}
+	after := findRow(dbStore, fileID, version)
 	if after != nil {
 		t.Errorf("idle-cancelled download must drop the row, got status %q", after.Status)
 	}
@@ -253,6 +241,8 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	orig := readIdleTimeout
 	readIdleTimeout = idleTO
 	t.Cleanup(func() { readIdleTimeout = orig })
+
+	stubVideoPipeline(t)
 
 	// Stub probe and extract so attempt() reaches MarkReady.
 	origProbe := videoDetectCodecFromFileFunc
@@ -283,22 +273,13 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	}
 	w := makeWorkerWithSem(dbStore, store, 3)
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, *row)
+		w.attempt(ctx, rows)
 	}()
 
 	// Generous timeout: probe/extract stubs are instant; the slow reader takes
@@ -310,12 +291,15 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	}
 
 	// Row must be READY.
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
-		t.Fatalf("Find after flowing attempt: %v", ferr)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after flowing attempt: row missing")
 	}
 	if after.Status != db.StatusReady {
 		t.Errorf("status: got %q, want READY (flowing download should succeed)", after.Status)
+	}
+	if pair, err := dbStore.FindPair(ctx, fileID, version); err != nil || pair[db.SizeS] == nil || pair[db.SizeS].Status != db.StatusReady || pair[db.SizeS].BlobID == nil || after.BlobID == nil {
+		t.Errorf("both sizes must be READY with a blob: %+v err=%v", pair, err)
 	}
 }
 
@@ -408,13 +392,8 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	})
 
 	// Enqueue + claim (row becomes GENERATING).
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	// Manually set claimed_at far in the past so ReclaimStale considers it stale.
 	// Do this by sleeping > staleTTL (1s). In a CI-speed test, force the row
@@ -432,9 +411,9 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	w.tick(ctx)
 	w.Wait()
 
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
-		t.Fatalf("Find after tick: %v", ferr)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after tick: row missing")
 	}
 	if after.Status != db.StatusGenerating || after.Attempts != 1 {
 		t.Errorf("live row after tick: status=%s attempts=%d, want GENERATING/1 (only ReclaimStale's +1)", after.Status, after.Attempts)
@@ -474,6 +453,8 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	origHB := heartbeatInterval
 	heartbeatInterval = 50 * time.Millisecond // fast heartbeat
 	t.Cleanup(func() { heartbeatInterval = origHB })
+
+	stubVideoPipeline(t)
 
 	// Stub probe and extract so attempt() reaches MarkReady.
 	origProbe := videoDetectCodecFromFileFunc
@@ -519,25 +500,16 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	// than heartbeatInterval, so ReclaimStale would fire without heartbeats.
 	w.staleTTL = 200 * time.Millisecond
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	// Record claimed_at before download starts.
-	claimedAtBefore := row.ClaimedAt
+	claimedAtBefore := rows[0].ClaimedAt
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, *row)
+		w.attempt(ctx, rows)
 	}()
 
 	// Wait for attempt to complete (slow reader takes ~300ms; give 3s overhead).
@@ -548,9 +520,9 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	}
 
 	// Row must be READY — the download completed without being reclaimed.
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", ferr)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status != db.StatusReady {
 		t.Errorf("status: got %q, want READY (heartbeat should have kept row alive)", after.Status)
@@ -617,22 +589,13 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 	}
 	w := makeWorkerWithSem(dbStore, store, 3)
 
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, *row)
+		w.attempt(ctx, rows)
 	}()
 
 	// attempt() must return within 2s (ceiling = 80ms + overhead).
@@ -644,9 +607,9 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 
 	// Row must be PENDING (transient — attempts < maxAttempts) or FAILED (at cap).
 	// It must NOT be UNSUPPORTED (context cancellation is NOT an UNSUPPORTED codec).
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
-		t.Fatalf("Find after attempt: %v", ferr)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after attempt: row missing")
 	}
 	if after.Status == db.StatusUnsupported {
 		t.Errorf("status: got UNSUPPORTED, want PENDING or FAILED (ceiling cancellation must not map to UNSUPPORTED)")
@@ -691,13 +654,8 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	w.staleTTL = 1 * time.Millisecond
 
 	// Enqueue + claim (PENDING → GENERATING, attempts=0).
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	// Bump attempts to maxAttempts-1 via ReleaseWithAttempt + re-Claim so that
 	// ReclaimStale's +1 will hit exactly maxAttempts.  We do this by:
@@ -707,10 +665,7 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
-	ok, err = dbStore.Claim(ctx, fileID, version, w.instanceID)
-	if err != nil || !ok {
-		t.Fatalf("Re-Claim (setup): err=%v ok=%v", err, ok)
-	}
+	claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	// Wait for claimed_at to be old enough for ReclaimStale.
 	time.Sleep(5 * time.Millisecond)
@@ -729,9 +684,9 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	}
 
 	// Row must still be GENERATING (not FAILED, not PENDING).
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil || after == nil {
-		t.Fatalf("Find after tick: %v", ferr)
+	after := findRow(dbStore, fileID, version)
+	if after == nil {
+		t.Fatal("Find after tick: row missing")
 	}
 	switch after.Status {
 	case db.StatusGenerating:
@@ -768,21 +723,13 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 	const version = 1
 
 	w := makeWorkerWithSem(dbStore, &headerBlockingStore{}, 3)
-	if err := dbStore.EnqueueIfAbsent(ctx, fileID, version, "owner1", "files"); err != nil {
-		t.Fatalf("EnqueueIfAbsent: %v", err)
-	}
-	if ok, err := dbStore.Claim(ctx, fileID, version, w.instanceID); err != nil || !ok {
-		t.Fatalf("Claim: err=%v ok=%v", err, ok)
-	}
-	row, err := dbStore.Find(ctx, fileID, version)
-	if err != nil || row == nil {
-		t.Fatalf("Find: %v", err)
-	}
+	enqueuePair(t, dbStore, fileID, version)
+	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, *row)
+		w.attempt(ctx, rows)
 	}()
 	select {
 	case <-done:
@@ -790,10 +737,7 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 		t.Fatal("attempt() hung waiting for the storage response")
 	}
 
-	after, ferr := dbStore.Find(ctx, fileID, version)
-	if ferr != nil {
-		t.Fatalf("Find after attempt: %v", ferr)
-	}
+	after := findRow(dbStore, fileID, version)
 	if after != nil {
 		t.Errorf("header wait cancelled by the idle timeout must drop the row, got status %q", after.Status)
 	}

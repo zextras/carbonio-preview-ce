@@ -223,7 +223,7 @@ func stopAsyncChecked(t *testing.T, s *Server) {
 	if !closed {
 		t.Error("worker not closed by stopAsync")
 	}
-	if _, err := store.Find(context.Background(), "x", 1); err == nil {
+	if _, err := store.FindPair(context.Background(), "x", 1); err == nil {
 		t.Error("video DB pool still open after stopAsync")
 	}
 }
