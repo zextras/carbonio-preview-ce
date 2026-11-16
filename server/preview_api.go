@@ -5,6 +5,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -19,21 +20,12 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
-const defaultFetchIdle = 60 * time.Second
-
-func fetchIdle(cfg *config.Config) time.Duration {
-	if cfg == nil || cfg.ServiceTimeoutInSeconds <= 0 {
-		return defaultFetchIdle
-	}
-	return time.Duration(cfg.ServiceTimeoutInSeconds) * time.Second
-}
-
 func previewPipeline(deps Deps, mimeType string) (pipeline, error) {
 	p, ok := pipelineFor(mimeType)
 	if !ok {
 		return pipeline{}, errFormatNotSupported()
 	}
-	if p.kind == kindOffice && deps.Cfg != nil && !deps.Cfg.ServiceEnableDocumentPreview {
+	if p.kind == kindOffice && !deps.Cfg.ServiceEnableDocumentPreview {
 		return pipeline{}, huma.NewError(http.StatusBadRequest, config.Msg.DocumentPreviewDisabled)
 	}
 	return p, nil
@@ -58,12 +50,20 @@ func buildGetPreview(deps Deps) func(context.Context, *apispec.PreviewGetInput) 
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
 				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: in.ID})
 		}
-		src, size, err := openSource(ctx, deps.Store, id, in.Version, string(in.ServiceType), in.FileOwnerID, fetchIdle(deps.Cfg))
+		src, size, err := openSource(ctx, deps.Store, id, in.Version, string(in.ServiceType), in.FileOwnerID, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
 		if err != nil {
 			return nil, sourceStatusError(err)
 		}
 		if p.native {
-			return passthrough(p.mime, src, size), nil
+			br := bufio.NewReader(src)
+			if _, err := br.Peek(1); err != nil && !errors.Is(err, io.EOF) {
+				_ = src.Close()
+				return nil, sourceStatusError(err)
+			}
+			return passthrough(p.mime, struct {
+				io.Reader
+				io.Closer
+			}{br, src}, size), nil
 		}
 		defer src.Close()
 		data, err := io.ReadAll(src)

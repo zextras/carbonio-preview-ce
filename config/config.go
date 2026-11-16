@@ -49,8 +49,8 @@ type Config struct {
 	DocumentConversionServiceEndpoint string
 	DocumentConversionConvertAPI      string
 
-	// RenderConcurrency (N) is the maximum number of render operations (image,
-	// PDF, document and the resize of video previews) running at the same time.
+	// RenderConcurrency (N) is the maximum number of render operations (libvips and
+	// PDFium calls of thumbnails and image conversions) running at the same time.
 	// Only CPU work counts: storage transfers, uploads and document conversions
 	// take no slot.
 	// Application-layer key "image-document.max-concurrent-operations" (Consul KV

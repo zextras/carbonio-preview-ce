@@ -68,6 +68,23 @@ func TestPipelineFor_NormalisesCaseAndParameters(t *testing.T) {
 	}
 }
 
+func TestPipelineFor_MalformedParametersKeepTheType(t *testing.T) {
+	for in, want := range map[string]string{
+		"image/jpeg; name=a b.jpg": "image/jpeg",
+		"text/plain; charset=":     "text/plain",
+		"image/jpeg;;":             "image/jpeg",
+	} {
+		if p, ok := pipelineFor(in); !ok || p.mime != want {
+			t.Errorf("%q: got %+v ok=%v, want %s", in, p, ok, want)
+		}
+	}
+	for _, in := range []string{"", "jpeg", "image/", "/jpeg", "image/jp eg", "; charset=x"} {
+		if p, ok := pipelineFor(in); ok {
+			t.Errorf("%q: accepted as %+v", in, p)
+		}
+	}
+}
+
 func TestPipelineFor_JPGAlias(t *testing.T) {
 	p, ok := pipelineFor("image/jpg")
 	if !ok || p.mime != "image/jpeg" || p.kind != kindImage || !p.original {

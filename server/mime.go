@@ -5,6 +5,7 @@
 package server
 
 import (
+	"errors"
 	"mime"
 	"strings"
 )
@@ -71,7 +72,7 @@ var pipelines = func() map[string]pipeline {
 
 func pipelineFor(raw string) (pipeline, bool) {
 	mt, _, err := mime.ParseMediaType(strings.TrimSpace(raw))
-	if err != nil {
+	if err != nil && !errors.Is(err, mime.ErrInvalidMediaParameter) {
 		return pipeline{}, false
 	}
 	mt = strings.ToLower(mt)

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -684,5 +686,188 @@ func TestRoutes_OldPathsAre404(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404", r.method, r.path, rec.Code)
 		}
+	}
+}
+
+type ctxBytesReader struct {
+	ctx context.Context
+	r   *bytes.Reader
+}
+
+func (c *ctxBytesReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+func (c *ctxBytesReader) Close() error { return nil }
+
+func TestPreviewGet_SlowClientIsNotStorageSilence(t *testing.T) {
+	const size = 64 << 20
+	data := bytes.Repeat([]byte("v"), size)
+	srv := streamHarness(t, func(ctx context.Context) io.ReadCloser {
+		return &ctxBytesReader{ctx: ctx, r: bytes.NewReader(data)}
+	}, 1)
+
+	resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=video/mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	head := make([]byte, 1<<20)
+	if _, err := io.ReadFull(resp.Body, head); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil || len(head)+len(rest) != size {
+		t.Fatalf("a client that paused longer than the idle timeout got %d of %d bytes, err=%v", len(head)+len(rest), size, err)
+	}
+}
+
+type failAfterReader struct {
+	data []byte
+	err  error
+	ctx  context.Context
+	done chan<- struct{}
+	once sync.Once
+}
+
+func (r *failAfterReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	if r.err != nil {
+		return 0, r.err
+	}
+	<-r.ctx.Done()
+	return 0, r.ctx.Err()
+}
+
+func (r *failAfterReader) Close() error {
+	if r.done != nil {
+		r.once.Do(func() { close(r.done) })
+	}
+	return nil
+}
+
+func TestPreviewGet_ConvertedMidBodyFailureIs422(t *testing.T) {
+	for _, mime := range []string{"image/tiff", "image/svg+xml", docxMime} {
+		t.Run(mime, func(t *testing.T) {
+			srv := streamHarness(t, func(context.Context) io.ReadCloser {
+				return &failAfterReader{data: []byte("partial"), err: errors.New("connection reset")}
+			}, 0)
+			resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=" + url.QueryEscape(mime))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("status %d, want 422", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestPreviewGet_FailureBeforeFirstByteKeepsRealStatus(t *testing.T) {
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{storage.ErrNotFound, http.StatusNotFound},
+		{errors.New("boom"), http.StatusUnprocessableEntity},
+	}
+	for _, c := range cases {
+		srv := streamHarness(t, func(context.Context) io.ReadCloser {
+			return &failAfterReader{err: c.err}
+		}, 0)
+		resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=video/mp4")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Errorf("%v: status %d, want %d", c.err, resp.StatusCode, c.want)
+		}
+	}
+}
+
+func TestPreviewGet_EmptySourceIsEmpty200(t *testing.T) {
+	srv := streamHarness(t, func(context.Context) io.ReadCloser {
+		return &failAfterReader{err: io.EOF}
+	}, 0)
+	resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=video/mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || err != nil || len(body) != 0 {
+		t.Fatalf("status %d len %d err %v, want an empty 200", resp.StatusCode, len(body), err)
+	}
+}
+
+func TestPreviewGet_ClientDisconnectClosesAndCancelsSource(t *testing.T) {
+	closed := make(chan struct{})
+	cancelled := make(chan struct{})
+	srv := streamHarness(t, func(ctx context.Context) io.ReadCloser {
+		go func() {
+			<-ctx.Done()
+			close(cancelled)
+		}()
+		return &failAfterReader{data: bytes.Repeat([]byte("a"), 16<<10), ctx: ctx, done: closed}
+	}, 0)
+
+	resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=video/mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(resp.Body, make([]byte, 1024)); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	for name, ch := range map[string]chan struct{}{"closed": closed, "cancelled": cancelled} {
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Errorf("source not %s after the client disconnected", name)
+		}
+	}
+}
+
+type sizedStore struct {
+	streamStore
+	size int64
+}
+
+func (s sizedStore) RetrieveDataStreaming(ctx context.Context, _ string, _ int, _, _ string) (io.ReadCloser, int64, error) {
+	return s.open(ctx), s.size, nil
+}
+
+func TestPreviewGet_DeclaredLengthAbortsOnSourceFailure(t *testing.T) {
+	const declared = 1 << 20
+	h := newHarness(t, harnessOpts{noDB: true, cfg: func(_ *testing.T, d Deps) Deps {
+		d.Store = sizedStore{streamStore: streamStore{memStore: newMemStore(), open: func(context.Context) io.ReadCloser {
+			return &failAfterReader{data: bytes.Repeat([]byte("p"), 4096), err: errors.New("connection reset")}
+		}}, size: declared}
+		return d
+	}})
+	srv := httptest.NewServer(h.mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/preview/" + newID() + "/1?service_type=files&mime=application/pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.ContentLength != declared {
+		t.Fatalf("Content-Length = %d, want %d", resp.ContentLength, declared)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err == nil {
+		t.Fatalf("a body cut at %d of %d bytes ended cleanly", len(body), declared)
 	}
 }

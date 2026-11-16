@@ -269,7 +269,7 @@ func registerCEKeys() {
 			Namespace:    NamespaceApplication,
 			Default:      "", // computed at runtime → runtime.NumCPU()
 			IfNotPresent: "Defaults to the number of CPUs",
-			Description:  "Number of PDFium helper OS subprocesses used for PDF/document rendering; a render acquires one after passing image-document/max-concurrent-operations. Default: CPU count.",
+			Description:  "Number of PDFium helper OS subprocesses used to render PDF thumbnails; a render acquires one after passing image-document/max-concurrent-operations. Default: CPU count.",
 		},
 		// ── Database credentials ─────────────────────────────────────────────
 		// Read from Consul KV at runtime inside config.Load() via

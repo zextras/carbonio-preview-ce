@@ -12,7 +12,7 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
-// idleReadCloser resets its timer on every successful read; when the timer fires the source context is cancelled.
+// idleReadCloser runs its timer only while a source Read is pending, so time spent in the client's Write never counts; when it fires the source context is cancelled.
 type idleReadCloser struct {
 	rc      io.ReadCloser
 	timer   *time.Timer
@@ -21,10 +21,9 @@ type idleReadCloser struct {
 }
 
 func (r *idleReadCloser) Read(p []byte) (int, error) {
+	r.timer.Reset(r.timeout)
 	n, err := r.rc.Read(p)
-	if n > 0 {
-		r.timer.Reset(r.timeout)
-	}
+	r.timer.Stop()
 	return n, err
 }
 
@@ -45,6 +44,6 @@ func openSource(ctx context.Context, store storage.Client, fileID string, versio
 		cancel()
 		return nil, 0, err
 	}
-	timer.Reset(idle)
+	timer.Stop()
 	return &idleReadCloser{rc: rc, timer: timer, timeout: idle, cancel: cancel}, size, nil
 }

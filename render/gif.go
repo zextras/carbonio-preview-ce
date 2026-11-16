@@ -29,14 +29,14 @@ func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, wor
 	out := filepath.Join(workDir, "out.gif")
 
 	if err := runFFmpegGIF(ctx,
-		"-i", inputPath,
+		"-filter_threads", "1", "-i", inputPath,
 		"-vf", scale+",palettegen=stats_mode=diff",
 		"-y", palette,
 	); err != nil {
 		return nil, err
 	}
 	if err := runFFmpegGIF(ctx,
-		"-i", inputPath, "-i", palette,
+		"-filter_complex_threads", "1", "-i", inputPath, "-i", palette,
 		"-lavfi", "[0:v]"+scale+"[x];[x][1:v]paletteuse=dither=none",
 		"-f", "gif", "-y", out,
 	); err != nil {
