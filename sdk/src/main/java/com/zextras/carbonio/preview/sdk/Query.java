@@ -11,42 +11,30 @@ public final class Query {
 
   private final String fileId;
   private final int version;
-  private final String area;
-  private final String outputFormat;
-  private final String quality;
-  private final String shape;
+  private final ThumbnailSize size;
   private final String serviceType;
   private final String ownerId;
-  private final boolean crop;
-  private final int firstPage;
-  private final int lastPage;
-  private final String langTag;
+  private final String mime;
+  private final String digest;
+  private final String lang;
 
   Query(QueryBuilder b) {
     this.fileId = b.getFileId();
     this.version = b.getVersion();
-    this.area = b.getArea();
-    this.outputFormat = b.getOutputFormat();
-    this.quality = b.getQuality();
-    this.shape = b.getShape();
+    this.size = b.getSize();
     this.serviceType = b.getServiceType();
     this.ownerId = b.getOwnerId();
-    this.crop = b.isCrop();
-    this.firstPage = b.getFirstPage();
-    this.lastPage = b.getLastPage();
-    this.langTag = b.getLangTag();
+    this.mime = b.getMime();
+    this.digest = b.getDigest();
+    this.lang = b.getLang();
   }
 
   public String getFileId() { return fileId; }
   public int getVersion() { return version; }
-  public String getArea() { return area; }
-  public String getOutputFormat() { return outputFormat; }
-  public String getQuality() { return quality; }
-  public String getShape() { return shape; }
+  public ThumbnailSize getSize() { return size; }
   public String getServiceType() { return serviceType; }
   public String getOwnerId() { return ownerId; }
-  public boolean isCrop() { return crop; }
-  public int getFirstPage() { return firstPage; }
-  public int getLastPage() { return lastPage; }
-  public String getLangTag() { return langTag; }
+  public String getMime() { return mime; }
+  public String getDigest() { return digest; }
+  public String getLang() { return lang; }
 }

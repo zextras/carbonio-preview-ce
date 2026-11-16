@@ -6,8 +6,7 @@ package com.zextras.carbonio.preview.sdk;
 import com.zextras.carbonio.preview.sdk.rest.ApiClient;
 import com.zextras.carbonio.preview.sdk.rest.ApiException;
 import com.zextras.carbonio.preview.sdk.rest.api.HealthApi;
-import com.zextras.carbonio.preview.sdk.rest.api.VideoApi;
-import com.zextras.carbonio.preview.sdk.rest.model.VideoCopyOutputBody;
+import com.zextras.carbonio.preview.sdk.rest.api.ThumbnailApi;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -20,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.OptionalInt;
 import java.util.UUID;
 
 /**
@@ -43,12 +43,13 @@ import java.util.UUID;
  *
  * <p>All methods are thread-safe; the underlying {@link HttpClient} is shared.
  *
- * <h3>Video preview methods</h3>
+ * <h3>Methods</h3>
  * <ul>
- *   <li>{@link #getPreviewOfVideo(Query)} — retrieve a video first-frame preview image</li>
- *   <li>{@link #getThumbnailOfVideo(Query)} — retrieve a video thumbnail image</li>
- *   <li>{@link #deleteVideoPreview(Query)} — delete a stored video preview from the server</li>
- *   <li>{@link #copyVideoPreview(Query, String, String)} — copy a stored video preview to a new id</li>
+ *   <li>{@link #getThumbnail(Query)} — retrieve a thumbnail (200, or 202 while it is generated)</li>
+ *   <li>{@link #getPreview(Query)} — retrieve a preview streamed from the server</li>
+ *   <li>{@link #postThumbnail(InputStream, Query)} — thumbnail of an uploaded file</li>
+ *   <li>{@link #postPreview(InputStream, Query)} — preview of an uploaded file</li>
+ *   <li>{@link #deleteThumbnails(String)} — delete every stored thumbnail of a file</li>
  * </ul>
  */
 public final class PreviewClient implements Closeable {
@@ -57,7 +58,7 @@ public final class PreviewClient implements Closeable {
 
   private final String baseUrl;
   private final HttpClient blobHttpClient;
-  private final VideoApi videoApi;
+  private final ThumbnailApi thumbnailApi;
   private final HealthApi healthApi;
 
   /**
@@ -70,7 +71,7 @@ public final class PreviewClient implements Closeable {
    * @param http    the {@link HttpClient} to use
    */
   public PreviewClient(String baseUrl, HttpClient http) {
-    // Back-compat: the injected client backs the blob path; the non-blob path (video/health) uses a
+    // Back-compat: the injected client backs the blob path; the non-blob path (delete/health) uses a
     // default generated ApiClient with no timeouts. Prefer builder(String) for timeout control.
     this(normalize(baseUrl), http, defaultApiClient(normalize(baseUrl)));
   }
@@ -78,7 +79,7 @@ public final class PreviewClient implements Closeable {
   private PreviewClient(String baseUrl, HttpClient blobHttpClient, ApiClient apiClient) {
     this.baseUrl = baseUrl;
     this.blobHttpClient = blobHttpClient;
-    this.videoApi = new VideoApi(apiClient);
+    this.thumbnailApi = new ThumbnailApi(apiClient);
     this.healthApi = new HealthApi(apiClient);
   }
 
@@ -110,9 +111,9 @@ public final class PreviewClient implements Closeable {
    * (no SDK defaults — nothing is set unless the caller sets it):
    *
    * <ul>
-   *   <li>non-blob ops (copy/delete/health) carry {@link Builder#apiConnectTimeout} + {@link
+   *   <li>non-blob ops (delete/health) carry {@link Builder#apiConnectTimeout} + {@link
    *       Builder#apiReadTimeout};
-   *   <li>blob ops (image/pdf/document/video preview + thumbnail GET, and the multipart uploads)
+   *   <li>blob ops (preview + thumbnail GET, and the multipart uploads)
    *       carry only {@link Builder#blobConnectTimeout}. There is deliberately no blob read/request
    *       timeout: a request timeout is a single absolute deadline over the whole exchange —
    *       harmless on a streamed download but fatal on a large upload — so blob transfers always run
@@ -134,13 +135,13 @@ public final class PreviewClient implements Closeable {
       this.baseUrl = baseUrl;
     }
 
-    /** Connect timeout for non-blob (copy/delete/health) ops; {@code null} = none (default). */
+    /** Connect timeout for non-blob (delete/health) ops; {@code null} = none (default). */
     public Builder apiConnectTimeout(Duration timeout) {
       this.apiConnectTimeout = timeout;
       return this;
     }
 
-    /** Request/read timeout for non-blob (copy/delete/health) ops; {@code null} = none (default). */
+    /** Request/read timeout for non-blob (delete/health) ops; {@code null} = none (default). */
     public Builder apiReadTimeout(Duration timeout) {
       this.apiReadTimeout = timeout;
       return this;
@@ -176,195 +177,74 @@ public final class PreviewClient implements Closeable {
     return builder.build();
   }
 
-  private static String emptyToNull(String value) {
-    return (value == null || value.isEmpty()) ? null : value;
-  }
-
   // -------------------------------------------------------------------------
   // GET downloads
   // -------------------------------------------------------------------------
 
-  public PreviewResponse getPreviewOfImage(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/image/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/"
-        + buildImageQueryString(query, false);
-    return doGet(query, url);
-  }
-
-  public PreviewResponse getThumbnailOfImage(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/image/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/thumbnail/"
-        + buildImageThumbnailQueryString(query);
-    return doGet(query, url);
-  }
-
-  public PreviewResponse getPreviewOfPdf(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/pdf/" + enc(query.getFileId())
-        + "/" + query.getVersion() + "/"
-        + buildPdfQueryString(query);
-    return doGet(query, url);
-  }
-
-  public PreviewResponse getThumbnailOfPdf(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/pdf/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/thumbnail/"
-        + buildImageThumbnailQueryString(query);
-    return doGet(query, url);
-  }
-
-  public PreviewResponse getPreviewOfDocument(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/document/" + enc(query.getFileId())
-        + "/" + query.getVersion() + "/"
-        + buildDocumentQueryString(query);
-    return doGet(query, url);
-  }
-
-  public PreviewResponse getThumbnailOfDocument(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/document/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/thumbnail/"
-        + buildDocumentThumbnailQueryString(query);
-    return doGet(query, url);
-  }
-
-  // -------------------------------------------------------------------------
-  // Video preview (GET, DELETE, POST copy)
-  // -------------------------------------------------------------------------
-
   /**
-   * Retrieves a stored video first-frame preview image.
+   * Retrieves a thumbnail.
    *
    * <p>HTTP contract:
-   * {@code GET /preview/video/{id}/{version}/{area}/?service_type=&quality=&output_format=&crop=}
-   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
+   * {@code GET /thumbnail/{id}/{version}/{size}?service_type=&mime=&digest=&lang=} with optional
+   * header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
    *
-   * <p>Mirrors {@link #getPreviewOfImage(Query)} exactly — same return type, same exception
-   * behaviour — but targets the {@code /preview/video/} path.
+   * @param query must carry fileId, version, size, serviceType and mime; digest, lang and ownerId
+   *              are optional.
+   * @return a streaming {@link PreviewResponse}: status 200 carries the thumbnail; status 202
+   *         ({@link PreviewResponse#isGenerating()}) means it is still being generated, with the
+   *         suggested delay in {@link PreviewResponse#getRetryAfterSeconds()} and an optional
+   *         interim image as body.
+   * @throws PreviewException on any other HTTP status.
+   * @throws IllegalArgumentException when fileId, size or mime is missing.
+   */
+  public PreviewResponse getThumbnail(Query query) {
+    requireFileId(query);
+    requireSize(query);
+    requireMime(query);
+    String url = baseUrl
+        + "/thumbnail/" + enc(query.getFileId())
+        + "/" + query.getVersion()
+        + "/" + query.getSize().value()
+        + buildQueryString(query, true);
+    return doGet(query, url);
+  }
+
+  /**
+   * Retrieves a preview, streamed from the server.
    *
-   * @param query must carry fileId, version, area and serviceType; ownerId is optional.
-   * @return a streaming {@link PreviewResponse} carrying the JPEG/PNG image bytes.
+   * <p>HTTP contract: {@code GET /preview/{id}/{version}?service_type=&mime=&lang=} with optional
+   * header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
+   *
+   * @param query must carry fileId, version, serviceType and mime; lang and ownerId are optional.
+   * @return a streaming {@link PreviewResponse} whose MIME type is the one of the served preview.
    * @throws PreviewException on any non-200 HTTP response.
-   * @throws IllegalArgumentException when fileId is null or empty.
+   * @throws IllegalArgumentException when fileId or mime is missing.
    */
-  public PreviewResponse getPreviewOfVideo(Query query) {
+  public PreviewResponse getPreview(Query query) {
     requireFileId(query);
+    requireMime(query);
     String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
+        + "/preview/" + enc(query.getFileId())
         + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/"
-        + buildImageQueryString(query, false);
+        + buildQueryString(query, false);
     return doGet(query, url);
   }
 
   /**
-   * Retrieves a stored video thumbnail image.
+   * Deletes every stored thumbnail (all versions, both sizes) of a file. Idempotent.
    *
-   * <p>HTTP contract:
-   * {@code GET /preview/video/{id}/{version}/{area}/thumbnail/?service_type=&shape=&quality=&output_format=}
-   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
-   *
-   * <p>Mirrors {@link #getThumbnailOfImage(Query)} exactly — same return type, same exception
-   * behaviour — but targets the {@code /preview/video/} path.
-   *
-   * @param query must carry fileId, version and area; serviceType, shape, quality, outputFormat
-   *              and ownerId are optional.
-   * @return a streaming {@link PreviewResponse} carrying the thumbnail image bytes.
-   * @throws PreviewException on any non-200 HTTP response.
+   * @param fileId UUID of the file.
+   * @throws PreviewException on any non-2xx HTTP response.
    * @throws IllegalArgumentException when fileId is null or empty.
    */
-  public PreviewResponse getThumbnailOfVideo(Query query) {
-    requireFileId(query);
-    String url = baseUrl
-        + "/preview/video/" + enc(query.getFileId())
-        + "/" + query.getVersion()
-        + "/" + enc(query.getArea()) + "/thumbnail/"
-        + buildImageThumbnailQueryString(query);
-    return doGet(query, url);
-  }
-
-  /**
-   * Deletes a stored video preview from the server.
-   *
-   * <p>HTTP contract:
-   * {@code DELETE /preview/video/{id}/{version}/?service_type=}
-   * with optional header {@code FileOwnerId} when {@code query.getOwnerId()} is set.
-   *
-   * <p>Returns normally (void) on HTTP 200 or 204. Throws {@link PreviewException} on any other
-   * status. Note: the server may return 404 when no preview exists for that id/version/service
-   * tuple — callers should decide whether to treat that as a no-op.
-   *
-   * @param query must carry fileId, version and serviceType; ownerId is optional.
-   * @throws PreviewException on any non-2xx HTTP response (e.g. 404 = not found, 422 = bad args).
-   * @throws IllegalArgumentException when fileId is null or empty.
-   */
-  public void deleteVideoPreview(Query query) {
-    requireFileId(query);
-    try {
-      videoApi.deleteVideoPreview(
-          UUID.fromString(query.getFileId()),
-          (long) query.getVersion(),
-          query.getServiceType(),
-          emptyToNull(query.getOwnerId()));
-    } catch (ApiException e) {
-      throw new PreviewException(e.getCode(), "deleteVideoPreview failed: " + e.getMessage(), e);
+  public void deleteThumbnails(String fileId) {
+    if (fileId == null || fileId.isEmpty()) {
+      throw new IllegalArgumentException("fileId is required");
     }
-  }
-
-  /**
-   * Copies a stored video preview to a new target blob id.
-   *
-   * <p>HTTP contract:
-   * {@code POST /preview/video/{id}/{version}/copy/?service_type=&target={targetBlobId}}
-   * with headers:
-   * <ul>
-   *   <li>{@code FileOwnerId: <ownerId from query>} — identifies the source owner for PowerStore
-   *       routing (same convention as all other methods).</li>
-   *   <li>{@code TargetOwnerId: <targetOwnerId>} — identifies the owner under which the copy
-   *       is stored on PowerStore. Sent only when {@code targetOwnerId} is non-null and
-   *       non-empty.</li>
-   * </ul>
-   * The target blob id is also conveyed as the {@code target} query parameter so the Go endpoint
-   * can construct the storage key without parsing headers. Response 200 body:
-   * {@code {"preview_id":"<uuid>"}}.
-   *
-   * @param query         must carry fileId, version and serviceType; ownerId is the source owner.
-   * @param targetBlobId  the UUID under which the copy should be stored (minted by the caller).
-   * @param targetOwnerId the owner id of the copy's destination; may be null/empty when the
-   *                      destination owner matches the source owner or the storage layer does not
-   *                      require per-owner routing.
-   * @return a {@link VideoPreviewCopyResponse} carrying the new preview's storage UUID.
-   * @throws PreviewException on any non-200 HTTP response.
-   * @throws IllegalArgumentException when fileId is null or empty.
-   */
-  public VideoPreviewCopyResponse copyVideoPreview(Query query, String targetBlobId, String targetOwnerId) {
-    requireFileId(query);
     try {
-      VideoCopyOutputBody body =
-          videoApi.copyVideoPreview(
-              UUID.fromString(query.getFileId()),
-              (long) query.getVersion(),
-              query.getServiceType(),
-              UUID.fromString(targetBlobId),
-              emptyToNull(query.getOwnerId()),
-              emptyToNull(targetOwnerId));
-      return new VideoPreviewCopyResponse(body.getPreviewId());
+      thumbnailApi.deleteThumbnails(UUID.fromString(fileId));
     } catch (ApiException e) {
-      throw new PreviewException(e.getCode(), "copyVideoPreview failed: " + e.getMessage(), e);
+      throw new PreviewException(e.getCode(), "deleteThumbnails failed: " + e.getMessage(), e);
     }
   }
 
@@ -372,37 +252,30 @@ public final class PreviewClient implements Closeable {
   // POST uploads (multipart/form-data)
   // -------------------------------------------------------------------------
 
-  public PreviewResponse postPreviewOfImage(InputStream content, Query query) {
-    String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/"
-        + buildImageQueryString(query, false);
+  /**
+   * Generates a thumbnail of an uploaded file.
+   *
+   * <p>HTTP contract: {@code POST /thumbnail/{size}?mime=&lang=}, multipart field {@code file}.
+   *
+   * @throws IllegalArgumentException when size or mime is missing.
+   */
+  public PreviewResponse postThumbnail(InputStream content, Query query) {
+    requireSize(query);
+    requireMime(query);
+    String url = baseUrl + "/thumbnail/" + query.getSize().value() + buildUploadQueryString(query);
     return doPost(query, url, content);
   }
 
-  public PreviewResponse postThumbnailOfImage(InputStream content, Query query) {
-    String url = baseUrl + "/preview/image/" + enc(query.getArea()) + "/thumbnail/"
-        + buildImageThumbnailQueryString(query);
-    return doPost(query, url, content);
-  }
-
-  public PreviewResponse postPreviewOfPdf(InputStream content, Query query) {
-    String url = baseUrl + "/preview/pdf/" + buildPdfUploadQueryString(query);
-    return doPost(query, url, content);
-  }
-
-  public PreviewResponse postThumbnailOfPdf(InputStream content, Query query) {
-    String url = baseUrl + "/preview/pdf/" + enc(query.getArea()) + "/thumbnail/"
-        + buildImageThumbnailQueryString(query);
-    return doPost(query, url, content);
-  }
-
-  public PreviewResponse postPreviewOfDocument(InputStream content, Query query) {
-    String url = baseUrl + "/preview/document/" + buildDocumentUploadQueryString(query);
-    return doPost(query, url, content);
-  }
-
-  public PreviewResponse postThumbnailOfDocument(InputStream content, Query query) {
-    String url = baseUrl + "/preview/document/" + enc(query.getArea()) + "/thumbnail/"
-        + buildDocumentThumbnailQueryString(query);
+  /**
+   * Generates a preview of an uploaded file.
+   *
+   * <p>HTTP contract: {@code POST /preview?mime=&lang=}, multipart field {@code file}.
+   *
+   * @throws IllegalArgumentException when mime is missing.
+   */
+  public PreviewResponse postPreview(InputStream content, Query query) {
+    requireMime(query);
+    String url = baseUrl + "/preview" + buildUploadQueryString(query);
     return doPost(query, url, content);
   }
 
@@ -520,93 +393,51 @@ public final class PreviewClient implements Closeable {
     }
 
     int status = response.statusCode();
-    if (status == 200) {
+    if (status == 200 || status == 202) {
       String contentType = response.headers().firstValue("Content-Type").orElse("");
       String mimeType = contentType.contains(";")
           ? contentType.substring(0, contentType.indexOf(';')).trim()
           : contentType.trim();
       long contentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
-      return new PreviewResponse(response.body(), contentLength, mimeType);
+      return new PreviewResponse(
+          response.body(), contentLength, mimeType, status, retryAfter(response));
     }
 
-    // Non-200: consume and discard the error body to release the connection
+    // Other statuses: consume and discard the error body to release the connection
     try {
       response.body().close();
     } catch (IOException ignored) { /* best-effort */ }
     throw new PreviewException(status, "Server returned HTTP " + status + " for " + request.uri());
   }
 
+  private static OptionalInt retryAfter(HttpResponse<?> response) {
+    return response.headers().firstValue("Retry-After").map(v -> {
+      try {
+        return OptionalInt.of(Integer.parseInt(v.trim()));
+      } catch (NumberFormatException e) {
+        return OptionalInt.empty();
+      }
+    }).orElse(OptionalInt.empty());
+  }
+
   // -------------------------------------------------------------------------
   // Query-string builders
   // -------------------------------------------------------------------------
 
-  private String buildImageQueryString(Query q, boolean thumbnailMode) {
-    StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    appendOptional(sb, "quality", q.getQuality());
-    appendOptional(sb, "output_format", q.getOutputFormat());
-    if (!thumbnailMode) {
-      appendOptional(sb, "crop", q.isCrop() ? "true" : null);
-    }
-    return sb.toString();
-  }
-
-  private String buildImageThumbnailQueryString(Query q) {
+  private static String buildQueryString(Query q, boolean withDigest) {
     StringBuilder sb = new StringBuilder("?");
     appendOptional(sb, "service_type", q.getServiceType());
-    appendOptional(sb, "shape", q.getShape());
-    appendOptional(sb, "quality", q.getQuality());
-    appendOptional(sb, "output_format", q.getOutputFormat());
+    appendOptional(sb, "mime", q.getMime());
+    if (withDigest) appendOptional(sb, "digest", q.getDigest());
+    appendOptional(sb, "lang", q.getLang());
     return sb.toString();
   }
 
-  private String buildPdfQueryString(Query q) {
+  private static String buildUploadQueryString(Query q) {
     StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
-    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
+    appendOptional(sb, "mime", q.getMime());
+    appendOptional(sb, "lang", q.getLang());
     return sb.toString();
-  }
-
-  private String buildPdfUploadQueryString(Query q) {
-    StringBuilder sb = new StringBuilder("?");
-    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
-    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
-    return sb.toString();
-  }
-
-  private String buildDocumentQueryString(Query q) {
-    StringBuilder sb = new StringBuilder("?");
-    appendRequired(sb, "service_type", q.getServiceType());
-    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
-    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
-    appendOptional(sb, "lang_tag", q.getLangTag());
-    return sb.toString();
-  }
-
-  private String buildDocumentUploadQueryString(Query q) {
-    StringBuilder sb = new StringBuilder("?");
-    if (q.getFirstPage() > 0) appendOptional(sb, "first_page", String.valueOf(q.getFirstPage()));
-    if (q.getLastPage() > 0) appendOptional(sb, "last_page", String.valueOf(q.getLastPage()));
-    appendOptional(sb, "lang_tag", q.getLangTag());
-    return sb.toString();
-  }
-
-  private String buildDocumentThumbnailQueryString(Query q) {
-    StringBuilder sb = new StringBuilder("?");
-    appendOptional(sb, "service_type", q.getServiceType());
-    appendOptional(sb, "shape", q.getShape());
-    appendOptional(sb, "quality", q.getQuality());
-    appendOptional(sb, "output_format", q.getOutputFormat());
-    appendOptional(sb, "lang_tag", q.getLangTag());
-    return sb.toString();
-  }
-
-  private static void appendRequired(StringBuilder sb, String key, String value) {
-    if (value == null || value.isEmpty()) return;
-    // sb starts with "?" so always use "&" if there is already a param
-    if (sb.length() > 1) sb.append('&');
-    sb.append(enc(key)).append('=').append(enc(value));
   }
 
   private static void appendOptional(StringBuilder sb, String key, String value) {
@@ -623,6 +454,18 @@ public final class PreviewClient implements Closeable {
   private static void requireFileId(Query query) {
     if (query.getFileId() == null || query.getFileId().isEmpty()) {
       throw new IllegalArgumentException("fileId is required for GET requests");
+    }
+  }
+
+  private static void requireSize(Query query) {
+    if (query.getSize() == null) {
+      throw new IllegalArgumentException("size is required for thumbnail requests");
+    }
+  }
+
+  private static void requireMime(Query query) {
+    if (query.getMime() == null || query.getMime().isEmpty()) {
+      throw new IllegalArgumentException("mime is required");
     }
   }
 

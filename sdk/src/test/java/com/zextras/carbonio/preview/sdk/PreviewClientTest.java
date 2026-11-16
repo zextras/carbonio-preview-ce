@@ -58,310 +58,275 @@ class PreviewClientTest {
   }
 
   // ── GET downloads ────────────────────────────────────────────────────────────
+  private static final String ID = "11111111-1111-1111-1111-111111111111";
+
+  private static Query thumbQuery() {
+    return new QueryBuilder()
+        .fileId(ID)
+        .version(3)
+        .size(ThumbnailSize.S)
+        .serviceType("FILES")
+        .mime("image/jpeg")
+        .digest("sha256:abc")
+        .lang("it-IT")
+        .ownerId("owner-1")
+        .build();
+  }
 
   @Test
-  void getPreviewOfImage_returnsStreamWithCorrectContent() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/image/abc-uuid/1/100x200/"))
+  void getThumbnail_buildsPathQueryAndOwnerHeader() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
         .willReturn(aResponse()
             .withStatus(200)
             .withHeader("Content-Type", MIME_JPEG)
             .withHeader("Content-Length", String.valueOf(IMAGE_BYTES.length))
             .withBody(IMAGE_BYTES)));
 
-    Query q = new QueryBuilder()
-        .fileId("abc-uuid")
-        .version(1)
-        .area("100x200")
-        .serviceType("files")
-        .build();
-
-    try (PreviewResponse r = client.getPreviewOfImage(q)) {
+    try (PreviewResponse r = client.getThumbnail(thumbQuery())) {
+      assertEquals(200, r.getStatus());
+      assertFalse(r.isGenerating());
       assertEquals(MIME_JPEG, r.getMimeType());
       assertEquals(IMAGE_BYTES.length, r.getLength());
+      assertTrue(r.getRetryAfterSeconds().isEmpty());
       assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
+
+    verify(getRequestedFor(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("mime", equalTo("image/jpeg"))
+        .withQueryParam("digest", equalTo("sha256:abc"))
+        .withQueryParam("lang", equalTo("it-IT"))
+        .withHeader("FileOwnerId", equalTo("owner-1")));
   }
 
   @Test
-  void getThumbnailOfImage_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/image/thumb-uuid/2/50x50/thumbnail/"))
+  void getThumbnail_sizeMGoesInPath() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/0/m"))
+        .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "image/png").withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().fileId(ID).version(0).size(ThumbnailSize.M)
+        .serviceType("chats").mime("image/png").build();
+    try (PreviewResponse r = client.getThumbnail(q)) {
+      assertEquals("image/png", r.getMimeType());
+    }
+    verify(getRequestedFor(urlPathEqualTo("/thumbnail/" + ID + "/0/m"))
+        .withQueryParam("service_type", equalTo("chats"))
+        .withoutHeader("FileOwnerId"));
+  }
+
+  @Test
+  void getThumbnail_202ExposesRetryAfterAndBody() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
         .willReturn(aResponse()
-            .withStatus(200)
+            .withStatus(202)
+            .withHeader("Retry-After", "3")
+            .withHeader("Cache-Control", "no-store")
             .withHeader("Content-Type", MIME_JPEG)
             .withBody(IMAGE_BYTES)));
 
-    Query q = new QueryBuilder()
-        .fileId("thumb-uuid")
-        .version(2)
-        .area("50x50")
-        .serviceType("files")
-        .quality("high")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
+    try (PreviewResponse r = client.getThumbnail(thumbQuery())) {
+      assertEquals(202, r.getStatus());
+      assertTrue(r.isGenerating());
+      assertEquals(3, r.getRetryAfterSeconds().getAsInt());
+      assertEquals(MIME_JPEG, r.getMimeType());
       assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
   }
 
   @Test
-  void enumValues_areLowercasedOnWire() throws IOException {
-    // Callers may pass a Java enum's uppercase name() (HIGH/RECTANGULAR/JPEG/FILES);
-    // the SDK must normalize to the lowercase the preview service's strict enum expects.
-    stubFor(get(urlPathEqualTo("/preview/image/case-uuid/1/50x50/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+  void getThumbnail_202WithoutBodyHasEmptyStream() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+        .willReturn(aResponse().withStatus(202).withHeader("Retry-After", "3")));
 
-    Query q = new QueryBuilder()
-        .fileId("case-uuid")
-        .version(1)
-        .area("50x50")
-        .serviceType("FILES")
-        .quality("HIGH")
-        .shape("RECTANGULAR")
-        .outputFormat("JPEG")
-        .build();
-
-    assertEquals("high", q.getQuality());
-    assertEquals("rectangular", q.getShape());
-    assertEquals("jpeg", q.getOutputFormat());
-    assertEquals("files", q.getServiceType());
-
-    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    try (PreviewResponse r = client.getThumbnail(thumbQuery())) {
+      assertTrue(r.isGenerating());
+      assertEquals(0, r.getContent().readAllBytes().length);
     }
-
-    verify(getRequestedFor(urlPathEqualTo("/preview/image/case-uuid/1/50x50/thumbnail/"))
-        .withQueryParam("quality", equalTo("high"))
-        .withQueryParam("shape", equalTo("rectangular"))
-        .withQueryParam("output_format", equalTo("jpeg"))
-        .withQueryParam("service_type", equalTo("files")));
   }
 
   @Test
-  void getPreviewOfPdf_routesToCorrectPath() throws IOException {
-    byte[] pdfBytes = "%PDF-fake".getBytes(StandardCharsets.UTF_8);
-    stubFor(get(urlPathEqualTo("/preview/pdf/pdf-uuid/3/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/pdf")
-            .withBody(pdfBytes)));
+  void getThumbnail_202WithoutRetryAfterHasNoValue() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+        .willReturn(aResponse().withStatus(202)));
 
-    Query q = new QueryBuilder()
-        .fileId("pdf-uuid")
-        .version(3)
-        .serviceType("files")
-        .build();
+    try (PreviewResponse r = client.getThumbnail(thumbQuery())) {
+      assertTrue(r.getRetryAfterSeconds().isEmpty());
+    }
+  }
 
-    try (PreviewResponse r = client.getPreviewOfPdf(q)) {
+  @Test
+  void getThumbnail_omitsEmptyDigestAndLang() throws IOException {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+        .willReturn(aResponse().withStatus(200).withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().fileId(ID).version(3).size(ThumbnailSize.S)
+        .serviceType("files").mime("image/jpeg").digest("").build();
+    try (PreviewResponse r = client.getThumbnail(q)) {
+      r.getContent().readAllBytes();
+    }
+    verify(getRequestedFor(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+        .withoutQueryParam("digest")
+        .withoutQueryParam("lang"));
+  }
+
+  @Test
+  void getPreview_buildsPathAndQuery() throws IOException {
+    stubFor(get(urlPathEqualTo("/preview/" + ID + "/3"))
+        .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/pdf").withBody(IMAGE_BYTES)));
+
+    Query q = new QueryBuilder().fileId(ID).version(3).serviceType("FILES")
+        .mime("application/msword").lang("en-US").digest("ignored").ownerId("o").build();
+    try (PreviewResponse r = client.getPreview(q)) {
+      assertEquals(200, r.getStatus());
       assertEquals("application/pdf", r.getMimeType());
-      assertArrayEquals(pdfBytes, r.getContent().readAllBytes());
+    }
+    verify(getRequestedFor(urlPathEqualTo("/preview/" + ID + "/3"))
+        .withQueryParam("service_type", equalTo("files"))
+        .withQueryParam("mime", equalTo("application/msword"))
+        .withQueryParam("lang", equalTo("en-US"))
+        .withoutQueryParam("digest")
+        .withHeader("FileOwnerId", equalTo("o")));
+  }
+
+  @Test
+  void getPreview_streamsBody() throws IOException {
+    byte[] big = new byte[1 << 20];
+    java.util.Arrays.fill(big, (byte) 7);
+    stubFor(get(urlPathEqualTo("/preview/" + ID + "/1"))
+        .willReturn(aResponse()
+            .withStatus(200)
+            .withHeader("Content-Type", "video/mp4; codecs=avc1")
+            .withHeader("Content-Length", String.valueOf(big.length))
+            .withBody(big)));
+
+    Query q = new QueryBuilder().fileId(ID).version(1).serviceType("files").mime("video/mp4").build();
+    try (PreviewResponse r = client.getPreview(q)) {
+      assertEquals("video/mp4", r.getMimeType());
+      assertEquals(big.length, r.getLength());
+      byte[] first = r.getContent().readNBytes(10);
+      assertEquals(10, first.length);
+      assertEquals(big.length - 10, r.getContent().readAllBytes().length);
     }
   }
 
   @Test
-  void getThumbnailOfPdf_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/pdf/pdf-uuid/1/100x100/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+  void postThumbnail_multipartWithSizeAndMime() throws IOException {
+    stubFor(post(urlPathEqualTo("/thumbnail/m"))
+        .willReturn(aResponse().withStatus(200).withHeader("Content-Type", MIME_JPEG).withBody(IMAGE_BYTES)));
 
-    Query q = new QueryBuilder()
-        .fileId("pdf-uuid")
-        .version(1)
-        .area("100x100")
-        .serviceType("files")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfPdf(q)) {
+    Query q = new QueryBuilder().size(ThumbnailSize.M).mime("image/jpeg").lang("fr-FR").build();
+    byte[] upload = "upload-content".getBytes(StandardCharsets.UTF_8);
+    try (PreviewResponse r = client.postThumbnail(new ByteArrayInputStream(upload), q)) {
+      assertEquals(200, r.getStatus());
       assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
+    verify(postRequestedFor(urlPathEqualTo("/thumbnail/m"))
+        .withQueryParam("mime", equalTo("image/jpeg"))
+        .withQueryParam("lang", equalTo("fr-FR"))
+        .withHeader("Content-Type", containing("multipart/form-data"))
+        .withRequestBody(containing("name=\"file\""))
+        .withRequestBody(containing("upload-content")));
   }
 
   @Test
-  void getPreviewOfDocument_routesToCorrectPath() throws IOException {
-    byte[] docBytes = "doc-content".getBytes(StandardCharsets.UTF_8);
-    stubFor(get(urlPathEqualTo("/preview/document/doc-uuid/1/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/pdf")
-            .withBody(docBytes)));
+  void postPreview_multipart() throws IOException {
+    stubFor(post(urlPathEqualTo("/preview"))
+        .willReturn(aResponse().withStatus(200).withHeader("Content-Type", "application/pdf").withBody(IMAGE_BYTES)));
 
-    Query q = new QueryBuilder()
-        .fileId("doc-uuid")
-        .version(1)
-        .serviceType("chats")
-        .build();
-
-    try (PreviewResponse r = client.getPreviewOfDocument(q)) {
-      assertArrayEquals(docBytes, r.getContent().readAllBytes());
-    }
-  }
-
-  @Test
-  void getThumbnailOfDocument_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/document/doc-uuid/1/80x80/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("doc-uuid")
-        .version(1)
-        .area("80x80")
-        .serviceType("files")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfDocument(q)) {
+    Query q = new QueryBuilder().mime("application/vnd.oasis.opendocument.text").build();
+    try (PreviewResponse r = client.postPreview(
+        new ByteArrayInputStream("doc".getBytes(StandardCharsets.UTF_8)), q)) {
+      assertEquals("application/pdf", r.getMimeType());
       assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
     }
-  }
-
-  // ── Error mapping ─────────────────────────────────────────────────────────
-
-  @Test
-  void getPreviewOfImage_404_throwsPreviewException() {
-    stubFor(get(urlPathEqualTo("/preview/image/missing/1/100x100/"))
-        .willReturn(aResponse()
-            .withStatus(404)
-            .withHeader("Content-Type", "application/json")
-            .withBody("{\"detail\":\"not found\"}")));
-
-    Query q = new QueryBuilder()
-        .fileId("missing")
-        .version(1)
-        .area("100x100")
-        .serviceType("files")
-        .build();
-
-    PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.getPreviewOfImage(q));
-    assertEquals(404, ex.getHttpStatus());
-    assertTrue(ex.isNotFound());
-  }
-
-  @Test
-  void getPreviewOfImage_400_throwsPreviewException() {
-    stubFor(get(urlPathEqualTo("/preview/image/bad/0/bad-area/"))
-        .willReturn(aResponse()
-            .withStatus(400)
-            .withBody("{\"detail\":\"bad area\"}")));
-
-    Query q = new QueryBuilder()
-        .fileId("bad")
-        .version(0)
-        .area("bad-area")
-        .serviceType("files")
-        .build();
-
-    PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.getPreviewOfImage(q));
-    assertEquals(400, ex.getHttpStatus());
-    assertTrue(ex.isBadRequest());
-  }
-
-  // ── POST uploads ──────────────────────────────────────────────────────────
-
-  @Test
-  void postPreviewOfImage_sendsMultipartBody_returnsResponse() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/image/200x100/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .area("200x100")
-        .serviceType("files")
-        .build();
-
-    byte[] uploadContent = "upload-content".getBytes(StandardCharsets.UTF_8);
-    try (PreviewResponse r = client.postPreviewOfImage(
-        new ByteArrayInputStream(uploadContent), q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-
-    // Verify the request had multipart content-type
-    verify(postRequestedFor(urlPathEqualTo("/preview/image/200x100/"))
+    verify(postRequestedFor(urlPathEqualTo("/preview"))
+        .withQueryParam("mime", equalTo("application/vnd.oasis.opendocument.text"))
+        .withoutQueryParam("lang")
         .withHeader("Content-Type", containing("multipart/form-data")));
   }
 
   @Test
-  void postThumbnailOfImage_routesToCorrectPath() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/image/160x120/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+  void deleteThumbnails_usesGeneratedApi() {
+    stubFor(delete(urlPathEqualTo("/thumbnail/" + ID)).willReturn(aResponse().withStatus(204)));
 
-    Query q = new QueryBuilder().area("160x120").build();
-    try (PreviewResponse r = client.postThumbnailOfImage(
-        new ByteArrayInputStream(new byte[]{1, 2, 3}), q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
+    assertDoesNotThrow(() -> client.deleteThumbnails(ID));
+    verify(deleteRequestedFor(urlPathEqualTo("/thumbnail/" + ID)));
+  }
+
+  @Test
+  void deleteThumbnails_424ThrowsPreviewException() {
+    stubFor(delete(urlPathEqualTo("/thumbnail/" + ID)).willReturn(aResponse().withStatus(424)));
+
+    PreviewException e = assertThrows(PreviewException.class, () -> client.deleteThumbnails(ID));
+    assertEquals(424, e.getHttpStatus());
+  }
+
+  @Test
+  void deleteThumbnails_withoutFileIdThrowsIllegalArgument() {
+    assertThrows(IllegalArgumentException.class, () -> client.deleteThumbnails(""));
+    assertThrows(IllegalArgumentException.class, () -> client.deleteThumbnails(null));
+  }
+
+  @Test
+  void errorsThrowPreviewExceptionWithStatus() {
+    for (int status : new int[] {400, 404, 415, 422, 424, 502, 503}) {
+      stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s"))
+          .willReturn(aResponse().withStatus(status).withBody("{\"detail\":\"x\"}")));
+      stubFor(get(urlPathEqualTo("/preview/" + ID + "/3"))
+          .willReturn(aResponse().withStatus(status)));
+      stubFor(post(urlPathEqualTo("/preview")).willReturn(aResponse().withStatus(status)));
+
+      PreviewException t = assertThrows(PreviewException.class, () -> client.getThumbnail(thumbQuery()));
+      assertEquals(status, t.getHttpStatus());
+      Query q = new QueryBuilder().fileId(ID).version(3).serviceType("files").mime("video/mp4").build();
+      assertEquals(status, assertThrows(PreviewException.class, () -> client.getPreview(q)).getHttpStatus());
+      Query pq = new QueryBuilder().mime("video/mp4").build();
+      assertEquals(status, assertThrows(PreviewException.class,
+          () -> client.postPreview(new ByteArrayInputStream(new byte[1]), pq)).getHttpStatus());
     }
   }
 
   @Test
-  void postPreviewOfPdf_routesToCorrectPath() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/pdf/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/pdf")
-            .withBody("pdf-data".getBytes(StandardCharsets.UTF_8))));
-
-    Query q = new QueryBuilder().firstPage(1).lastPage(5).build();
-    try (PreviewResponse r = client.postPreviewOfPdf(
-        new ByteArrayInputStream(new byte[]{0}), q)) {
-      assertEquals("application/pdf", r.getMimeType());
-    }
+  void errorMapsNotFoundAndBadRequestHelpers() {
+    stubFor(get(urlPathEqualTo("/thumbnail/" + ID + "/3/s")).willReturn(aResponse().withStatus(404)));
+    assertTrue(assertThrows(PreviewException.class, () -> client.getThumbnail(thumbQuery())).isNotFound());
   }
 
   @Test
-  void postThumbnailOfPdf_routesToCorrectPath() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/pdf/120x80/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder().area("120x80").build();
-    try (PreviewResponse r = client.postThumbnailOfPdf(
-        new ByteArrayInputStream(new byte[]{1}), q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
+  void missingMimeIsIllegalArgument() {
+    Query noMime = new QueryBuilder().fileId(ID).version(1).size(ThumbnailSize.S).serviceType("files").build();
+    assertThrows(IllegalArgumentException.class, () -> client.getThumbnail(noMime));
+    assertThrows(IllegalArgumentException.class, () -> client.getPreview(noMime));
+    assertThrows(IllegalArgumentException.class,
+        () -> client.postThumbnail(new ByteArrayInputStream(new byte[0]), noMime));
+    assertThrows(IllegalArgumentException.class,
+        () -> client.postPreview(new ByteArrayInputStream(new byte[0]), noMime));
   }
 
   @Test
-  void postPreviewOfDocument_routesToCorrectPath() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/document/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/pdf")
-            .withBody("doc-pdf".getBytes(StandardCharsets.UTF_8))));
-
-    Query q = new QueryBuilder().langTag("it-IT").build();
-    try (PreviewResponse r = client.postPreviewOfDocument(
-        new ByteArrayInputStream(new byte[]{0}), q)) {
-      assertEquals("application/pdf", r.getMimeType());
-    }
+  void missingFileIdIsIllegalArgument() {
+    Query q = new QueryBuilder().version(1).size(ThumbnailSize.S).serviceType("files").mime("image/jpeg").build();
+    assertThrows(IllegalArgumentException.class, () -> client.getThumbnail(q));
+    assertThrows(IllegalArgumentException.class, () -> client.getPreview(q));
   }
 
   @Test
-  void postThumbnailOfDocument_routesToCorrectPath() throws IOException {
-    stubFor(post(urlPathEqualTo("/preview/document/100x100/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
+  void getThumbnail_withoutSizeIsIllegalArgument() {
+    Query q = new QueryBuilder().fileId(ID).version(1).serviceType("files").mime("image/jpeg").build();
+    assertThrows(IllegalArgumentException.class, () -> client.getThumbnail(q));
+    assertThrows(IllegalArgumentException.class,
+        () -> client.postThumbnail(new ByteArrayInputStream(new byte[0]), q));
+  }
 
-    Query q = new QueryBuilder().area("100x100").build();
-    try (PreviewResponse r = client.postThumbnailOfDocument(
-        new ByteArrayInputStream(new byte[]{1}), q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
+  @Test
+  void thumbnailSizeValues() {
+    assertEquals("s", ThumbnailSize.S.value());
+    assertEquals("m", ThumbnailSize.M.value());
+  }
+
+  @Test
+  void queryBuilderLowercasesServiceType() {
+    assertEquals("files", new QueryBuilder().serviceType("FILES").build().getServiceType());
   }
 
   // ── Health ────────────────────────────────────────────────────────────────
@@ -390,303 +355,4 @@ class PreviewClientTest {
     assertFalse(client.healthReady());
   }
 
-  // ── Video preview (GET, DELETE, POST copy) ───────────────────────────────
-
-  @Test
-  void getPreviewOfVideo_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/640x480/"))
-        .withQueryParam("service_type", equalTo("chats"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withHeader("Content-Length", String.valueOf(IMAGE_BYTES.length))
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(1)
-        .area("640x480")
-        .serviceType("chats")
-        .build();
-
-    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
-      assertEquals(MIME_JPEG, r.getMimeType());
-      assertEquals(IMAGE_BYTES.length, r.getLength());
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-  }
-
-  @Test
-  void getPreviewOfVideo_withOwnerId_sendsFileOwnerIdHeader() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/320x240/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(2)
-        .area("320x240")
-        .serviceType("files")
-        .ownerId("owner-abc")
-        .build();
-
-    try (PreviewResponse r = client.getPreviewOfVideo(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-
-    verify(getRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/320x240/"))
-        .withHeader("FileOwnerId", equalTo("owner-abc")));
-  }
-
-  @Test
-  void getPreviewOfVideo_404_throwsPreviewException() {
-    stubFor(get(urlPathEqualTo("/preview/video/missing-vid/1/100x100/"))
-        .willReturn(aResponse().withStatus(404)));
-
-    Query q = new QueryBuilder()
-        .fileId("missing-vid")
-        .version(1)
-        .area("100x100")
-        .serviceType("files")
-        .build();
-
-    PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.getPreviewOfVideo(q));
-    assertEquals(404, ex.getHttpStatus());
-    assertTrue(ex.isNotFound());
-  }
-
-  @Test
-  void getThumbnailOfVideo_routesToCorrectPath() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/video/thumb-vid/3/128x128/thumbnail/"))
-        .withQueryParam("service_type", equalTo("files"))
-        .withQueryParam("quality", equalTo("high"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("thumb-vid")
-        .version(3)
-        .area("128x128")
-        .serviceType("files")
-        .quality("high")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfVideo(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-  }
-
-  @Test
-  void getThumbnailOfVideo_withoutFileId_throwsIllegalArgument() {
-    Query q = new QueryBuilder().area("64x64").serviceType("files").build();
-    assertThrows(IllegalArgumentException.class, () -> client.getThumbnailOfVideo(q));
-  }
-
-  @Test
-  void deleteVideoPreview_200_completes() {
-    stubFor(delete(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/"))
-        .withQueryParam("service_type", equalTo("files"))
-        .willReturn(aResponse().withStatus(200)));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(1)
-        .serviceType("files")
-        .build();
-
-    // Must not throw
-    assertDoesNotThrow(() -> client.deleteVideoPreview(q));
-  }
-
-  @Test
-  void deleteVideoPreview_204_completes() {
-    stubFor(delete(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/2/"))
-        .withQueryParam("service_type", equalTo("chats"))
-        .willReturn(aResponse().withStatus(204)));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(2)
-        .serviceType("chats")
-        .build();
-
-    assertDoesNotThrow(() -> client.deleteVideoPreview(q));
-  }
-
-  @Test
-  void deleteVideoPreview_withOwnerId_sendsFileOwnerIdHeader() {
-    stubFor(delete(urlPathEqualTo("/preview/video/44444444-4444-4444-4444-444444444444/1/"))
-        .willReturn(aResponse().withStatus(200)));
-
-    Query q = new QueryBuilder()
-        .fileId("44444444-4444-4444-4444-444444444444")
-        .version(1)
-        .serviceType("files")
-        .ownerId("owner-xyz")
-        .build();
-
-    client.deleteVideoPreview(q);
-
-    verify(deleteRequestedFor(urlPathEqualTo("/preview/video/44444444-4444-4444-4444-444444444444/1/"))
-        .withHeader("FileOwnerId", equalTo("owner-xyz")));
-  }
-
-  @Test
-  void deleteVideoPreview_404_throwsPreviewException() {
-    stubFor(delete(urlPathEqualTo("/preview/video/33333333-3333-3333-3333-333333333333/1/"))
-        .willReturn(aResponse().withStatus(404)));
-
-    Query q = new QueryBuilder()
-        .fileId("33333333-3333-3333-3333-333333333333")
-        .version(1)
-        .serviceType("files")
-        .build();
-
-    PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.deleteVideoPreview(q));
-    assertEquals(404, ex.getHttpStatus());
-  }
-
-  @Test
-  void copyVideoPreview_routesToCorrectPathAndReturnsPreviewId() {
-    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
-        .withQueryParam("service_type", equalTo("files"))
-        .withQueryParam("target", equalTo("22222222-2222-2222-2222-222222222222"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"22222222-2222-2222-2222-222222222222\"}")));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(1)
-        .serviceType("files")
-        .build();
-
-    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null);
-    assertEquals("22222222-2222-2222-2222-222222222222", resp.getPreviewId());
-  }
-
-  @Test
-  void copyVideoPreview_withOwnerIds_sendsCorrectHeaders() {
-    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"22222222-2222-2222-2222-222222222222\"}")));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(1)
-        .serviceType("chats")
-        .ownerId("src-owner")
-        .build();
-
-    VideoPreviewCopyResponse resp = client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", "tgt-owner");
-    assertEquals("22222222-2222-2222-2222-222222222222", resp.getPreviewId());
-
-    verify(postRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
-        .withHeader("FileOwnerId", equalTo("src-owner"))
-        .withHeader("TargetOwnerId", equalTo("tgt-owner")));
-  }
-
-  @Test
-  void copyVideoPreview_withoutTargetOwnerId_doesNotSendTargetOwnerIdHeader() {
-    stubFor(post(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", "application/json")
-            .withBody("{\"preview_id\":\"x\"}")));
-
-    Query q = new QueryBuilder()
-        .fileId("11111111-1111-1111-1111-111111111111")
-        .version(1)
-        .serviceType("files")
-        .ownerId("src-owner")
-        .build();
-
-    client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null);
-
-    verify(postRequestedFor(urlPathEqualTo("/preview/video/11111111-1111-1111-1111-111111111111/1/copy/"))
-        .withHeader("FileOwnerId", equalTo("src-owner"))
-        .withoutHeader("TargetOwnerId"));
-  }
-
-  @Test
-  void copyVideoPreview_404_throwsPreviewException() {
-    stubFor(post(urlPathEqualTo("/preview/video/33333333-3333-3333-3333-333333333333/1/copy/"))
-        .willReturn(aResponse().withStatus(404)));
-
-    Query q = new QueryBuilder()
-        .fileId("33333333-3333-3333-3333-333333333333")
-        .version(1)
-        .serviceType("files")
-        .build();
-
-    PreviewException ex = assertThrows(PreviewException.class,
-        () -> client.copyVideoPreview(q, "22222222-2222-2222-2222-222222222222", null));
-    assertEquals(404, ex.getHttpStatus());
-  }
-
-  // ── Query without fileId: IllegalArgumentException ───────────────────────
-
-  @Test
-  void getPreviewOfImage_withoutFileId_throwsIllegalArgument() {
-    Query q = new QueryBuilder().area("100x100").serviceType("files").build();
-    assertThrows(IllegalArgumentException.class, () -> client.getPreviewOfImage(q));
-  }
-
-  // ── FileOwnerId header propagation ────────────────────────────────────────
-
-  @Test
-  void getThumbnailOfImage_withOwnerId_sendsFileOwnerIdHeader() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/image/owner-file-uuid/1/50x50/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("owner-file-uuid")
-        .version(1)
-        .area("50x50")
-        .serviceType("chats")
-        .ownerId("owner-123")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-
-    verify(getRequestedFor(urlPathEqualTo("/preview/image/owner-file-uuid/1/50x50/thumbnail/"))
-        .withHeader("FileOwnerId", equalTo("owner-123")));
-  }
-
-  @Test
-  void getThumbnailOfImage_withoutOwnerId_doesNotSendFileOwnerIdHeader() throws IOException {
-    stubFor(get(urlPathEqualTo("/preview/image/no-owner-uuid/1/50x50/thumbnail/"))
-        .willReturn(aResponse()
-            .withStatus(200)
-            .withHeader("Content-Type", MIME_JPEG)
-            .withBody(IMAGE_BYTES)));
-
-    Query q = new QueryBuilder()
-        .fileId("no-owner-uuid")
-        .version(1)
-        .area("50x50")
-        .serviceType("chats")
-        .build();
-
-    try (PreviewResponse r = client.getThumbnailOfImage(q)) {
-      assertArrayEquals(IMAGE_BYTES, r.getContent().readAllBytes());
-    }
-
-    verify(getRequestedFor(urlPathEqualTo("/preview/image/no-owner-uuid/1/50x50/thumbnail/"))
-        .withoutHeader("FileOwnerId"));
-  }
 }

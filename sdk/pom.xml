@@ -126,7 +126,7 @@ SPDX-License-Identifier: AGPL-3.0-only
               <generateModelDocumentation>false</generateModelDocumentation>
               <skipValidateSpec>true</skipValidateSpec>
               <openapiNormalizer>
-                <rule>FILTER=operationId:getHealthReady|deleteVideoPreview|copyVideoPreview</rule>
+                <rule>FILTER=operationId:getHealthReady|deleteThumbnails</rule>
               </openapiNormalizer>
               <configOptions>
                 <useJakartaEe>true</useJakartaEe>
