@@ -139,7 +139,7 @@ type originalAnswer struct{ contentType string }
 func (originalAnswer) Error() string { return "serve the original source" }
 
 func streamOriginal(ctx context.Context, deps Deps, q thumbRequest, contentType string) (*apispec.ThumbnailOutput, error) {
-	src, size, err := openSource(ctx, deps.Store, q.id, q.version, q.serviceType, q.owner, fetchIdle(deps.Cfg))
+	src, size, err := openSource(ctx, deps.Store, q.id, q.version, q.serviceType, q.owner, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
