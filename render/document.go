@@ -21,6 +21,8 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
+var ErrCollaboraUnavailable = errors.New("collabora unavailable")
+
 var collaboraHTTP atomic.Pointer[http.Client]
 
 func init() {
@@ -90,7 +92,7 @@ func CollaboraConvert(
 		}
 	}
 
-	return nil, fmt.Errorf("collabora convert failed after %d attempts: %w", maxAttempts, lastErr)
+	return nil, fmt.Errorf("%w: collabora convert failed after %d attempts: %w", ErrCollaboraUnavailable, maxAttempts, lastErr)
 }
 
 type collaboraPayload struct {

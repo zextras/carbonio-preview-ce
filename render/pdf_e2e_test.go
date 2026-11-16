@@ -233,3 +233,41 @@ func findChildPIDs(t *testing.T, parentPID int) []int {
 	}
 	return children
 }
+
+func TestPDFPage1Pair_E2E(t *testing.T) {
+	workerSrc := filepath.Join("..", "cmd", "pdfium-worker")
+	if _, err := os.Stat(workerSrc); err != nil {
+		t.Skipf("pdfium-worker source not found at %s: %v", workerSrc, err)
+	}
+	workerBin := filepath.Join(t.TempDir(), "carbonio-preview-pdfium-worker")
+	buildCmd := exec.Command("go", "build", "-o", workerBin, workerSrc)
+	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Skipf("go build pdfium-worker failed (CGO unavailable?): %v\n%s", err, out)
+	}
+	if err := PDFInit(1, workerBin); err != nil {
+		t.Fatalf("PDFInit: %v", err)
+	}
+	defer func() {
+		PDFClose()
+		globalPdfPool = nil
+	}()
+
+	p, err := PDFPage1Pair(context.Background(), testPDFFixture)
+	if err != nil {
+		t.Fatalf("PDFPage1Pair: %v", err)
+	}
+	long := func(r Rendition) int { return max(r.Width, r.Height) }
+	if long(p.M) != SideM || long(p.S) != SideS {
+		t.Fatalf("M=%dx%d S=%dx%d, want long sides %d and %d", p.M.Width, p.M.Height, p.S.Width, p.S.Height, SideM, SideS)
+	}
+	for _, r := range []Rendition{p.M, p.S} {
+		if r.ContentType != "image/jpeg" || !isJPEGBytes(r.Body) {
+			t.Fatalf("rendition is %s, want JPEG", r.ContentType)
+		}
+	}
+
+	if _, err := PDFPage1Pair(context.Background(), []byte("not a pdf")); err == nil {
+		t.Fatal("want error for invalid PDF")
+	}
+}

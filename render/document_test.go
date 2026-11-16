@@ -7,6 +7,7 @@ package render
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -411,5 +412,50 @@ func TestCollaboraConvert_LangIsEscaped(t *testing.T) {
 	}
 	if len(langs) != 1 || langs[0] != "en&x=1" || extra != "" {
 		t.Fatalf("lang=%v x=%q", langs, extra)
+	}
+}
+
+func TestCollaboraConvert_ExhaustedRetriesIsUnavailable(t *testing.T) {
+	setFastBackoff(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	_, err := CollaboraConvert(context.Background(), []byte("x"), "", srv.URL+"/png", time.Second)
+	if !errors.Is(err, ErrCollaboraUnavailable) {
+		t.Fatalf("err=%v, want ErrCollaboraUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "after 3 attempts") {
+		t.Errorf("err=%v, want the attempt count kept", err)
+	}
+}
+
+func TestCollaboraConvert_DialFailureIsUnavailable(t *testing.T) {
+	setFastBackoff(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+
+	_, err = CollaboraConvert(context.Background(), []byte("x"), "", "http://"+addr+"/png", time.Second)
+	if !errors.Is(err, ErrCollaboraUnavailable) {
+		t.Fatalf("err=%v, want ErrCollaboraUnavailable", err)
+	}
+}
+
+func TestCollaboraConvert_ContentFailuresAreNotUnavailable(t *testing.T) {
+	setFastBackoff(t)
+	for _, code := range []int{http.StatusBadRequest, http.StatusInternalServerError} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(code)
+		}))
+		_, err := CollaboraConvert(context.Background(), []byte("x"), "", srv.URL+"/png", time.Second)
+		srv.Close()
+		if err == nil || errors.Is(err, ErrCollaboraUnavailable) {
+			t.Fatalf("status %d: err=%v, want a non-unavailable error", code, err)
+		}
 	}
 }

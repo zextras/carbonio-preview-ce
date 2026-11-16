@@ -241,3 +241,37 @@ func TestSetVipsConcurrency(t *testing.T) {
 	// Apply branch: must not panic (libvips is initialised by TestMain).
 	SetVipsConcurrency(2)
 }
+
+func TestPDFPage1Pair_PoolNotInitialised(t *testing.T) {
+	withNilPool(t)
+	_, err := PDFPage1Pair(context.Background(), []byte("%PDF-1.4"))
+	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
+		t.Fatalf("err=%v, want pool not initialised", err)
+	}
+}
+
+func TestPDFPage1Pair_PoolUnavailable(t *testing.T) {
+	withFakePool(t, &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
+		return nil, errors.New("worker failed to start")
+	}})
+	if _, err := PDFPage1Pair(context.Background(), []byte("%PDF-1.4")); !errors.Is(err, ErrRenderUnavailable) {
+		t.Fatalf("err=%v, want ErrRenderUnavailable", err)
+	}
+}
+
+func TestPDFPage1DPI(t *testing.T) {
+	if dpi, err := pdfPage1DPI(595, 842); err != nil || dpi != 110 {
+		t.Fatalf("A4 portrait dpi=%d err=%v, want 110 (ceil(1280*72/842))", dpi, err)
+	}
+	if dpi, err := pdfPage1DPI(842, 595); err != nil || dpi != 110 {
+		t.Fatalf("A4 landscape dpi=%d err=%v, want 110", dpi, err)
+	}
+	if dpi, err := pdfPage1DPI(10, 10); err != nil || dpi != 9216 {
+		t.Fatalf("tiny page dpi=%d err=%v, want 9216", dpi, err)
+	}
+	for _, sz := range [][2]float64{{0, 0}, {0, 100}, {-1, 5}} {
+		if _, err := pdfPage1DPI(sz[0], sz[1]); err == nil {
+			t.Errorf("size %v: want error", sz)
+		}
+	}
+}

@@ -57,6 +57,7 @@ type item struct {
 	contentType string
 	score       float64 // frequency score AT lastAccess
 	lastAccess  int64   // unix nanos of the last score update
+	touched     int64
 }
 
 // Cache is a sampled decay-LFU byte-budgeted cache. The zero value is not
@@ -138,6 +139,7 @@ func (c *Cache) Put(key string, entry Entry) {
 		c.used += cost
 		old.body = entry.Body
 		old.contentType = entry.ContentType
+		old.touched = now
 		bump(old, now)
 		c.evictToFit(now) // overwrite may grow used past budget
 		return
@@ -147,10 +149,44 @@ func (c *Cache) Put(key string, entry Entry) {
 	for c.used+cost > c.budget && len(c.m) > 0 {
 		c.evictOne(now)
 	}
-	it := &item{body: entry.Body, contentType: entry.ContentType, lastAccess: now}
+	it := &item{body: entry.Body, contentType: entry.ContentType, lastAccess: now, touched: now}
 	bump(it, now) // sets score to 1 at now
 	c.m[key] = it
 	c.used += cost
+}
+
+// Delete removes key if present. Safe on a nil *Cache (no-op).
+func (c *Cache) Delete(key string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if it, ok := c.m[key]; ok {
+		c.used -= int64(len(it.body))
+		delete(c.m, key)
+	}
+}
+
+// TouchDue reports whether key exists and was last stored or touched at least
+// every ago; when true it records now as the new touch time. Safe on a nil
+// *Cache (always false).
+func (c *Cache) TouchDue(key string, every time.Duration) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	it, ok := c.m[key]
+	if !ok {
+		return false
+	}
+	now := nowNano()
+	if now-it.touched < int64(every) {
+		return false
+	}
+	it.touched = now
+	return true
 }
 
 // evictToFit evicts lowest-decayed-score entries until used <= budget.

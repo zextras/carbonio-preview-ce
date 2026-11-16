@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // withClock swaps the package clock for the duration of a test and restores it.
@@ -201,5 +202,70 @@ func TestOverwrite_GrowsPastBudget_EvictsToFit(t *testing.T) {
 	}
 	if used := c.debugUsed(); used > int64(100) {
 		t.Errorf("after overwrite used=%d exceeds budget=100", used)
+	}
+}
+
+func TestDelete_RemovesEntryAndFreesBytes(t *testing.T) {
+	withClock(t, 0)
+	c := New(1 << 20)
+	c.Put("a", Entry{Body: make([]byte, 100)})
+	c.Put("b", Entry{Body: make([]byte, 50)})
+	c.Delete("a")
+	if _, ok := c.Get("a"); ok {
+		t.Fatal("a must be gone")
+	}
+	if _, ok := c.Get("b"); !ok {
+		t.Fatal("b must stay")
+	}
+	if got := c.debugUsed(); got != 50 {
+		t.Fatalf("used=%d, want 50", got)
+	}
+	c.Delete("missing")
+}
+
+func TestDelete_NilCacheIsSafe(t *testing.T) {
+	var c *Cache
+	c.Delete("k")
+}
+
+func TestTouchDue(t *testing.T) {
+	adv := withClock(t, 1e9)
+	c := New(1 << 20)
+	if c.TouchDue("k", time.Hour) {
+		t.Fatal("missing key must not be due")
+	}
+	c.Put("k", Entry{Body: []byte("x")})
+	if c.TouchDue("k", time.Hour) {
+		t.Fatal("not due right after Put")
+	}
+	adv(3599)
+	if c.TouchDue("k", time.Hour) {
+		t.Fatal("not due before the interval")
+	}
+	adv(1)
+	if !c.TouchDue("k", time.Hour) {
+		t.Fatal("due once the interval elapsed")
+	}
+	if c.TouchDue("k", time.Hour) {
+		t.Fatal("the touch must reset the interval")
+	}
+	adv(3600)
+	if !c.TouchDue("k", time.Hour) {
+		t.Fatal("due again one interval later")
+	}
+}
+
+func TestTouchDue_PutResetsAndNilIsSafe(t *testing.T) {
+	adv := withClock(t, 1e9)
+	c := New(1 << 20)
+	c.Put("k", Entry{Body: []byte("x")})
+	adv(7200)
+	c.Put("k", Entry{Body: []byte("y")})
+	if c.TouchDue("k", time.Hour) {
+		t.Fatal("Put must set touched")
+	}
+	var n *Cache
+	if n.TouchDue("k", time.Hour) {
+		t.Fatal("nil cache is never due")
 	}
 }

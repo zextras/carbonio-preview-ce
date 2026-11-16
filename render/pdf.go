@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	pdfium "github.com/klippa-app/go-pdfium"
@@ -273,4 +274,55 @@ func PDFSlice(ctx context.Context, data []byte, firstPage, lastPage int) ([]byte
 	// Return a copy so the pdfium-managed buffer can be freed.
 	out := bytes.Clone(*saveResp.FileBytes)
 	return out, nil
+}
+
+func pdfPage1DPI(w, h float64) (int, error) {
+	long := math.Max(w, h)
+	if w <= 0 || h <= 0 {
+		return 0, fmt.Errorf("invalid pdf page size %vx%v", w, h)
+	}
+	return int(math.Ceil(float64(SideM) * 72 / long)), nil
+}
+
+// PDFPage1Pair renders page 1 at the DPI that gives a SideM long side and
+// returns the M and S renditions (always JPEG: the page is flattened on white).
+func PDFPage1Pair(ctx context.Context, data []byte) (Pair, error) {
+	if globalPdfPool == nil {
+		return Pair{}, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
+	}
+
+	inst, err := getPdfInstance(ctx)
+	if err != nil {
+		return Pair{}, err
+	}
+	defer inst.Close()
+
+	docResp, err := inst.OpenDocument(&requests.OpenDocument{File: &data})
+	if err != nil {
+		return Pair{}, fmt.Errorf("pdfium OpenDocument: %w", err)
+	}
+	defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: docResp.Document}) //nolint:errcheck
+
+	size, err := inst.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: docResp.Document, Index: 0})
+	if err != nil {
+		return Pair{}, fmt.Errorf("pdfium FPDF_GetPageSizeByIndex: %w", err)
+	}
+	dpi, err := pdfPage1DPI(size.Width, size.Height)
+	if err != nil {
+		return Pair{}, err
+	}
+
+	renderResp, err := inst.RenderPageInDPI(&requests.RenderPageInDPI{
+		Page: requests.Page{ByIndex: &requests.PageByIndex{Document: docResp.Document, Index: 0}},
+		DPI:  dpi,
+	})
+	if err != nil {
+		return Pair{}, fmt.Errorf("pdfium RenderPageInDPI page 0: %w", err)
+	}
+	defer renderResp.Cleanup()
+
+	if renderResp.Result.Image == nil {
+		return Pair{}, fmt.Errorf("pdfium returned nil image for page 0")
+	}
+	return rgbaPair(renderResp.Result.Image)
 }
