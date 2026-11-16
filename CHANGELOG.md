@@ -1,3 +1,5 @@
+## [4.1.2](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.1...v4.1.2) (2026-11-16)
+
 ## [4.1.1](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.0...v4.1.1) (2026-11-13)
 
 ### Bug Fixes
