@@ -111,28 +111,34 @@ func startVideoPostgresWithDSN(t *testing.T) (*db.Store, string) {
 		imgName = "postgres:16-alpine"
 	)
 
-	out, err := exec.Command("docker", "run", "--rm", "-d",
+	var runStderr strings.Builder
+	runCmd := exec.Command("docker", "run", "--rm", "-d",
 		"-e", "POSTGRES_USER="+pgUser,
 		"-e", "POSTGRES_PASSWORD="+pgPass,
 		"-e", "POSTGRES_DB="+pgDB,
 		"-P",
 		imgName,
-	).CombinedOutput()
+	)
+	runCmd.Stderr = &runStderr
+	out, err := runCmd.Output()
 	if err != nil {
-		t.Fatalf("docker run: %v — %s", err, out)
+		t.Fatalf("docker run: %v — %s", err, runStderr.String())
 	}
 	containerID := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", containerID).Run()
 	})
 
-	portOut, err := exec.Command(
+	var inspectStderr strings.Builder
+	inspectCmd := exec.Command(
 		"docker", "inspect",
 		"--format", fmt.Sprintf(`{{(index (index .NetworkSettings.Ports "%s/tcp") 0).HostPort}}`, pgPort),
 		containerID,
-	).CombinedOutput()
+	)
+	inspectCmd.Stderr = &inspectStderr
+	portOut, err := inspectCmd.Output()
 	if err != nil {
-		t.Fatalf("docker inspect port: %v — %s", err, portOut)
+		t.Fatalf("docker inspect port: %v — %s", err, inspectStderr.String())
 	}
 	hostPort := strings.TrimSpace(string(portOut))
 

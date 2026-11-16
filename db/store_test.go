@@ -61,15 +61,18 @@ func startPostgres(t *testing.T) *Store {
 	)
 
 	// Start the container.
-	out, err := exec.Command("docker", "run", "--rm", "-d",
+	var runStderr strings.Builder
+	runCmd := exec.Command("docker", "run", "--rm", "-d",
 		"-e", "POSTGRES_USER="+pgUser,
 		"-e", "POSTGRES_PASSWORD="+pgPass,
 		"-e", "POSTGRES_DB="+pgDB,
 		"-P", // publish all exposed ports to random host ports
 		imgName,
-	).CombinedOutput()
+	)
+	runCmd.Stderr = &runStderr
+	out, err := runCmd.Output()
 	if err != nil {
-		t.Fatalf("docker run: %v — %s", err, out)
+		t.Fatalf("docker run: %v — %s", err, runStderr.String())
 	}
 	containerID := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
@@ -77,13 +80,16 @@ func startPostgres(t *testing.T) *Store {
 	})
 
 	// Retrieve the mapped host port.
-	portOut, err := exec.Command(
+	var inspectStderr strings.Builder
+	inspectCmd := exec.Command(
 		"docker", "inspect",
 		"--format", fmt.Sprintf(`{{(index (index .NetworkSettings.Ports "%s/tcp") 0).HostPort}}`, pgPort),
 		containerID,
-	).CombinedOutput()
+	)
+	inspectCmd.Stderr = &inspectStderr
+	portOut, err := inspectCmd.Output()
 	if err != nil {
-		t.Fatalf("docker inspect port: %v — %s", err, portOut)
+		t.Fatalf("docker inspect port: %v — %s", err, inspectStderr.String())
 	}
 	hostPort := strings.TrimSpace(string(portOut))
 
