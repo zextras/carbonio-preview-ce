@@ -102,9 +102,6 @@ func serveReady(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q 
 	if r.ContentType != nil {
 		contentType = *r.ContentType
 	}
-	if r.Original {
-		return cache.Entry{}, originalAnswer{contentType: contentType}
-	}
 	if r.BlobID == nil {
 		return regenerate(step, deps, worker, store, q, r)
 	}
@@ -176,7 +173,7 @@ func generateSync(step runner, deps Deps, worker *AsyncWorker, store *db.Store, 
 	if q.p.kind == kindPDF {
 		g, err = step.pdfThumb(data, q.size)
 	} else {
-		g, err = step.staticThumb(q.p, data, info, q.size)
+		g, err = step.imageThumb(data, q.size)
 	}
 	if err != nil {
 		return cache.Entry{}, err
@@ -185,16 +182,10 @@ func generateSync(step runner, deps Deps, worker *AsyncWorker, store *db.Store, 
 }
 
 // answer puts the rendition in the memory cache under its final key and returns it; the row and the blob are saved afterwards in the background.
-// Originals are never cached: the handler streams the source instead.
 func answer(step runner, deps Deps, store *db.Store, q thumbRequest, rowKind string, expected *db.Thumbnail, g produced) (cache.Entry, error) {
-	if !g.original {
-		deps.Cache.Put(q.key(cacheTagThumbnail), g.entry())
-	}
+	deps.Cache.Put(q.key(cacheTagThumbnail), g.entry())
 	if store != nil {
 		deps.slotLimits().save(func(ctx context.Context) { persist(ctx, deps, store, q, rowKind, expected, g) })
-	}
-	if g.original {
-		return cache.Entry{}, originalAnswer{contentType: g.contentType}
 	}
 	return g.entry(), nil
 }
@@ -203,16 +194,14 @@ func answer(step runner, deps Deps, store *db.Store, q thumbRequest, rowKind str
 func persist(ctx context.Context, deps Deps, store *db.Store, q thumbRequest, rowKind string, expected *db.Thumbnail, g produced) {
 	contentType := g.contentType
 	row := pendingRow(q, rowKind)
-	row.Original, row.ContentType = g.original, &contentType
-	if !g.original {
-		blobID, err := storeReserved(ctx, deps, store, g.body, q.version, q.serviceType, q.owner)
-		if err != nil {
-			slog.Warn("persist: blob upload failed, not persisting",
-				"file_id", q.id, "version", q.version, "size", q.size, "err", err)
-			return
-		}
-		row.BlobID = &blobID
+	row.ContentType = &contentType
+	blobID, err := storeReserved(ctx, deps, store, g.body, q.version, q.serviceType, q.owner)
+	if err != nil {
+		slog.Warn("persist: blob upload failed, not persisting",
+			"file_id", q.id, "version", q.version, "size", q.size, "err", err)
+		return
 	}
+	row.BlobID = &blobID
 	if _, err := store.PutReady(ctx, row, expected); err != nil {
 		slog.Warn("persist: PutReady failed", "file_id", q.id, "version", q.version, "size", q.size, "err", err)
 	}
@@ -256,9 +245,6 @@ func inlineAnswer(deps Deps, q thumbRequest, out produced, fail *jobFailure) (ca
 	if fail != nil {
 		return cache.Entry{}, inlineError(fail)
 	}
-	if out.original {
-		return cache.Entry{}, originalAnswer{contentType: out.contentType}
-	}
 	deps.Cache.Put(q.key(cacheTagThumbnail), out.entry())
 	return out.entry(), nil
 }
@@ -279,10 +265,6 @@ func inlineError(f *jobFailure) error {
 }
 
 func regenerateGIF(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, expected *db.Thumbnail, data []byte, info render.Info) (cache.Entry, error) {
-	if longSide(info) <= sideOf(q.size) {
-		g := produced{contentType: mimeGIF, original: true}
-		return answer(step, deps, store, q, string(kindGIF), expected, g)
-	}
 	if err := enqueueRow(step, store, q, expected, string(kindGIF)); err != nil {
 		if isDBConnError(err) {
 			return generateGIFInline(step, deps, worker, q, data, info)
@@ -334,7 +316,7 @@ func failedGIFFrame(step runner, deps Deps, q thumbRequest) (cache.Entry, error)
 
 // deleteRowBlob deletes the blob of a row already removed from the DB and reports whether it is gone (a missing blob counts), so its tombstone can go.
 func deleteRowBlob(ctx context.Context, store storage.Client, row *db.Thumbnail, op string) bool {
-	if row.BlobID == nil || row.Original {
+	if row.BlobID == nil {
 		return true
 	}
 	if err := store.Delete(ctx, *row.BlobID, row.Version, row.ServiceType, row.OwnerID); err != nil && !errors.Is(err, storage.ErrNotFound) {

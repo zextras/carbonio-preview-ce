@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -250,33 +249,17 @@ func TestStoreReserved_FailedUploadTombstonesTheReservationWithoutDeleting(t *te
 	}
 }
 
-func TestThumbnailGet_UseOriginalNeedsAnUnrotatedJPEGPNGOrGIFLoader(t *testing.T) {
+func TestThumbnailGet_TheSourceIsNeverServedAsTheThumbnail(t *testing.T) {
 	src := []byte("source-bytes")
-	cases := []struct {
-		name     string
-		info     render.Info
-		original bool
-	}{
-		{"jpeg loader", render.Info{Width: 300, Height: 200, Pages: 1, Loader: "jpegload_buffer"}, true},
-		{"heif behind a jpeg label", render.Info{Width: 300, Height: 200, Pages: 1, Loader: "heifload_buffer"}, false},
-		{"unknown loader", render.Info{Width: 300, Height: 200, Pages: 1}, false},
-		{"exif rotated jpeg", render.Info{Width: 300, Height: 200, Pages: 1, Loader: "jpegload_buffer", Orientation: 6}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			swap(t, &probeFunc, func([]byte) (render.Info, error) { return c.info, nil })
-			swap(t, &imageThumbFunc, func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil })
-			h := newHarness(t, harnessOpts{noDB: true})
-			id := newID()
-			h.seedSource(id, src)
-			rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/jpeg", size: "s"})
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status %d", rec.Code)
-			}
-			if got := bytes.Equal(rec.Body.Bytes(), src); got != c.original {
-				t.Errorf("served the source = %v, want %v", got, c.original)
-			}
-		})
+	swap(t, &imageThumbFunc, func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil })
+	h := newHarness(t, harnessOpts{noDB: true})
+	id := newID()
+	h.seedSource(id, src)
+	for _, size := range []string{"s", "m"} {
+		rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/jpeg", size: size})
+		if rec.Code != http.StatusOK || bytes.Equal(rec.Body.Bytes(), src) || rec.Body.String() != string(stubFor(sizeSides[size]).Body) {
+			t.Errorf("%s: %d %q, want the rendered thumbnail", size, rec.Code, rec.Body)
+		}
 	}
 }
 
@@ -299,32 +282,30 @@ func TestThumbnailGet_InterimFrameOnlyForTheRequestedPendingSize(t *testing.T) {
 	if _, ok := h.deps.Cache.Get(thumbKey("g", "files", testOwner, id, testVersion, "m", "")); ok {
 		t.Errorf("interim frame cached for a size that was not requested")
 	}
-	if m := h.get(thumbReq{id: id, version: testVersion, mime: "image/gif", size: "m"}); m.Code != http.StatusOK {
-		t.Fatalf("m: %d, want the original GIF", m.Code)
+	if m := h.get(thumbReq{id: id, version: testVersion, mime: "image/gif", size: "m"}); m.Code != http.StatusAccepted {
+		t.Fatalf("m: %d, want 202 (every animated GIF goes through the async job)", m.Code)
 	}
-	if r := h.pair(id, testVersion)["m"]; r == nil || r.Status != db.StatusReady || !r.Original || r.BlobID != nil {
-		t.Errorf("m row = %+v, want a READY original written by the m request", r)
+	if r := h.pair(id, testVersion)["m"]; r == nil || r.Status != db.StatusPending || r.Kind != "gif" {
+		t.Errorf("m row = %+v, want a PENDING gif row written by the m request", r)
 	}
 }
 
-func TestThumbnailGet_OriginalRowsAreStreamedAndNeverCached(t *testing.T) {
+func TestThumbnailGet_SmallPNGIsRenderedAndCachedNotStreamed(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
 	src := pngOf(t, 1000, 600, false)
 	h.seedSource(id, src)
 	req := thumbReq{id: id, version: testVersion, mime: "image/png", size: "m"}
-	for i, label := range []string{"regenerated", "ready row"} {
-		rec := h.get(req)
-		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/png" {
-			t.Fatalf("%s: %d %q identical=%v", label, rec.Code, rec.Header().Get("Content-Type"), bytes.Equal(rec.Body.Bytes(), src))
-		}
-		if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len(src)) {
-			t.Errorf("%s: Content-Length %q, want %d", label, got, len(src))
-		}
-		if _, ok := h.deps.Cache.Get(h.thumbKeyOf(req, "m")); ok {
-			t.Errorf("%s (request %d): the original source was cached", label, i)
-		}
+	rec := h.get(req)
+	if rec.Code != http.StatusOK || bytes.Equal(rec.Body.Bytes(), src) {
+		t.Fatalf("%d identical=%v, want a re-encoded thumbnail", rec.Code, bytes.Equal(rec.Body.Bytes(), src))
+	}
+	if w, hh, _ := decodeInfo(t, rec.Body.Bytes()); w != 1000 || hh != 600 {
+		t.Errorf("%dx%d, want the source size (never upscaled)", w, hh)
+	}
+	if _, ok := h.deps.Cache.Get(h.thumbKeyOf(req, "m")); !ok {
+		t.Error("the thumbnail must be cached under its final key")
 	}
 }
 

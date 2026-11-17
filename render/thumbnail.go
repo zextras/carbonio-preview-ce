@@ -49,13 +49,12 @@ static int tb_encode(VipsImage *img, int q, tb_out *o) {
 	return vips_jpegsave_buffer(img, &o->buf, &o->len, "Q", q, "keep", VIPS_FOREIGN_KEEP_NONE, NULL);
 }
 
-static int tb_probe(void *buf, size_t len, int *w, int *h, int *pages, int *orientation, const char **loader) {
+static int tb_probe(void *buf, size_t len, int *w, int *h, int *pages, const char **loader) {
 	VipsImage *img = vips_image_new_from_buffer(buf, len, "", "access", VIPS_ACCESS_SEQUENTIAL, NULL);
 	if (!img) return -1;
 	*w = img->Xsize;
 	*h = vips_image_get_page_height(img);
 	*pages = vips_image_get_n_pages(img);
-	*orientation = vips_image_get_orientation(img);
 	*loader = NULL;
 	vips_image_get_string(img, VIPS_META_LOADER, loader);
 	if (*loader) *loader = g_strdup(*loader);
@@ -120,16 +119,7 @@ const (
 
 type Info struct {
 	Width, Height, Pages int
-	Orientation          int
 	Loader               string
-}
-
-// Original reports whether the source can be served as is: JPEG, PNG or GIF content (whatever its declared type) that needs no rotation.
-func (i Info) Original() bool {
-	if i.Orientation > 1 {
-		return false
-	}
-	return strings.HasPrefix(i.Loader, "jpegload") || strings.HasPrefix(i.Loader, "pngload") || strings.HasPrefix(i.Loader, "gifload")
 }
 
 // IsGIF reports whether the libvips loader read the source as GIF.
@@ -170,9 +160,9 @@ func Probe(data []byte) (Info, error) {
 	if len(data) == 0 {
 		return Info{}, errors.New("empty input buffer")
 	}
-	var w, h, pages, orientation C.int
+	var w, h, pages C.int
 	var loader *C.char
-	if C.tb_probe(unsafe.Pointer(&data[0]), C.size_t(len(data)), &w, &h, &pages, &orientation, &loader) != 0 {
+	if C.tb_probe(unsafe.Pointer(&data[0]), C.size_t(len(data)), &w, &h, &pages, &loader) != 0 {
 		return Info{}, vipsError("probe")
 	}
 	name := ""
@@ -180,7 +170,7 @@ func Probe(data []byte) (Info, error) {
 		name = C.GoString(loader)
 		C.g_free(C.gpointer(loader))
 	}
-	return Info{Width: int(w), Height: int(h), Pages: int(pages), Orientation: int(orientation), Loader: name}, nil
+	return Info{Width: int(w), Height: int(h), Pages: int(pages), Loader: name}, nil
 }
 
 func quality(side int) int {

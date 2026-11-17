@@ -38,9 +38,9 @@ func tombstoneBlob(ctx context.Context, tx pgx.Tx, blobID, ownerID, serviceType 
 	return err
 }
 
-// tombstoneRowBlob tombstones the blob of a row that stops pointing at it; "use original" rows have none.
+// tombstoneRowBlob tombstones the blob of a row that stops pointing at it.
 func tombstoneRowBlob(ctx context.Context, tx pgx.Tx, r *Thumbnail) error {
-	if r.BlobID == nil || r.Original {
+	if r.BlobID == nil {
 		return nil
 	}
 	return tombstoneBlob(ctx, tx, *r.BlobID, r.OwnerID, r.ServiceType, r.Version)
@@ -59,7 +59,7 @@ func settleBlobs(ctx context.Context, tx pgx.Tx, won bool, row Thumbnail, replac
 
 // consumeReservation takes the reservation of a blob about to be published. It reports false when the reservation already expired into a tombstone, so the blob must not be published.
 func consumeReservation(ctx context.Context, tx pgx.Tx, r *Thumbnail) (bool, error) {
-	if r.BlobID == nil || r.Original {
+	if r.BlobID == nil {
 		return true, nil
 	}
 	tag, err := tx.Exec(ctx, `DELETE FROM thumbnail_blob WHERE blob_id=$1 AND status='PENDING'`, *r.BlobID)

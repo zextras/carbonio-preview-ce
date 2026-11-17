@@ -76,7 +76,7 @@ func TestThumbnailFullFlowDB(t *testing.T) {
 	})
 	uploaded := storages.Uploaded()
 	for size, r := range rows {
-		if r.Status != db.StatusReady || r.BlobID == nil || r.Original || r.OwnerID != testOwner || r.ServiceType != "files" || r.Version != version {
+		if r.Status != db.StatusReady || r.BlobID == nil || r.OwnerID != testOwner || r.ServiceType != "files" || r.Version != version {
 			t.Fatalf("row %s = %+v", size, r)
 		}
 		if got := uploaded[testsupport.BlobKey(*r.BlobID, version, "files")]; !bytes.Equal(got, bodies[size]) {

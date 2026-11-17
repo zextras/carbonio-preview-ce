@@ -666,8 +666,8 @@ func TestDeleteThumbnails_AllVersionsAndSizes(t *testing.T) {
 	h.seedReady(id, 1, "s", "video", "b1s", "owner-1", "files", []byte("x"), "")
 	h.seedReady(id, 1, "m", "video", "b1m", "owner-1", "files", []byte("x"), "")
 	h.seedReady(id, 2, "s", "office", "b2s", "owner-2", "chats", []byte("x"), "")
-	h.exec(`INSERT INTO thumbnail (file_id, version, size, status, kind, original, content_type, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
-        VALUES ($1, 2, 'm', 'READY', 'image', true, 'image/jpeg', 'owner-2', 'chats', 0, now(), now(), now())`, id)
+	h.exec(`INSERT INTO thumbnail (file_id, version, size, status, kind, blob_id, content_type, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+        VALUES ($1, 2, 'm', 'READY', 'image', NULL, 'image/jpeg', 'owner-2', 'chats', 0, now(), now(), now())`, id)
 	h.seedReady(other, 1, "m", "video", "keep", "o", "files", []byte("x"), "")
 
 	req := httptest.NewRequest(http.MethodDelete, "/thumbnail/"+id, nil)

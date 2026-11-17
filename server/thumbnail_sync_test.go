@@ -191,7 +191,7 @@ func TestThumbnailGet_SyncImageSizesRenderedSeparately(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_UseOriginalBelowS(t *testing.T) {
+func TestThumbnailGet_SmallSourcesAreReEncodedAtTheirSizeForBothSizes(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noDB: true})
 	id := newID()
@@ -200,14 +200,15 @@ func TestThumbnailGet_UseOriginalBelowS(t *testing.T) {
 	for _, mime := range []string{"image/jpeg", "image/jpg"} {
 		for _, size := range []string{"s", "m"} {
 			rec := h.get(thumbReq{id: id, version: testVersion, mime: mime, size: size})
-			if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/jpeg" {
-				t.Errorf("%s %s: %d type=%q identical=%v", mime, size, rec.Code, rec.Header().Get("Content-Type"), bytes.Equal(rec.Body.Bytes(), src))
+			w, hh, f := decodeInfo(t, rec.Body.Bytes())
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/jpeg" || f != "jpeg" || w != 300 || hh != 200 || bytes.Equal(rec.Body.Bytes(), src) {
+				t.Errorf("%s %s: %d %s %dx%d identical=%v, want a re-encoded JPEG at 300x200", mime, size, rec.Code, f, w, hh, bytes.Equal(rec.Body.Bytes(), src))
 			}
 		}
 	}
 }
 
-func TestThumbnailGet_UseOriginalOnlyM(t *testing.T) {
+func TestThumbnailGet_MOfALargerPNGIsRenderedNotTheSourceAndSIsScaled(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noDB: true})
 	id := newID()
@@ -215,8 +216,8 @@ func TestThumbnailGet_UseOriginalOnlyM(t *testing.T) {
 	h.seedSource(id, src)
 
 	m := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: "m"})
-	if m.Code != http.StatusOK || !bytes.Equal(m.Body.Bytes(), src) || m.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("m must be the source: %d %q", m.Code, m.Header().Get("Content-Type"))
+	if mw, mh, _ := decodeInfo(t, m.Body.Bytes()); m.Code != http.StatusOK || bytes.Equal(m.Body.Bytes(), src) || mw != 1000 || mh != 600 {
+		t.Fatalf("m: %d %dx%d, want a re-encoded thumbnail at the source size", m.Code, mw, mh)
 	}
 	s := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: "s"})
 	if s.Code != http.StatusOK || bytes.Equal(s.Body.Bytes(), src) {
@@ -227,34 +228,28 @@ func TestThumbnailGet_UseOriginalOnlyM(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_UseOriginalRowsHaveNoBlob(t *testing.T) {
+func TestThumbnailGet_EveryImageRowHasABlob(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{})
 	id := newID()
 	h.seedSource(id, pngOf(t, 1000, 600, false))
 
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: "m"}); rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
+	for _, size := range []string{"m", "s"} {
+		if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: size}); rec.Code != http.StatusOK {
+			t.Fatalf("%s status %d", size, rec.Code)
+		}
 	}
 	rows := h.pair(id, testVersion)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %+v, want only the requested size written", rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want both requested sizes", rows)
 	}
-	m := rows[db.SizeM]
-	if m.Status != db.StatusReady || !m.Original || m.BlobID != nil || m.ContentType == nil || *m.ContentType != "image/png" || m.Kind != "image" {
-		t.Errorf("M row = %+v", m)
+	for size, r := range rows {
+		if r.Status != db.StatusReady || r.BlobID == nil || r.ContentType == nil || r.Kind != "image" {
+			t.Errorf("%s row = %+v, want READY with a stored blob", size, r)
+		}
 	}
-	if n := len(h.store.putKeys()); n != 0 {
-		t.Errorf("blobs written = %d, an original row needs none", n)
-	}
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: "s"}); rec.Code != http.StatusOK {
-		t.Fatalf("s status %d", rec.Code)
-	}
-	if s := h.pair(id, testVersion)[db.SizeS]; s == nil || s.Status != db.StatusReady || s.Original || s.BlobID == nil {
-		t.Errorf("S row = %+v, want a stored rendition written by the s request", s)
-	}
-	if n := len(h.store.putKeys()); n != 1 {
-		t.Errorf("blobs written = %d, only S needs one", n)
+	if n := len(h.store.putKeys()); n != 2 {
+		t.Errorf("blobs written = %d, one per size (nothing is served as the original)", n)
 	}
 }
 
@@ -320,7 +315,7 @@ func TestThumbnailGet_WebPBelowTargetIsConvertedAndStored(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	rows := h.pair(id, testVersion)
-	if r := rows[db.SizeM]; len(rows) != 1 || r == nil || r.Original || r.BlobID == nil || r.Status != db.StatusReady || r.Kind != "image" {
+	if r := rows[db.SizeM]; len(rows) != 1 || r == nil || r.BlobID == nil || r.Status != db.StatusReady || r.Kind != "image" {
 		t.Errorf("rows = %+v, want only m as a stored conversion", rows)
 	}
 	if n := len(h.store.putKeys()); n != 1 {

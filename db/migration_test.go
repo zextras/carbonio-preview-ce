@@ -62,7 +62,7 @@ func TestMigration3_KeepsReadyBlobRowsAsLegacy(t *testing.T) {
 	if r.BlobID == nil || *r.BlobID != blob || r.OwnerID != "owner-1" || r.ServiceType != "chats" || r.Version != 3 {
 		t.Errorf("blob/owner/service/version not preserved: %+v", r)
 	}
-	if r.Original || r.Digest != nil || r.Lang != nil || r.ContentType != nil {
+	if r.Digest != nil || r.Lang != nil || r.ContentType != nil {
 		t.Errorf("new columns must be empty: %+v", r)
 	}
 	if age := time.Since(r.LastAccessedAt); age < 39*24*time.Hour || age > 41*24*time.Hour {

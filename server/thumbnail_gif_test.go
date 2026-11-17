@@ -52,8 +52,9 @@ func TestThumbnailGet_StaticGIFIsSync(t *testing.T) {
 	h.seedSource(id, src)
 
 	m := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "m"})
-	if m.Code != http.StatusOK || !bytes.Equal(m.Body.Bytes(), src) || m.Header().Get("Content-Type") != "image/gif" {
-		t.Fatalf("m must be the original GIF: %d %q", m.Code, m.Header().Get("Content-Type"))
+	mw, _, mf := decodeInfo(t, m.Body.Bytes())
+	if m.Code != http.StatusOK || (mf != "jpeg" && mf != "png") || mw != 500 || bytes.Equal(m.Body.Bytes(), src) {
+		t.Fatalf("m: %d %s %d, want a re-encoded static frame at 500 px (the source GIF is never served)", m.Code, mf, mw)
 	}
 	s := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"})
 	w, _, f := decodeInfo(t, s.Body.Bytes())
@@ -62,20 +63,26 @@ func TestThumbnailGet_StaticGIFIsSync(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_AnimatedGIFWithoutDBIsServedInTheRequest(t *testing.T) {
+func TestThumbnailGet_AnimatedGIFWithoutDBIsResizedInTheRequest(t *testing.T) {
+	var sides []int
+	swap(t, &animatedGIFFunc, func(_ context.Context, _ string, _ render.Info, side int, _ string) ([]byte, error) {
+		sides = append(sides, side)
+		return []byte("GIF89a-capped"), nil
+	})
 	h, id := gifHarness(t, harnessOpts{noDB: true})
-	src := gifOf(t, 600, 400, 6)
-	h.seedSource(id, src)
+	h.seedSource(id, gifOf(t, 600, 400, 6))
 	rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime})
-	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/gif" {
-		t.Fatalf("status %d, want 200 with the source GIF (it fits M)", rec.Code)
+	if rec.Code != http.StatusOK || rec.Body.String() != "GIF89a-capped" || rec.Header().Get("Content-Type") != "image/gif" {
+		t.Fatalf("status %d %q, want the ffmpeg output even though the source fits M", rec.Code, rec.Body)
+	}
+	if len(sides) != 1 || sides[0] != render.SideM {
+		t.Errorf("ffmpeg runs = %v, want one M pass", sides)
 	}
 }
 
-func TestThumbnailGet_AnimatedGIFBelowMSRequestEnqueuesOnlySAndMRequestWritesOriginal(t *testing.T) {
+func TestThumbnailGet_AnimatedGIFBelowMIsAnAsyncJobPerRequestedSize(t *testing.T) {
 	h, id := gifHarness(t, harnessOpts{noWorker: true})
-	src := gifOf(t, 600, 400, 6)
-	h.seedSource(id, src)
+	h.seedSource(id, gifOf(t, 600, 400, 6))
 
 	rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"})
 	if rec.Code != http.StatusAccepted {
@@ -86,12 +93,11 @@ func TestThumbnailGet_AnimatedGIFBelowMSRequestEnqueuesOnlySAndMRequestWritesOri
 		t.Fatalf("rows = %+v, want only S PENDING gif", rows)
 	}
 	rec = h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "m"})
-	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/gif" {
-		t.Errorf("m: %d, want the source GIF", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("m: %d, want 202 (a GIF below M is capped and re-encoded too)", rec.Code)
 	}
-	m := h.pair(id, testVersion)[db.SizeM]
-	if m == nil || m.Status != db.StatusReady || !m.Original || m.BlobID != nil || m.Kind != "gif" || *m.ContentType != "image/gif" {
-		t.Errorf("M row = %+v, want a READY original without blob written by the m request", m)
+	if m := h.pair(id, testVersion)[db.SizeM]; m == nil || m.Status != db.StatusPending || m.Kind != "gif" {
+		t.Errorf("M row = %+v, want PENDING gif", m)
 	}
 }
 
@@ -157,7 +163,7 @@ func TestThumbnailGet_AnimatedGIFBecomesReadyWithAllFrames(t *testing.T) {
 	}
 	rows := h.waitStatus(id, testVersion, db.StatusReady)
 	for size, r := range rows {
-		if r.Kind != "gif" || r.BlobID == nil || r.Original || *r.ContentType != "image/gif" {
+		if r.Kind != "gif" || r.BlobID == nil || *r.ContentType != "image/gif" {
 			t.Errorf("row %s = %+v", size, r)
 		}
 	}
@@ -170,8 +176,8 @@ func TestThumbnailGet_AnimatedGIFBecomesReadyWithAllFrames(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", size, err)
 		}
-		if len(g.Image) != frames || g.Config.Width != side {
-			t.Errorf("%s: %d frames %d wide, want %d frames %d wide", size, len(g.Image), g.Config.Width, frames, side)
+		if len(g.Image) != frames/2 || g.Config.Width != side {
+			t.Errorf("%s: %d frames %d wide, want %d frames (the 20 fps fixture capped at 10 fps) %d wide", size, len(g.Image), g.Config.Width, frames/2, side)
 		}
 	}
 }

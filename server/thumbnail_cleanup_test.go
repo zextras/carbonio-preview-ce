@@ -307,21 +307,17 @@ func TestCleanupOnce(t *testing.T) {
 		version = 3
 	)
 	type seedOpts struct {
-		status   string
-		original bool
-		noBlob   bool
+		status string
+		noBlob bool
 	}
 	owner := func(id string) string { return "own-" + id }
 	key := func(id string) memKey { return memKey{"blob-" + id, version, "docs", owner(id)} }
 	seed := func(id string, ago time.Duration, o seedOpts) {
 		t.Helper()
 		row := db.Thumbnail{FileID: id, Version: version, Size: db.SizeM, Kind: "video", OwnerID: owner(id), ServiceType: "docs",
-			Original: o.original, ContentType: strp("image/jpeg")}
-		if !o.original {
-			row.BlobID = strp("blob-" + id)
-			if !o.noBlob {
-				store.seed("blob-"+id, version, "docs", owner(id), []byte("data"))
-			}
+			ContentType: strp("image/jpeg"), BlobID: strp("blob-" + id)}
+		if !o.noBlob {
+			store.seed("blob-"+id, version, "docs", owner(id), []byte("data"))
 		}
 		if ok, err := st.PutReady(ctx, row, nil); err != nil || !ok {
 			t.Fatalf("seed %s: ok=%v err=%v", id, ok, err)
@@ -332,7 +328,6 @@ func TestCleanupOnce(t *testing.T) {
 		setAccessedAgo(t, dsn, id, ago)
 	}
 	seed("c_ready", 31*day, seedOpts{})
-	seed("c_original", 31*day, seedOpts{original: true})
 	seed("c_legacy", 31*day, seedOpts{status: db.StatusLegacy})
 	seed("c_old_404", 32*day, seedOpts{noBlob: true})
 	seed("c_old_err", 33*day, seedOpts{})
@@ -356,7 +351,7 @@ func TestCleanupOnce(t *testing.T) {
 		t.Fatal("cleanupOnce reported DB not ready")
 	}
 
-	gone := []string{"c_ready", "c_original", "c_legacy", "c_old_404", "c_old_err"}
+	gone := []string{"c_ready", "c_legacy", "c_old_404", "c_old_err"}
 	kept := []string{"c_touched", "c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating}
 	for _, id := range gone {
 		if row := findRow(st, id, version); row != nil {
@@ -381,9 +376,6 @@ func TestCleanupOnce(t *testing.T) {
 		if store.has("blob-"+id, version, "docs", owner(id)) {
 			t.Errorf("blob of %s still stored", id)
 		}
-	}
-	if deleted[key("c_original")] {
-		t.Error("an original row has no blob: no storage call")
 	}
 	if !store.has("blob-c_old_err", version, "docs", owner("c_old_err")) {
 		t.Error("a failed blob delete must leave the blob in place")

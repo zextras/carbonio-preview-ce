@@ -23,7 +23,6 @@ const (
 type pipeline struct {
 	mime      string
 	kind      kind
-	original  bool
 	native    bool
 	thumbnail bool
 }
@@ -35,9 +34,9 @@ const (
 
 var pipelines = func() map[string]pipeline {
 	m := map[string]pipeline{
-		mimeJPEG:        {kind: kindImage, original: true, native: true},
-		"image/png":     {kind: kindImage, original: true, native: true},
-		"image/gif":     {kind: kindImage, original: true, native: true},
+		mimeJPEG:        {kind: kindImage, native: true},
+		"image/png":     {kind: kindImage, native: true},
+		"image/gif":     {kind: kindImage, native: true},
 		"image/webp":    {kind: kindImage, native: true},
 		"image/avif":    {kind: kindImage, native: true},
 		"image/bmp":     {kind: kindImage, native: true},

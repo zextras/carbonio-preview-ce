@@ -20,25 +20,29 @@ import (
 
 var ErrGIFFailed = errors.New("animated gif resize failed")
 
+const gifMaxFPS = 10
+
 func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, workDir string) ([]byte, error) {
-	scale := "scale=-1:" + strconv.Itoa(side) + ":flags=lanczos"
+	long := strconv.Itoa(side)
+	scale := "scale=-2:'min(" + long + ",ih)':flags=lanczos"
 	if info.Width >= info.Height {
-		scale = "scale=" + strconv.Itoa(side) + ":-1:flags=lanczos"
+		scale = "scale='min(" + long + ",iw)':-2:flags=lanczos"
 	}
+	chain := "fps=" + strconv.Itoa(gifMaxFPS) + "," + scale + ",mpdecimate=hi=1:lo=1:frac=1:max=0"
 	palette := filepath.Join(workDir, "palette.png")
 	out := filepath.Join(workDir, "out.gif")
 
 	if err := runFFmpegGIF(ctx,
 		"-filter_threads", "1", "-i", inputPath,
-		"-vf", scale+",palettegen=stats_mode=diff",
+		"-vf", chain+",palettegen=stats_mode=diff",
 		"-y", palette,
 	); err != nil {
 		return nil, err
 	}
 	if err := runFFmpegGIF(ctx,
 		"-filter_complex_threads", "1", "-i", inputPath, "-i", palette,
-		"-lavfi", "[0:v]"+scale+"[x];[x][1:v]paletteuse=dither=none",
-		"-f", "gif", "-y", out,
+		"-lavfi", "[0:v]"+chain+"[x];[x][1:v]paletteuse=dither=none",
+		"-fps_mode", "vfr", "-f", "gif", "-y", out,
 	); err != nil {
 		return nil, err
 	}

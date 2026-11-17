@@ -832,7 +832,7 @@ func TestEnqueue_CASReplacesReadyAndKeepsOthers(t *testing.T) {
 	}
 	cur2, _ := st.FindPair(ctx, id, 1)
 	r := cur2[SizeM]
-	if r.Status != StatusPending || r.BlobID != nil || *r.Digest != "d2" || r.Original || r.ContentType != nil {
+	if r.Status != StatusPending || r.BlobID != nil || *r.Digest != "d2" || r.ContentType != nil {
 		t.Fatalf("enqueued row = %+v", r)
 	}
 	if ok, err := st.Enqueue(ctx, again, cur[SizeM]); err != nil || ok {
@@ -921,8 +921,7 @@ func TestDeleteFile_DeletesEveryRowAndTombstonesItsBlobsTogether(t *testing.T) {
 		}
 	}
 	orig := newPending(id, 2, SizeM, "image")
-	orig.Original = true
-	if ok, err := st.PutReady(ctx, orig, nil); err != nil || !ok {
+	if ok, err := st.Enqueue(ctx, orig, nil); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 
@@ -936,7 +935,7 @@ func TestDeleteFile_DeletesEveryRowAndTombstonesItsBlobsTogether(t *testing.T) {
 		}
 	}
 	if n := st.count(t, `SELECT count(*) FROM thumbnail_blob`); n != 2 {
-		t.Errorf("tombstones = %d, an original row has no blob", n)
+		t.Errorf("tombstones = %d, a row without a blob needs no tombstone", n)
 	}
 }
 

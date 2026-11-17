@@ -64,13 +64,17 @@ func TestThumbnailPost_Image(t *testing.T) {
 	h.assertUntouched()
 }
 
-func TestThumbnailPost_UseOriginal(t *testing.T) {
+func TestThumbnailPost_SmallPNGWithAlphaIsReEncodedAtItsSize(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noDB: true})
 	src := pngOf(t, 100, 100, true)
 	rec := h.post("s", "image/png", src, true)
-	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/png" {
-		t.Fatalf("%d %q, want the uploaded bytes", rec.Code, rec.Header().Get("Content-Type"))
+	w, hh, f := decodeInfo(t, rec.Body.Bytes())
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" || f != "png" || w != 100 || hh != 100 {
+		t.Fatalf("%d %q %s %dx%d, want a PNG at 100x100", rec.Code, rec.Header().Get("Content-Type"), f, w, hh)
+	}
+	if bytes.Equal(rec.Body.Bytes(), src) {
+		t.Error("the upload must be re-encoded, never echoed")
 	}
 }
 
@@ -130,8 +134,8 @@ func TestThumbnailPost_AnimatedGIF(t *testing.T) {
 		t.Fatalf("%d %q %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body)
 	}
 	g, err := gif.DecodeAll(bytes.NewReader(rec.Body.Bytes()))
-	if err != nil || len(g.Image) != frames || g.Config.Width != 1280 {
-		t.Fatalf("frames=%d width=%d err=%v, want %d frames 1280 wide", len(g.Image), g.Config.Width, err, frames)
+	if err != nil || len(g.Image) != frames/2 || g.Config.Width != 1280 {
+		t.Fatalf("frames=%d width=%d err=%v, want %d frames (the 20 fps fixture capped at 10 fps) 1280 wide", len(g.Image), g.Config.Width, err, frames/2)
 	}
 	h.assertUntouched()
 	if n := len(h.deps.AsyncSem); n != 0 {
@@ -139,14 +143,13 @@ func TestThumbnailPost_AnimatedGIF(t *testing.T) {
 	}
 }
 
-func TestThumbnailPost_AnimatedGIFUsesOriginalBelowTarget(t *testing.T) {
+func TestThumbnailPost_AnimatedGIFBelowTargetStillGoesThroughFFmpeg(t *testing.T) {
 	realVips(t)
 	calls := failingGIF(t)
 	h := newHarness(t, harnessOpts{noDB: true})
-	src := gifOf(t, 600, 400, 5)
-	rec := h.post("m", gifMime, src, true)
-	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || *calls != 0 {
-		t.Fatalf("%d calls=%d, want the uploaded GIF without ffmpeg", rec.Code, *calls)
+	rec := h.post("m", gifMime, gifOf(t, 600, 400, 5), true)
+	if rec.Code != http.StatusOK || *calls != 1 {
+		t.Fatalf("%d calls=%d, want one ffmpeg pass even below the target", rec.Code, *calls)
 	}
 }
 

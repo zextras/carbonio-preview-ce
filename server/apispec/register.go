@@ -122,7 +122,7 @@ func RegisterThumbnailOps(
 		Method:      http.MethodGet,
 		Path:        "/thumbnail/{id}/{version}/{size}",
 		Summary:     "Get Thumbnail",
-		Description: "Serves the thumbnail of a file version, stored per file, version and size (s = 320 px, m = 1280 px long side, never upscaled). Images and PDFs are generated synchronously; a source at or below the target that is already JPEG, PNG or GIF is served as is. Video, office and animated GIF thumbnails are generated asynchronously: 202 with Retry-After while generating (an animated GIF answers with its static first frame as body), 415 for unsupported formats, 422 when generation permanently failed, 424 when the thumbnail database is unavailable. A digest different from the stored one regenerates the thumbnail.",
+		Description: "Serves the thumbnail of a file version, stored per file, version and size (s = 320 px, m = 1280 px long side, never upscaled), always re-encoded: JPEG (PNG when alpha is used; Q50 for s, Q80 for m; metadata stripped; EXIF rotation applied) or, for animated GIFs, an animated GIF capped at 10 fps. Images and PDFs are generated synchronously. Video, office and animated GIF thumbnails are generated asynchronously: 202 with Retry-After while generating (an animated GIF answers with its static first frame as body), 415 for unsupported formats, 422 when generation permanently failed. Without a usable database nothing is stored and every thumbnail, asynchronous kinds included, is generated in the request and kept in memory only. A digest different from the stored one regenerates the thumbnail.",
 		Tags:        []string{"thumbnail"},
 		Errors:      []int{400, 404, 415, 422, 424, 502, 503},
 		Responses: map[string]*huma.Response{

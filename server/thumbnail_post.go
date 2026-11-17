@@ -85,13 +85,10 @@ func postSource(step runner, deps Deps, p pipeline, data []byte, size, lang stri
 	if isAnimatedGIF(p, info) {
 		return postAnimatedGIF(step, deps, data, info, size)
 	}
-	return step.staticThumb(p, data, info, size)
+	return step.imageThumb(data, size)
 }
 
 func postAnimatedGIF(step runner, deps Deps, data []byte, info render.Info, size string) (produced, error) {
-	if longSide(info) <= sideOf(size) {
-		return produced{body: data, contentType: mimeGIF, original: true}, nil
-	}
 	out, err := resizeGIFUnderSlot(step, deps, data, info, size)
 	switch {
 	case err == nil:

@@ -145,10 +145,15 @@ func resolveFFmpeg(t *testing.T) {
 
 func genGIF(t *testing.T, w, h, frames int) []byte {
 	t.Helper()
+	return genGIFRate(t, w, h, frames, 10)
+}
+
+func genGIFRate(t *testing.T, w, h, frames, rate int) []byte {
+	t.Helper()
 	resolveFFmpeg(t)
 	out := filepath.Join(t.TempDir(), "in.gif")
 	cmd := exec.Command(video.FFmpegPath, "-hide_banner", "-loglevel", "error", "-y",
-		"-f", "lavfi", "-i", "testsrc=size="+strconv.Itoa(w)+"x"+strconv.Itoa(h)+":rate=10",
+		"-f", "lavfi", "-i", "testsrc=size="+strconv.Itoa(w)+"x"+strconv.Itoa(h)+":rate="+strconv.Itoa(rate),
 		"-frames:v", strconv.Itoa(frames), out)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("ffmpeg: %v\n%s", err, b)
@@ -355,26 +360,23 @@ func TestFullImage_AlphaIsPNG(t *testing.T) {
 	}
 }
 
-func TestProbe_LoaderAndOrientation(t *testing.T) {
+func TestProbe_Loader(t *testing.T) {
 	cases := []struct {
-		name     string
-		data     []byte
-		original bool
-		gif      bool
-		orient   int
+		name string
+		data []byte
+		gif  bool
 	}{
-		{"jpeg", encodeJPEG(t, noisyRGBA(300, 200)), true, false, 1},
-		{"png", encodePNG(t, noisyRGBA(300, 200)), true, false, 1},
-		{"gif", genGIF(t, 160, 90, 12), true, true, 1},
-		{"jpeg rotated", spliceAPP1(t, encodeJPEG(t, noisyRGBA(600, 300)), exifOrientation(6)), false, false, 6},
+		{"jpeg", encodeJPEG(t, noisyRGBA(300, 200)), false},
+		{"png", encodePNG(t, noisyRGBA(300, 200)), false},
+		{"gif", genGIF(t, 160, 90, 12), true},
 	}
 	for _, c := range cases {
 		info, err := Probe(c.data)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if info.Loader == "" || info.Original() != c.original || info.IsGIF() != c.gif || info.Orientation != c.orient {
-			t.Errorf("%s: info=%+v, want original=%v gif=%v orientation=%d", c.name, info, c.original, c.gif, c.orient)
+		if info.Loader == "" || info.IsGIF() != c.gif {
+			t.Errorf("%s: info=%+v, want gif=%v", c.name, info, c.gif)
 		}
 	}
 }

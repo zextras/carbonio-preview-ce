@@ -39,7 +39,7 @@ func (w *AsyncWorker) runCleanupLoop(ctx context.Context) {
 }
 
 // cleanupOnce sweeps the READY and LEGACY thumbnails not accessed for 30 days (rows and blob tombstones in one
-// transaction, blobs after the commit), then purges the tombstones. "Use original" rows have no blob.
+// transaction, blobs after the commit), then purges the tombstones.
 // FAILED, UNSUPPORTED, PENDING and GENERATING rows are never swept. It reports false only when the DB is not ready. A run is skipped when
 // another instance holds the advisory lock.
 func (w *AsyncWorker) cleanupOnce(ctx context.Context) bool {
@@ -89,7 +89,7 @@ func (w *AsyncWorker) cleanupExpired(ctx context.Context, store *db.CleanupConn)
 				continue
 			}
 			deleted++
-			if gone.BlobID != nil && !gone.Original && deleteRowBlob(ctx, w.deps.Store, gone, "AsyncWorker") {
+			if gone.BlobID != nil && deleteRowBlob(ctx, w.deps.Store, gone, "AsyncWorker") {
 				if terr := store.DeleteTombstone(ctx, *gone.BlobID); terr != nil {
 					slog.Warn("AsyncWorker: cleanup tombstone delete failed", "blob_id", *gone.BlobID, "err", terr)
 				}

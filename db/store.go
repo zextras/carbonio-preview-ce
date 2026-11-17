@@ -53,7 +53,6 @@ type Thumbnail struct {
 	Digest         *string
 	Lang           *string
 	BlobID         *string
-	Original       bool
 	ContentType    *string
 	OwnerID        string
 	ServiceType    string
@@ -156,14 +155,14 @@ func (s *Store) migrator(ctx context.Context) (*migrate.Migrate, func(), error) 
 	}, nil
 }
 
-const selectCols = `file_id, version, size, status, kind, digest, lang, blob_id, original, content_type,
+const selectCols = `file_id, version, size, status, kind, digest, lang, blob_id, content_type,
     owner_id, service_type, claimed_by, claimed_at, attempts, codec, created_at, updated_at, last_accessed_at`
 
 func scanThumbnail(rows pgx.Rows) (Thumbnail, error) {
 	var t Thumbnail
 	err := rows.Scan(
 		&t.FileID, &t.Version, &t.Size, &t.Status, &t.Kind, &t.Digest, &t.Lang, &t.BlobID,
-		&t.Original, &t.ContentType, &t.OwnerID, &t.ServiceType, &t.ClaimedBy, &t.ClaimedAt,
+		&t.ContentType, &t.OwnerID, &t.ServiceType, &t.ClaimedBy, &t.ClaimedAt,
 		&t.Attempts, &t.Codec, &t.CreatedAt, &t.UpdatedAt, &t.LastAccessedAt,
 	)
 	return t, err
@@ -223,22 +222,22 @@ func (s *Store) PutReady(ctx context.Context, row Thumbnail, expected *Thumbnail
 	if expected == nil {
 		tag, err = tx.Exec(ctx,
 			`INSERT INTO thumbnail
-                (file_id, version, size, status, kind, digest, lang, blob_id, original, content_type,
+                (file_id, version, size, status, kind, digest, lang, blob_id, content_type,
                  owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
-             VALUES ($1, $2, $3, 'READY', $4, $5, $6, $7, $8, $9, $10, $11, 0, now(), now(), now())
+             VALUES ($1, $2, $3, 'READY', $4, $5, $6, $7, $8, $9, $10, 0, now(), now(), now())
              ON CONFLICT (file_id, version, size) DO NOTHING`,
-			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.BlobID, row.Original,
+			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.BlobID,
 			row.ContentType, row.OwnerID, row.ServiceType,
 		)
 	} else {
 		tag, err = tx.Exec(ctx,
 			`UPDATE thumbnail
-             SET status='READY', kind=$7, digest=$8, lang=$9, blob_id=$10, original=$11, content_type=$12,
-                 owner_id=$13, service_type=$14, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
+             SET status='READY', kind=$7, digest=$8, lang=$9, blob_id=$10, content_type=$11,
+                 owner_id=$12, service_type=$13, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
                  updated_at=now(), last_accessed_at=now()
              WHERE `+casWhere,
 			row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
-			row.Kind, row.Digest, row.Lang, row.BlobID, row.Original, row.ContentType, row.OwnerID, row.ServiceType,
+			row.Kind, row.Digest, row.Lang, row.BlobID, row.ContentType, row.OwnerID, row.ServiceType,
 		)
 	}
 	if err != nil {
@@ -273,7 +272,7 @@ func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail)
 	} else {
 		tag, err = tx.Exec(ctx,
 			`UPDATE thumbnail
-             SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, original=false, content_type=NULL,
+             SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, content_type=NULL,
                  owner_id=$10, service_type=$11, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
                  created_at=now(), updated_at=now()
              WHERE `+casWhere,
@@ -376,10 +375,10 @@ func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbna
 		}
 		tag, err := tx.Exec(ctx,
 			`UPDATE thumbnail
-             SET status='READY', blob_id=$1, original=$2, content_type=$3,
+             SET status='READY', blob_id=$1, content_type=$2,
                  claimed_by=NULL, claimed_at=NULL, updated_at=now(), last_accessed_at=now()
-             WHERE file_id=$4 AND version=$5 AND size=$6 AND status='GENERATING' AND claimed_by=$7`,
-			r.BlobID, r.Original, r.ContentType, r.FileID, r.Version, r.Size, instanceID,
+             WHERE file_id=$3 AND version=$4 AND size=$5 AND status='GENERATING' AND claimed_by=$6`,
+			r.BlobID, r.ContentType, r.FileID, r.Version, r.Size, instanceID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("db.MarkReady: %w", err)

@@ -7,7 +7,6 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -18,7 +17,6 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/config"
 	"github.com/zextras/carbonio-preview-ce/v4/server/apispec"
-	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
 
 const (
@@ -100,10 +98,6 @@ func buildGetThumbnail(deps Deps, worker *AsyncWorker) func(context.Context, *ap
 			out.CacheControl, out.RetryAfter = "no-store", strconv.Itoa(retryAfterSeconds)
 			return out, nil
 		}
-		var orig originalAnswer
-		if errors.As(err, &orig) {
-			return streamOriginal(ctx, deps, q, orig.contentType)
-		}
 		if err != nil {
 			return nil, err
 		}
@@ -127,33 +121,6 @@ func thumbnailBytes(status int, contentType string, body []byte) *apispec.Thumbn
 		}
 	}
 	return out
-}
-
-// originalAnswer asks the handler to stream the source itself, so originals never sit in memory or in the cache.
-type originalAnswer struct{ contentType string }
-
-func (originalAnswer) Error() string { return "serve the original source" }
-
-func streamOriginal(ctx context.Context, deps Deps, q thumbRequest, contentType string) (*apispec.ThumbnailOutput, error) {
-	src, size, err := openSource(ctx, deps.Store, q.id, q.version, q.serviceType, q.owner, time.Duration(deps.Cfg.ServiceTimeoutInSeconds)*time.Second)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return nil, huma.NewError(http.StatusNotFound, config.Msg.ItemNotFound)
-		}
-		return nil, huma.NewError(http.StatusUnprocessableEntity, config.Msg.GenericErrorStorage)
-	}
-	out := &apispec.ThumbnailOutput{Status: http.StatusOK, ContentType: contentType}
-	if size >= 0 {
-		out.ContentLength = strconv.FormatInt(size, 10)
-	}
-	out.Body = func(c huma.Context) {
-		defer src.Close()
-		c.SetStatus(http.StatusOK)
-		if _, err := io.Copy(c.BodyWriter(), src); err != nil {
-			panic(http.ErrAbortHandler)
-		}
-	}
-	return out, nil
 }
 
 func (d Deps) touchOnHit(key string, q thumbRequest) {
@@ -192,7 +159,7 @@ func buildDeleteThumbnails(deps Deps) func(context.Context, *apispec.ThumbnailDe
 			return nil, errDependencyDown()
 		}
 		for i := range rows {
-			if rows[i].BlobID != nil && deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails") && !rows[i].Original {
+			if rows[i].BlobID != nil && deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails") {
 				if err := store.DeleteTombstone(ctx, *rows[i].BlobID); err != nil {
 					slog.Warn("deleteThumbnails: DeleteTombstone failed, the purge will drop it", "err", err)
 				}

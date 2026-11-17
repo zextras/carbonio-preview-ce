@@ -155,21 +155,17 @@ func (w *AsyncWorker) settleFailure(ctx context.Context, row db.Thumbnail, f *jo
 func (w *AsyncWorker) finish(ctx context.Context, row db.Thumbnail, out produced) {
 	ct := out.contentType
 	row.ContentType = &ct
-	if out.original {
-		row.Original = true
-	} else {
-		w.deps.Cache.Put(thumbKey(cacheTagThumbnail, row.ServiceType, row.OwnerID, row.FileID, row.Version, row.Size, digestOf(&row)), out.entry())
-		blobID, err := storeReserved(ctx, w.deps, w.db(), out.body, row.Version, row.ServiceType, row.OwnerID)
-		if err != nil {
-			if ctx.Err() != nil {
-				w.releaseRow(ctx, row)
-				return
-			}
-			w.dropRow(ctx, row, err)
+	w.deps.Cache.Put(thumbKey(cacheTagThumbnail, row.ServiceType, row.OwnerID, row.FileID, row.Version, row.Size, digestOf(&row)), out.entry())
+	blobID, err := storeReserved(ctx, w.deps, w.db(), out.body, row.Version, row.ServiceType, row.OwnerID)
+	if err != nil {
+		if ctx.Err() != nil {
+			w.releaseRow(ctx, row)
 			return
 		}
-		row.BlobID = &blobID
+		w.dropRow(ctx, row, err)
+		return
 	}
+	row.BlobID = &blobID
 	if row.Kind == string(kindGIF) {
 		w.deps.Cache.Delete(thumbKey(cacheTagInterim, row.ServiceType, row.OwnerID, row.FileID, row.Version, row.Size, digestOf(&row)))
 	}
@@ -403,12 +399,8 @@ func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail, slot jobSlot
 	return w.gifOutput(ctx, data, info, row.Size, slot)
 }
 
-// gifOutput takes the source as is when it fits the size, otherwise resizes it with ffmpeg straight from the source under the async slot.
+// gifOutput resizes the source with ffmpeg, straight from the source, under the async slot.
 func (w *AsyncWorker) gifOutput(ctx context.Context, data []byte, info render.Info, size string, slot jobSlot) (produced, *jobFailure) {
-	if longSide(info) <= sideOf(size) {
-		return produced{body: data, contentType: mimeGIF, original: true}, nil
-	}
-
 	dir, err := os.MkdirTemp("", "carbonio-preview-gif-*")
 	if err != nil {
 		return produced{}, failure(failConnectivity, err)
@@ -459,7 +451,6 @@ var heldSlot = jobSlot{acquire: func(context.Context) error { return nil }, rele
 type produced struct {
 	body        []byte
 	contentType string
-	original    bool
 }
 
 func (p produced) entry() cache.Entry {
@@ -474,8 +465,6 @@ func sideOf(size string) int {
 	}
 	return render.SideM
 }
-
-func longSide(i render.Info) int { return max(i.Width, i.Height) }
 
 func isAnimatedGIF(p pipeline, i render.Info) bool {
 	return p.mime == mimeGIF && i.IsGIF() && i.Pages > 1
@@ -538,16 +527,8 @@ func (r runner) pdfThumb(data []byte, size string) (produced, error) {
 }
 
 func (r runner) imageInfo(p pipeline, data []byte) (render.Info, error) {
-	if !p.original {
+	if p.mime != mimeGIF {
 		return render.Info{}, nil
 	}
 	return r.probe(data)
-}
-
-// A source that libvips reads as unrotated JPEG/PNG/GIF and that is at or below the target is the source itself.
-func (r runner) staticThumb(p pipeline, data []byte, info render.Info, size string) (produced, error) {
-	if p.original && info.Original() && longSide(info) <= sideOf(size) {
-		return produced{body: data, contentType: p.mime, original: true}, nil
-	}
-	return r.imageThumb(data, size)
 }

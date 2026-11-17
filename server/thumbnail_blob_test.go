@@ -148,7 +148,7 @@ func TestBlobCycle_LostConfirmTombstonesTheNewBlobAndIsPurged(t *testing.T) {
 	var once sync.Once
 	h.store.putErr = func(memKey) error {
 		once.Do(func() {
-			winner := db.Thumbnail{FileID: id, Version: testVersion, Size: "s", Kind: "image", OwnerID: testOwner, ServiceType: "files", Original: true}
+			winner := db.Thumbnail{FileID: id, Version: testVersion, Size: "s", Kind: "image", OwnerID: testOwner, ServiceType: "files"}
 			if ok, err := h.st.PutReady(context.Background(), winner, nil); err != nil || !ok {
 				t.Errorf("competing PutReady: ok=%v err=%v", ok, err)
 			}
