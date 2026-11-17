@@ -70,7 +70,7 @@ func TestThumbnailGet_AnimatedGIFWithoutDB424(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_AnimatedGIFBelowMWritesOriginalMAndEnqueuesS(t *testing.T) {
+func TestThumbnailGet_AnimatedGIFBelowMSRequestEnqueuesOnlySAndMRequestWritesOriginal(t *testing.T) {
 	h, id := gifHarness(t, harnessOpts{noWorker: true})
 	src := gifOf(t, 600, 400, 6)
 	h.seedSource(id, src)
@@ -80,16 +80,16 @@ func TestThumbnailGet_AnimatedGIFBelowMWritesOriginalMAndEnqueuesS(t *testing.T)
 		t.Fatalf("s: %d, want 202", rec.Code)
 	}
 	rows := h.pair(id, testVersion)
-	m, s := rows[db.SizeM], rows[db.SizeS]
-	if m == nil || m.Status != db.StatusReady || !m.Original || m.BlobID != nil || m.Kind != "gif" || *m.ContentType != "image/gif" {
-		t.Errorf("M row = %+v, want a READY original without blob", m)
-	}
-	if s == nil || s.Status != db.StatusPending || s.Kind != "gif" {
-		t.Errorf("S row = %+v, want PENDING gif", s)
+	if s := rows[db.SizeS]; len(rows) != 1 || s == nil || s.Status != db.StatusPending || s.Kind != "gif" {
+		t.Fatalf("rows = %+v, want only S PENDING gif", rows)
 	}
 	rec = h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "m"})
 	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/gif" {
 		t.Errorf("m: %d, want the source GIF", rec.Code)
+	}
+	m := h.pair(id, testVersion)[db.SizeM]
+	if m == nil || m.Status != db.StatusReady || !m.Original || m.BlobID != nil || m.Kind != "gif" || *m.ContentType != "image/gif" {
+		t.Errorf("M row = %+v, want a READY original without blob written by the m request", m)
 	}
 }
 
@@ -132,8 +132,8 @@ func TestThumbnailGet_InterimFrameCachedWhilePending(t *testing.T) {
 	if !bytes.Equal(first.Body.Bytes(), second.Body.Bytes()) || third.Body.Len() == 0 {
 		t.Error("polls must serve the cached frame")
 	}
-	if n := h.sourceReads(); n != 1 {
-		t.Errorf("source reads = %d, polls must not re-download the source", n)
+	if n := h.sourceReads(); n != 2 {
+		t.Errorf("source reads = %d, want one per size (repeated polls of s must not re-download, m needs its own frame)", n)
 	}
 	if _, ok := h.deps.Cache.Get(h.interimKey(req, "s")); !ok {
 		t.Error("interim frame not cached under the interim key")
@@ -148,10 +148,10 @@ func TestThumbnailGet_AnimatedGIFBecomesReadyWithAllFrames(t *testing.T) {
 	h, id := gifHarness(t, harnessOpts{})
 	const frames = 8
 	h.seedSource(id, gifOf(t, 1600, 900, frames))
-	req := thumbReq{id: id, version: testVersion, mime: gifMime, size: "m"}
-
-	if rec := h.get(req); rec.Code != http.StatusAccepted {
-		t.Fatalf("miss: %d", rec.Code)
+	for _, size := range []string{"m", "s"} {
+		if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: size}); rec.Code != http.StatusAccepted {
+			t.Fatalf("miss %s: %d", size, rec.Code)
+		}
 	}
 	rows := h.waitStatus(id, testVersion, db.StatusReady)
 	for size, r := range rows {
@@ -186,7 +186,10 @@ func TestThumbnailGet_GIFReadyDropsInterim(t *testing.T) {
 	if _, ok := h.deps.Cache.Get(h.interimKey(req, "s")); !ok {
 		t.Fatal("interim not cached")
 	}
-	h.waitStatus(id, testVersion, db.StatusReady)
+	h.waitSize(id, testVersion, "s", db.StatusReady)
+	if rows := h.pair(id, testVersion); len(rows) != 1 {
+		t.Fatalf("rows = %+v, only the requested size", rows)
+	}
 	if rec := h.get(req); rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/gif" {
 		t.Fatalf("ready: %d", rec.Code)
 	}
@@ -207,8 +210,8 @@ func TestThumbnailGet_GIFFailedServesStaticFrame200(t *testing.T) {
 	if rec := h.get(req); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusFailed)
-	if *calls == 0 {
+	h.waitSize(id, testVersion, "s", db.StatusFailed)
+	if *calls != 1 {
 		t.Fatal("the job never ran ffmpeg")
 	}
 	h.deps.Cache.Delete(h.thumbKeyOf(req, "s"))
@@ -228,7 +231,7 @@ func TestThumbnailGet_GIFFailedServesStaticFrame200(t *testing.T) {
 	}
 }
 
-func TestGIFJob_TwoPassUnderAsyncSlot(t *testing.T) {
+func TestGIFJob_OnePassPerRequestedSizeUnderAsyncSlot(t *testing.T) {
 	var h *harness
 	var mu sync.Mutex
 	var slots []int
@@ -246,13 +249,23 @@ func TestGIFJob_TwoPassUnderAsyncSlot(t *testing.T) {
 	h, id = gifHarness(t, harnessOpts{})
 	h.seedSource(id, gifOf(t, 1600, 900, 4))
 
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime}); rec.Code != http.StatusAccepted {
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "m"}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusReady)
+	h.waitSize(id, testVersion, "m", db.StatusReady)
+	mu.Lock()
+	if len(sides) != 1 || sides[0] != 1280 {
+		t.Fatalf("ffmpeg runs after an m request = %v, want only M", sides)
+	}
+	mu.Unlock()
+
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"}); rec.Code != http.StatusAccepted {
+		t.Fatalf("s miss: %d", rec.Code)
+	}
+	h.waitSize(id, testVersion, "s", db.StatusReady)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(sides) != 2 || sides[0] != 1280 || sides[1] != 320 {
+	if len(sides) != 2 || sides[1] != 320 {
 		t.Fatalf("ffmpeg runs = %v, want M then S", sides)
 	}
 	for _, n := range slots {
@@ -265,7 +278,7 @@ func TestGIFJob_TwoPassUnderAsyncSlot(t *testing.T) {
 	}
 }
 
-func TestGIFJob_SFromM(t *testing.T) {
+func TestGIFJob_EachSizeStraightFromTheSource(t *testing.T) {
 	var mu sync.Mutex
 	type call struct {
 		side  int
@@ -288,17 +301,21 @@ func TestGIFJob_SFromM(t *testing.T) {
 	src := gifOf(t, 1600, 900, 4)
 	h.seedSource(id, src)
 
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime}); rec.Code != http.StatusAccepted {
-		t.Fatalf("miss: %d", rec.Code)
+	for _, size := range []string{"m", "s"} {
+		if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: size}); rec.Code != http.StatusAccepted {
+			t.Fatalf("miss %s: %d", size, rec.Code)
+		}
 	}
 	h.waitStatus(id, testVersion, db.StatusReady)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 2 || calls[0].side != 1280 || !bytes.Equal(calls[0].input, src) {
-		t.Fatalf("M pass wrong: %+v", calls)
+	if len(calls) != 2 {
+		t.Fatalf("ffmpeg runs = %d, want one per requested size", len(calls))
 	}
-	if calls[1].side != 320 || !bytes.Equal(calls[1].input, []byte("out-4")) {
-		t.Errorf("S must be derived from the M output, got input %q", calls[1].input)
+	for _, c := range calls {
+		if !bytes.Equal(c.input, src) {
+			t.Errorf("side %d: ffmpeg input is not the source (S must never be derived from M): %q", c.side, c.input)
+		}
 	}
 }
 
@@ -309,9 +326,9 @@ func TestGIFJob_FailureCountsAttempt(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	eventually(t, "attempt counted and rows back to PENDING", func() bool {
+	eventually(t, "attempt counted and the row back to PENDING", func() bool {
 		rows := h.pair(id, testVersion)
-		return len(rows) == 2 && rows[db.SizeM].Status == db.StatusPending && rows[db.SizeM].Attempts == 1 && rows[db.SizeS].Attempts == 1
+		return len(rows) == 1 && rows[db.SizeM].Status == db.StatusPending && rows[db.SizeM].Attempts == 1
 	})
 	if n := len(h.deps.AsyncSem); n != 0 {
 		t.Errorf("async slot leaked: %d", n)

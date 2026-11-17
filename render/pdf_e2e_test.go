@@ -58,29 +58,31 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	}
 	t.Logf("PDF fixture: %d bytes", len(pdfData))
 
-	pair, err := PDFPage1Pair(context.Background(), pdfData)
-	if err != nil {
-		t.Fatalf("PDFPage1Pair: %v", err)
+	for _, side := range []int{SideM, SideS} {
+		r, err := PDFPage1(context.Background(), pdfData, side)
+		if err != nil {
+			t.Fatalf("PDFPage1 %d: %v", side, err)
+		}
+		if len(r.Body) == 0 {
+			t.Fatalf("PDFPage1 %d returned an empty rendition", side)
+		}
+		t.Logf("PDFPage1: ok, side %d, %d bytes", side, len(r.Body))
 	}
-	if len(pair.M.Body) == 0 || len(pair.S.Body) == 0 {
-		t.Fatal("PDFPage1Pair returned an empty rendition")
-	}
-	t.Logf("PDFPage1Pair: ok, M %d bytes, S %d bytes", len(pair.M.Body), len(pair.S.Body))
 
 	// Correctness-after-many-calls: run 20 sequential calls and assert each
 	// produces valid non-empty output. This verifies that closing documents
 	// via defer does not break handle reuse across repeated pool borrows.
 	const repeatN = 20
 	for i := range repeatN {
-		got, err := PDFPage1Pair(context.Background(), pdfData)
+		got, err := PDFPage1(context.Background(), pdfData, SideM)
 		if err != nil {
-			t.Fatalf("PDFPage1Pair repeat %d/%d: %v", i+1, repeatN, err)
+			t.Fatalf("PDFPage1 repeat %d/%d: %v", i+1, repeatN, err)
 		}
-		if len(got.M.Body) == 0 {
-			t.Fatalf("PDFPage1Pair repeat %d/%d: empty result", i+1, repeatN)
+		if len(got.Body) == 0 {
+			t.Fatalf("PDFPage1 repeat %d/%d: empty result", i+1, repeatN)
 		}
 	}
-	t.Logf("PDFPage1Pair x%d sequential calls: all ok (handle-close reuse verified)", repeatN)
+	t.Logf("PDFPage1 x%d sequential calls: all ok (handle-close reuse verified)", repeatN)
 
 	// Kill one worker subprocess to test auto-respawn.
 	myPID := os.Getpid()
@@ -105,7 +107,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	// hand-rolled relay had), but it self-heals on demand rather than eagerly.
 	//
 	// To prove BOTH guarantees we drive SUSTAINED concurrent load: more
-	// goroutines than poolSize hammering PDFPage1Pair keeps >= poolSize borrows
+	// goroutines than poolSize hammering PDFPage1 keeps >= poolSize borrows
 	// in flight at once, which forces the pool to instantiate up to MaxTotal
 	// live workers again. We assert (a) every call succeeds (resilience) and
 	// (b) the live worker count climbs back to poolSize (on-demand respawn).
@@ -126,13 +128,13 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 					return
 				default:
 				}
-				got, err := PDFPage1Pair(context.Background(), pdfData)
+				got, err := PDFPage1(context.Background(), pdfData, SideM)
 				if err != nil {
 					errCh <- err
 					return
 				}
-				if len(got.M.Body) == 0 {
-					errCh <- fmt.Errorf("empty PDFPage1Pair result")
+				if len(got.Body) == 0 {
+					errCh <- fmt.Errorf("empty PDFPage1 result")
 					return
 				}
 			}
@@ -149,7 +151,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 		case err := <-errCh:
 			close(stop)
 			wg.Wait()
-			t.Fatalf("PDFPage1Pair failed under post-kill load: %v", err)
+			t.Fatalf("PDFPage1 failed under post-kill load: %v", err)
 		default:
 		}
 		if len(findChildPIDs(t, myPID)) >= poolSize {
@@ -163,7 +165,7 @@ func TestPDFMultiThreadedPool_E2E(t *testing.T) {
 	// drain any late error
 	select {
 	case err := <-errCh:
-		t.Fatalf("PDFPage1Pair failed under post-kill load: %v", err)
+		t.Fatalf("PDFPage1 failed under post-kill load: %v", err)
 	default:
 	}
 	current := findChildPIDs(t, myPID)
@@ -212,7 +214,7 @@ func findChildPIDs(t *testing.T, parentPID int) []int {
 	return children
 }
 
-func TestPDFPage1Pair_E2E(t *testing.T) {
+func TestPDFPage1_E2E(t *testing.T) {
 	workerSrc := filepath.Join("..", "cmd", "pdfium-worker")
 	if _, err := os.Stat(workerSrc); err != nil {
 		t.Skipf("pdfium-worker source not found at %s: %v", workerSrc, err)
@@ -231,21 +233,21 @@ func TestPDFPage1Pair_E2E(t *testing.T) {
 		globalPdfPool = nil
 	}()
 
-	p, err := PDFPage1Pair(context.Background(), testPDFFixture)
-	if err != nil {
-		t.Fatalf("PDFPage1Pair: %v", err)
-	}
 	long := func(r Rendition) int { return max(r.Width, r.Height) }
-	if long(p.M) != SideM || long(p.S) != SideS {
-		t.Fatalf("M=%dx%d S=%dx%d, want long sides %d and %d", p.M.Width, p.M.Height, p.S.Width, p.S.Height, SideM, SideS)
-	}
-	for _, r := range []Rendition{p.M, p.S} {
+	for _, side := range []int{SideM, SideS} {
+		r, err := PDFPage1(context.Background(), testPDFFixture, side)
+		if err != nil {
+			t.Fatalf("PDFPage1 %d: %v", side, err)
+		}
+		if long(r) != side {
+			t.Fatalf("side %d: %dx%d, want long side %d", side, r.Width, r.Height, side)
+		}
 		if r.ContentType != "image/jpeg" || !isJPEGBytes(r.Body) {
 			t.Fatalf("rendition is %s, want JPEG", r.ContentType)
 		}
 	}
 
-	if _, err := PDFPage1Pair(context.Background(), []byte("not a pdf")); err == nil {
+	if _, err := PDFPage1(context.Background(), []byte("not a pdf"), SideM); err == nil {
 		t.Fatal("want error for invalid PDF")
 	}
 }

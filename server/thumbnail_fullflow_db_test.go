@@ -68,10 +68,12 @@ func TestThumbnailFullFlowDB(t *testing.T) {
 		bodies[size] = body
 	}
 
-	rows, err := st.FindPair(context.Background(), id, version)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("rows=%v err=%v", rows, err)
-	}
+	var rows map[string]*db.Thumbnail
+	eventually(t, "both background saves done", func() bool {
+		var err error
+		rows, err = st.FindPair(context.Background(), id, version)
+		return err == nil && len(rows) == 2
+	})
 	uploaded := storages.Uploaded()
 	for size, r := range rows {
 		if r.Status != db.StatusReady || r.BlobID == nil || r.Original || r.OwnerID != testOwner || r.ServiceType != "files" || r.Version != version {

@@ -281,15 +281,15 @@ func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail)
 	return tag.RowsAffected() == 1, nil
 }
 
-// Claim atomically moves the PENDING rows of (fileID, version) to GENERATING
-// for instanceID and returns them; an empty result means the claim was lost.
-func (s *Store) Claim(ctx context.Context, fileID string, version int, instanceID string) ([]Thumbnail, error) {
+// Claim atomically moves the PENDING row of (fileID, version, size) to GENERATING
+// for instanceID and returns it; an empty result means the claim was lost.
+func (s *Store) Claim(ctx context.Context, fileID string, version int, size, instanceID string) ([]Thumbnail, error) {
 	rows, err := s.pool.Query(ctx,
 		`UPDATE thumbnail
          SET status='GENERATING', claimed_by=$1, claimed_at=now(), updated_at=now()
-         WHERE file_id=$2 AND version=$3 AND status='PENDING'
+         WHERE file_id=$2 AND version=$3 AND size=$4 AND status='PENDING'
          RETURNING `+selectCols,
-		instanceID, fileID, version,
+		instanceID, fileID, version, size,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("db.Claim: %w", err)
@@ -424,14 +424,14 @@ func (s *Store) Heartbeat(ctx context.Context, fileID string, version int, insta
 	return s.execClaimed(ctx, "Heartbeat", `claimed_at=now()`, fileID, version, instanceID, sizes)
 }
 
-// ReenqueueUnsupported moves UNSUPPORTED rows back to PENDING keeping the
-// stored codec, so the worker skips the probe.
-func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version int) error {
+// ReenqueueUnsupported moves the UNSUPPORTED row of (fileID, version, size) back to PENDING
+// keeping the stored codec, so the worker skips the probe.
+func (s *Store) ReenqueueUnsupported(ctx context.Context, fileID string, version int, size string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE thumbnail
          SET status='PENDING', claimed_by=NULL, claimed_at=NULL, updated_at=now()
-         WHERE file_id=$1 AND version=$2 AND status='UNSUPPORTED'`,
-		fileID, version,
+         WHERE file_id=$1 AND version=$2 AND size=$3 AND status='UNSUPPORTED'`,
+		fileID, version, size,
 	)
 	if err != nil {
 		return fmt.Errorf("db.ReenqueueUnsupported: %w", err)

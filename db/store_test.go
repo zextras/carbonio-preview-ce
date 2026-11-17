@@ -148,9 +148,13 @@ func enqueuePair(t *testing.T, st *Store, id string, version int) {
 
 func claimPair(t *testing.T, st *Store, id string, version int, inst string) []Thumbnail {
 	t.Helper()
-	rows, err := st.Claim(context.Background(), id, version, inst)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("Claim: rows=%d err=%v, want both sizes", len(rows), err)
+	var rows []Thumbnail
+	for _, size := range []string{SizeS, SizeM} {
+		got, err := st.Claim(context.Background(), id, version, size, inst)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("Claim %s: rows=%d err=%v, want the row", size, len(got), err)
+		}
+		rows = append(rows, got...)
 	}
 	return rows
 }
@@ -168,8 +172,8 @@ func pairOf(t *testing.T, st *Store, id string, version int) map[string]*Thumbna
 // Claim atomicity / single-flight
 // ---------------------------------------------------------------------------
 
-// TestClaim_Atomicity fires N concurrent Claim calls on a pair with both sizes
-// enqueued and asserts exactly one wins both rows while the others get none.
+// TestClaim_Atomicity fires N concurrent Claim calls on each size of a pair
+// and asserts exactly one wins each row while the others get none.
 func TestClaim_Atomicity(t *testing.T) {
 	store := startPostgres(t)
 	ctx := context.Background()
@@ -180,53 +184,64 @@ func TestClaim_Atomicity(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 
-	type result struct {
-		instanceID string
-		rows       []Thumbnail
-	}
-	results := make([]result, N)
-	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			instID := fmt.Sprintf("inst-%02d", i)
-			rows, err := store.Claim(ctx, fileID, version, instID)
-			if err != nil {
-				t.Errorf("Claim[%d]: %v", i, err)
-				return
+	for _, size := range []string{SizeS, SizeM} {
+		results := make([][]Thumbnail, N)
+		var wg sync.WaitGroup
+		for i := 0; i < N; i++ {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rows, err := store.Claim(ctx, fileID, version, size, fmt.Sprintf("inst-%02d", i))
+				if err != nil {
+					t.Errorf("Claim[%d]: %v", i, err)
+					return
+				}
+				results[i] = rows
+			}()
+		}
+		wg.Wait()
+
+		winners := 0
+		winnerID := ""
+		for i, rows := range results {
+			switch len(rows) {
+			case 0:
+			case 1:
+				winners++
+				winnerID = fmt.Sprintf("inst-%02d", i)
+			default:
+				t.Fatalf("inst-%02d got %d rows of size %s, want 0 or 1", i, len(rows), size)
 			}
-			results[i] = result{instID, rows}
-		}()
-	}
-	wg.Wait()
-
-	winners := 0
-	var winnerID string
-	for _, r := range results {
-		switch len(r.rows) {
-		case 0:
-		case 2:
-			winners++
-			winnerID = r.instanceID
-		default:
-			t.Fatalf("%s got %d rows, want 0 or 2", r.instanceID, len(r.rows))
+		}
+		if winners != 1 {
+			t.Fatalf("size %s: expected exactly 1 winner, got %d", size, winners)
+		}
+		row := pairOf(t, store, fileID, version)[size]
+		if row.Status != StatusGenerating || row.ClaimedBy == nil || *row.ClaimedBy != winnerID {
+			t.Errorf("size %s: status %q claimed_by %v, want GENERATING by %q", size, row.Status, row.ClaimedBy, winnerID)
 		}
 	}
+}
 
-	if winners != 1 {
-		t.Fatalf("expected exactly 1 winner, got %d", winners)
+// TestClaim_OnlyTheRequestedSize asserts a claim moves one row and leaves the
+// other size PENDING for its own claim.
+func TestClaim_OnlyTheRequestedSize(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "claim_one")
+	enqueuePair(t, st, id, 1)
+
+	rows, err := st.Claim(ctx, id, 1, SizeS, "inst-a")
+	if err != nil || len(rows) != 1 || rows[0].Size != SizeS || rows[0].Status != StatusGenerating {
+		t.Fatalf("Claim s = %+v err=%v, want only the s row", rows, err)
 	}
-
-	pair := pairOf(t, store, fileID, version)
-	for size, row := range pair {
-		if row.Status != StatusGenerating {
-			t.Errorf("%s status: got %q, want GENERATING", size, row.Status)
-		}
-		if row.ClaimedBy == nil || *row.ClaimedBy != winnerID {
-			t.Errorf("%s claimed_by: got %v, want %q", size, row.ClaimedBy, winnerID)
-		}
+	got := pairOf(t, st, id, 1)
+	if got[SizeS].Status != StatusGenerating || got[SizeM].Status != StatusPending || got[SizeM].ClaimedBy != nil {
+		t.Fatalf("after claiming s: s=%s m=%s claimed_by=%v, want m untouched", got[SizeS].Status, got[SizeM].Status, got[SizeM].ClaimedBy)
+	}
+	if rows, err := st.Claim(ctx, id, 1, SizeS, "inst-b"); err != nil || len(rows) != 0 {
+		t.Fatalf("second Claim s = %+v err=%v, want none", rows, err)
 	}
 }
 
@@ -780,11 +795,15 @@ func TestClaim_ReturnsOnlyPendingRows(t *testing.T) {
 	}
 	st.exec(t, `UPDATE thumbnail SET status='READY' WHERE file_id=$1 AND size='s'`, id)
 
-	rows, err := st.Claim(ctx, id, 1, "inst-a")
+	rows, err := st.Claim(ctx, id, 1, SizeS, "inst-a")
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("Claim of the READY s row = %+v err=%v, want none", rows, err)
+	}
+	rows, err = st.Claim(ctx, id, 1, SizeM, "inst-a")
 	if err != nil || len(rows) != 1 || rows[0].Size != SizeM || rows[0].Status != StatusGenerating {
 		t.Fatalf("Claim = %+v err=%v, want only the PENDING m row", rows, err)
 	}
-	rows, err = st.Claim(ctx, id, 1, "inst-b")
+	rows, err = st.Claim(ctx, id, 1, SizeM, "inst-b")
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("second Claim = %+v err=%v, want none", rows, err)
 	}

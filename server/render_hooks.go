@@ -24,9 +24,9 @@ import (
 
 var probeFunc = render.Probe
 
-var imagePairFunc = render.ImagePair
+var imageThumbFunc = render.ImageThumbnail
 
-var pdfPairFunc = render.PDFPage1Pair
+var pdfThumbFunc = render.PDFPage1
 
 var animatedGIFFunc = render.AnimatedGIF
 

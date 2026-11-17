@@ -60,14 +60,14 @@ func (s *stageStore) StoreData(ctx context.Context, _ string, _ int, _, _ string
 	return "", ctx.Err()
 }
 
-func startJob(w *AsyncWorker, ctx context.Context, rows []db.Thumbnail) {
-	key := liveKey(rows[0].FileID, rows[0].Version)
+func startJob(w *AsyncWorker, ctx context.Context, row db.Thumbnail) {
+	key := liveKey(row.FileID, row.Version, row.Size)
 	if w.reserve(key) != reserveOK {
 		panic("reserve")
 	}
 	go func() {
 		defer w.unreserve(key)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 }
 
@@ -112,29 +112,29 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	defer cancel()
 	w.bind(ctx)
 
-	startJob(w, ctx, claimedRows(t, st, w, idUpload, 0))
+	startJob(w, ctx, claimedRow(t, st, w, idUpload, 0))
 	select {
 	case <-store.uploadStarted:
 	case <-time.After(slotWatchdog):
 		t.Fatal("upload stage never reached")
 	}
-	startJob(w, ctx, claimedRows(t, st, w, idFFmpeg, 0))
+	startJob(w, ctx, claimedRow(t, st, w, idFFmpeg, 0))
 	select {
 	case <-inFFmpeg:
 	case <-time.After(slotWatchdog):
 		t.Fatal("ffmpeg stage never reached")
 	}
-	startJob(w, ctx, claimedRows(t, st, w, idSlot, 0))
+	startJob(w, ctx, claimedRow(t, st, w, idSlot, 0))
 	store.waitEOF(t, 3)
-	enqueuePair(t, st, idDownload, 1)
-	w.runOne(idDownload, 1)
+	seedPending(t, st, idDownload, 1)
+	w.runOne(idDownload, 1, db.SizeM)
 	select {
 	case <-store.dlStarted:
 	case <-time.After(slotWatchdog):
 		t.Fatal("download stage never reached")
 	}
 
-	startJob(w, ctx, claimedRows(t, st, w, idHeaders, 0))
+	startJob(w, ctx, claimedRow(t, st, w, idHeaders, 0))
 	select {
 	case <-store.hdrStarted:
 	case <-time.After(slotWatchdog):
@@ -154,15 +154,13 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	}
 
 	for stage, id := range map[string]string{"upload": idUpload, "ffmpeg": idFFmpeg, "slot wait": idSlot, "download": idDownload, "headers": idHeaders} {
-		pair := pairOf(t, st, id, 1)
-		if len(pair) != 2 {
-			t.Errorf("%s: rows missing (%d of 2)", stage, len(pair))
+		r := findRow(st, id, 1)
+		if r == nil {
+			t.Errorf("%s: row missing", stage)
 			continue
 		}
-		for size, r := range pair {
-			if r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
-				t.Errorf("%s/%s: status=%s attempts=%d claimed_by=%v, want PENDING/0/nil", stage, size, r.Status, r.Attempts, r.ClaimedBy)
-			}
+		if r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
+			t.Errorf("%s: status=%s attempts=%d claimed_by=%v, want PENDING/0/nil", stage, r.Status, r.Attempts, r.ClaimedBy)
 		}
 	}
 	if len(w.deps.AsyncSem) != 0 || w.liveCount() != 0 {
@@ -201,7 +199,7 @@ func TestAsyncShutdown_PoolClosedOnlyAfterJobsEnd(t *testing.T) {
 	s.StartAsyncWorker(ctx)
 
 	id := testUID(t, "job")
-	startJob(s.worker, ctx, claimedRows(t, st, s.worker, id, 0))
+	startJob(s.worker, ctx, claimedRow(t, st, s.worker, id, 0))
 	select {
 	case <-inFFmpeg:
 	case <-time.After(slotWatchdog):
@@ -252,10 +250,10 @@ func TestAsyncShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
 				store = &stageStore{eofStore: newEOFStore(), hdrID: id, hdrStarted: make(chan struct{}), deleteCtxs: make(chan bool, 1)}
 			}
 			w := slotWorker(st, store, 1)
-			rows := claimedRows(t, st, w, id, 0)
+			row := claimedRow(t, st, w, id, 0)
 			ctx, cancel := context.WithCancel(bg)
 			cancel()
-			w.attempt(ctx, rows)
+			w.attempt(ctx, row)
 			r := findRow(st, id, 1)
 			if r == nil || r.Status != db.StatusPending || r.Attempts != 0 || r.ClaimedBy != nil {
 				t.Errorf("%s: row after attempt on an ended context: %+v, want PENDING/0/nil", name, r)
@@ -268,8 +266,8 @@ func TestAsyncShutdown_ClaimedAfterContextEndedIsReleased(t *testing.T) {
 		w := slotWorker(st, newEOFStore(), 1)
 		w.staleTTL = time.Minute
 		id := testUID(t, "stale")
-		enqueuePair(t, st, id, 1)
-		claimPair(t, st, "dead-instance", id, 1)
+		seedPending(t, st, id, 1)
+		claimOne(t, st, "dead-instance", id, 1)
 		sqlExec(t, dsn, `UPDATE thumbnail SET claimed_at = now() - interval '1 hour' WHERE file_id=$1`, id)
 		ctx, cancel := context.WithCancel(bg)
 		cancel()

@@ -75,40 +75,40 @@ func PDFClose() {
 	}
 }
 
-func pdfPage1DPI(w, h float64) (int, error) {
+func pdfPage1DPI(w, h float64, side int) (int, error) {
 	long := math.Max(w, h)
 	if w <= 0 || h <= 0 {
 		return 0, fmt.Errorf("invalid pdf page size %vx%v", w, h)
 	}
-	return int(math.Ceil(float64(SideM) * 72 / long)), nil
+	return int(math.Ceil(float64(side) * 72 / long)), nil
 }
 
-// PDFPage1Pair renders page 1 at the DPI that gives a SideM long side and
-// returns the M and S renditions (always JPEG: the page is flattened on white).
-func PDFPage1Pair(ctx context.Context, data []byte) (Pair, error) {
+// PDFPage1 renders page 1 at the DPI that gives the requested long side
+// (always JPEG: the page is flattened on white).
+func PDFPage1(ctx context.Context, data []byte, side int) (Rendition, error) {
 	if globalPdfPool == nil {
-		return Pair{}, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
+		return Rendition{}, fmt.Errorf("PDFium pool not initialised: call PDFInit first")
 	}
 
 	inst, err := getPdfInstance(ctx)
 	if err != nil {
-		return Pair{}, err
+		return Rendition{}, err
 	}
 	defer inst.Close()
 
 	docResp, err := inst.OpenDocument(&requests.OpenDocument{File: &data})
 	if err != nil {
-		return Pair{}, fmt.Errorf("pdfium OpenDocument: %w", err)
+		return Rendition{}, fmt.Errorf("pdfium OpenDocument: %w", err)
 	}
 	defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: docResp.Document}) //nolint:errcheck
 
 	size, err := inst.FPDF_GetPageSizeByIndex(&requests.FPDF_GetPageSizeByIndex{Document: docResp.Document, Index: 0})
 	if err != nil {
-		return Pair{}, fmt.Errorf("pdfium FPDF_GetPageSizeByIndex: %w", err)
+		return Rendition{}, fmt.Errorf("pdfium FPDF_GetPageSizeByIndex: %w", err)
 	}
-	dpi, err := pdfPage1DPI(size.Width, size.Height)
+	dpi, err := pdfPage1DPI(size.Width, size.Height, side)
 	if err != nil {
-		return Pair{}, err
+		return Rendition{}, err
 	}
 
 	renderResp, err := inst.RenderPageInDPI(&requests.RenderPageInDPI{
@@ -116,12 +116,12 @@ func PDFPage1Pair(ctx context.Context, data []byte) (Pair, error) {
 		DPI:  dpi,
 	})
 	if err != nil {
-		return Pair{}, fmt.Errorf("pdfium RenderPageInDPI page 0: %w", err)
+		return Rendition{}, fmt.Errorf("pdfium RenderPageInDPI page 0: %w", err)
 	}
 	defer renderResp.Cleanup()
 
 	if renderResp.Result.Image == nil {
-		return Pair{}, fmt.Errorf("pdfium returned nil image for page 0")
+		return Rendition{}, fmt.Errorf("pdfium returned nil image for page 0")
 	}
-	return rgbaPair(renderResp.Result.Image)
+	return rgbaThumbnail(renderResp.Result.Image, side)
 }

@@ -159,7 +159,7 @@ func (h *harness) seedSource(id string, data []byte) {
 
 func (h *harness) sourceReads() int { return h.store.getCount() }
 
-func TestThumbnailGet_SyncImageBothSizesCached(t *testing.T) {
+func TestThumbnailGet_SyncImageSizesRenderedSeparately(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noDB: true})
 	id := newID()
@@ -183,8 +183,8 @@ func TestThumbnailGet_SyncImageBothSizesCached(t *testing.T) {
 	if w, hh, _ := decodeInfo(t, rec.Body.Bytes()); w != 320 || hh != 240 {
 		t.Fatalf("s = %dx%d, want 320x240", w, hh)
 	}
-	if n := h.sourceReads(); n != 1 {
-		t.Errorf("source reads = %d, the second size must come from the cache", n)
+	if n := h.sourceReads(); n != 2 {
+		t.Errorf("source reads = %d, each size is rendered from the source on its own request", n)
 	}
 	if n := len(h.store.putKeys()); n != 0 {
 		t.Errorf("DB-less generation persisted %d blobs", n)
@@ -237,15 +237,21 @@ func TestThumbnailGet_UseOriginalRowsHaveNoBlob(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	rows := h.pair(id, testVersion)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want both sizes written", len(rows))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want only the requested size written", rows)
 	}
-	m, s := rows[db.SizeM], rows[db.SizeS]
+	m := rows[db.SizeM]
 	if m.Status != db.StatusReady || !m.Original || m.BlobID != nil || m.ContentType == nil || *m.ContentType != "image/png" || m.Kind != "image" {
 		t.Errorf("M row = %+v", m)
 	}
-	if s.Status != db.StatusReady || s.Original || s.BlobID == nil {
-		t.Errorf("S row = %+v", s)
+	if n := len(h.store.putKeys()); n != 0 {
+		t.Errorf("blobs written = %d, an original row needs none", n)
+	}
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/png", size: "s"}); rec.Code != http.StatusOK {
+		t.Fatalf("s status %d", rec.Code)
+	}
+	if s := h.pair(id, testVersion)[db.SizeS]; s == nil || s.Status != db.StatusReady || s.Original || s.BlobID == nil {
+		t.Errorf("S row = %+v, want a stored rendition written by the s request", s)
 	}
 	if n := len(h.store.putKeys()); n != 1 {
 		t.Errorf("blobs written = %d, only S needs one", n)
@@ -313,13 +319,12 @@ func TestThumbnailGet_WebPBelowTargetIsConvertedAndStored(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/webp", size: "m"}); rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
-	for size, r := range h.pair(id, testVersion) {
-		if r.Original || r.BlobID == nil || r.Status != db.StatusReady || r.Kind != "image" {
-			t.Errorf("row %s = %+v, want a stored conversion", size, r)
-		}
+	rows := h.pair(id, testVersion)
+	if r := rows[db.SizeM]; len(rows) != 1 || r == nil || r.Original || r.BlobID == nil || r.Status != db.StatusReady || r.Kind != "image" {
+		t.Errorf("rows = %+v, want only m as a stored conversion", rows)
 	}
-	if n := len(h.store.putKeys()); n != 2 {
-		t.Errorf("blobs written = %d, want 2", n)
+	if n := len(h.store.putKeys()); n != 1 {
+		t.Errorf("blobs written = %d, want 1", n)
 	}
 }
 
@@ -331,14 +336,14 @@ func TestThumbnailGet_BMPIs415(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_PDFUsesPage1Pair(t *testing.T) {
-	var calls int
-	prev := pdfPairFunc
-	pdfPairFunc = func(context.Context, []byte) (render.Pair, error) {
-		calls++
-		return render.Pair{S: stubS, M: stubM}, nil
+func TestThumbnailGet_PDFRendersEachSizeFromPage1(t *testing.T) {
+	var sides []int
+	prev := pdfThumbFunc
+	pdfThumbFunc = func(_ context.Context, _ []byte, side int) (render.Rendition, error) {
+		sides = append(sides, side)
+		return stubFor(side), nil
 	}
-	t.Cleanup(func() { pdfPairFunc = prev })
+	t.Cleanup(func() { pdfThumbFunc = prev })
 	h := newHarness(t, harnessOpts{noDB: true})
 	id := newID()
 	h.seedSource(id, []byte("%PDF-fake"))
@@ -349,8 +354,8 @@ func TestThumbnailGet_PDFUsesPage1Pair(t *testing.T) {
 			t.Errorf("%s: %d %q %q", size, rec.Code, rec.Body, rec.Header().Get("Content-Type"))
 		}
 	}
-	if calls != 1 || h.sourceReads() != 1 {
-		t.Errorf("pair calls=%d source reads=%d, want 1 each (second size cached)", calls, h.sourceReads())
+	if len(sides) != 2 || h.sourceReads() != 2 {
+		t.Errorf("renders=%v source reads=%d, want one render and one read per requested size", sides, h.sourceReads())
 	}
 }
 
@@ -372,9 +377,9 @@ func TestThumbnailGet_PDFPage1Sizes(t *testing.T) {
 }
 
 func TestThumbnailGet_PDFRenderFailureIs400(t *testing.T) {
-	prev := pdfPairFunc
-	pdfPairFunc = func(context.Context, []byte) (render.Pair, error) { return render.Pair{}, os.ErrInvalid }
-	t.Cleanup(func() { pdfPairFunc = prev })
+	prev := pdfThumbFunc
+	pdfThumbFunc = func(context.Context, []byte, int) (render.Rendition, error) { return render.Rendition{}, os.ErrInvalid }
+	t.Cleanup(func() { pdfThumbFunc = prev })
 	h := newHarness(t, harnessOpts{noDB: true})
 	id := newID()
 	h.seedSource(id, []byte("x"))
@@ -473,8 +478,8 @@ func TestThumbnailGet_SyncPersistsBlobsUnderOwner(t *testing.T) {
 		t.Fatalf("status %d", first.Code)
 	}
 	rows := h.pair(id, 3)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want both sizes", len(rows))
+	if len(rows) != 1 || rows[db.SizeM] == nil {
+		t.Fatalf("rows = %+v, want only the requested m", rows)
 	}
 	for size, r := range rows {
 		if r.Status != db.StatusReady || r.BlobID == nil || r.OwnerID != "owner-x" || r.ServiceType != "chats" || r.Version != 3 {
@@ -527,8 +532,8 @@ func TestThumbnailGet_SyncDigestMismatchReplacesAndDeletesOldBlob(t *testing.T) 
 			t.Errorf("new blob of %s missing", size)
 		}
 	}
-	if n := h.store.blobCount(); n != 3 {
-		t.Errorf("blobs = %d, want source + 2", n)
+	if n := h.store.blobCount(); n != 2 {
+		t.Errorf("blobs = %d, want source + 1", n)
 	}
 }
 

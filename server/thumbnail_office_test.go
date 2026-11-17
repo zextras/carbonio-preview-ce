@@ -27,7 +27,7 @@ func stubOffice(t *testing.T, sem func() int, fn func(call collaboraCall) ([]byt
 	t.Helper()
 	var mu sync.Mutex
 	var calls []collaboraCall
-	prevConvert, prevPair := collaboraConvertFunc, imagePairFunc
+	prevConvert, prevThumb := collaboraConvertFunc, imageThumbFunc
 	collaboraConvertFunc = func(_ context.Context, _ []byte, lang, url string, _ time.Duration) ([]byte, error) {
 		c := collaboraCall{lang: lang, url: url}
 		if sem != nil {
@@ -38,10 +38,10 @@ func stubOffice(t *testing.T, sem func() int, fn func(call collaboraCall) ([]byt
 		mu.Unlock()
 		return fn(c)
 	}
-	imagePairFunc = func([]byte) (render.Pair, error) {
-		return render.Pair{S: stubS, M: stubM}, nil
+	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) {
+		return stubFor(side), nil
 	}
-	t.Cleanup(func() { collaboraConvertFunc, imagePairFunc = prevConvert, prevPair })
+	t.Cleanup(func() { collaboraConvertFunc, imageThumbFunc = prevConvert, prevThumb })
 	return &calls
 }
 
@@ -52,25 +52,27 @@ func officeHarness(t *testing.T) (*harness, string) {
 	return h, id
 }
 
-func TestOfficeJob_ReadyBothSizes(t *testing.T) {
+func TestOfficeJob_ReadyForTheRequestedSize(t *testing.T) {
 	calls := stubOffice(t, nil, func(collaboraCall) ([]byte, error) { return []byte("png"), nil })
 	h, id := officeHarness(t)
 
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	rows := h.waitStatus(id, testVersion, db.StatusReady)
-	for size, r := range rows {
-		if r.Kind != "office" || r.BlobID == nil || r.OwnerID != testOwner || r.ServiceType != "files" {
-			t.Errorf("size %s = %+v", size, r)
-		}
-		if !h.store.has(*r.BlobID, testVersion, "files", testOwner) {
-			t.Errorf("size %s blob missing under the owner", size)
-		}
+	r := h.waitSize(id, testVersion, "m", db.StatusReady)
+	if rows := h.pair(id, testVersion); len(rows) != 1 {
+		t.Errorf("rows = %+v, only the requested size", rows)
 	}
-	rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime, size: "s"})
-	if rec.Code != http.StatusOK || rec.Body.String() != string(stubS.Body) || rec.Header().Get("Content-Type") != stubS.ContentType {
-		t.Fatalf("GET s: %d %q %q", rec.Code, rec.Body, rec.Header().Get("Content-Type"))
+	if r.Kind != "office" || r.BlobID == nil || r.OwnerID != testOwner || r.ServiceType != "files" {
+		t.Errorf("m = %+v", r)
+	}
+	if !h.store.has(*r.BlobID, testVersion, "files", testOwner) {
+		t.Errorf("blob missing under the owner")
+	}
+	h.deps.Cache.Delete(h.thumbKeyOf(thumbReq{id: id, version: testVersion}, "m"))
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime})
+	if rec.Code != http.StatusOK || rec.Body.String() != string(stubM.Body) || rec.Header().Get("Content-Type") != stubM.ContentType {
+		t.Fatalf("GET m: %d %q %q", rec.Code, rec.Body, rec.Header().Get("Content-Type"))
 	}
 	if len(*calls) != 1 || !strings.HasSuffix((*calls)[0].url, "/png") {
 		t.Errorf("collabora calls = %+v, want one convert-to png", *calls)
@@ -79,15 +81,15 @@ func TestOfficeJob_ReadyBothSizes(t *testing.T) {
 
 func TestOfficeJob_HoldsAsyncSlotOnlyAroundCollabora(t *testing.T) {
 	var h *harness
-	var pairSlots []int
+	var renderSlots []int
 	var mu sync.Mutex
 	calls := stubOffice(t, func() int { return len(h.deps.AsyncSem) }, func(collaboraCall) ([]byte, error) { return []byte("png"), nil })
-	pairStub := imagePairFunc
-	imagePairFunc = func(b []byte) (render.Pair, error) {
+	thumbStub := imageThumbFunc
+	imageThumbFunc = func(b []byte, side int) (render.Rendition, error) {
 		mu.Lock()
-		pairSlots = append(pairSlots, len(h.deps.AsyncSem))
+		renderSlots = append(renderSlots, len(h.deps.AsyncSem))
 		mu.Unlock()
-		return pairStub(b)
+		return thumbStub(b, side)
 	}
 	var id string
 	h, id = officeHarness(t)
@@ -101,20 +103,20 @@ func TestOfficeJob_HoldsAsyncSlotOnlyAroundCollabora(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusReady)
+	h.waitSize(id, testVersion, "m", db.StatusReady)
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(*calls) != 1 || (*calls)[0].slots != 1 {
 		t.Errorf("collabora must run holding exactly one async slot: %+v", *calls)
 	}
-	for _, n := range append(append([]int{}, pairSlots...), getSlots...) {
+	for _, n := range append(append([]int{}, renderSlots...), getSlots...) {
 		if n != 0 {
 			t.Errorf("download and render must not hold the async slot, saw %d", n)
 		}
 	}
-	if len(pairSlots) == 0 || len(getSlots) == 0 {
-		t.Errorf("probes did not run: pair=%v get=%v", pairSlots, getSlots)
+	if len(renderSlots) == 0 || len(getSlots) == 0 {
+		t.Errorf("probes did not run: render=%v get=%v", renderSlots, getSlots)
 	}
 	if n := len(h.deps.AsyncSem); n != 0 {
 		t.Errorf("async slot leaked: %d", n)
@@ -143,7 +145,7 @@ func TestOfficeJob_Collabora4xxCountsAttempt(t *testing.T) {
 	}
 	eventually(t, "attempt counted and rows released", func() bool {
 		rows := h.pair(id, testVersion)
-		return len(rows) == 2 && rows["s"].Status == db.StatusPending && rows["s"].Attempts == 1 && rows["m"].Attempts == 1
+		return len(rows) == 1 && rows["m"].Status == db.StatusPending && rows["m"].Attempts == 1
 	})
 }
 
@@ -155,13 +157,13 @@ func TestOfficeJob_AtAttemptCapIsFailed(t *testing.T) {
 	}
 	eventually(t, "first attempt", func() bool {
 		rows := h.pair(id, testVersion)
-		return len(rows) == 2 && rows["m"].Attempts == 1 && rows["m"].Status == db.StatusPending
+		return len(rows) == 1 && rows["m"].Attempts == 1 && rows["m"].Status == db.StatusPending
 	})
 	h.exec(`UPDATE thumbnail SET attempts = 2 WHERE file_id=$1`, id)
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("poll: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusFailed)
+	h.waitSize(id, testVersion, "m", db.StatusFailed)
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("FAILED: %d, want 422", rec.Code)
 	}
@@ -174,7 +176,7 @@ func TestOfficeJob_SourceNotFoundIsFailed(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusFailed)
+	h.waitSize(id, testVersion, "m", db.StatusFailed)
 }
 
 func TestOfficeJob_UsesRowLang(t *testing.T) {
@@ -183,7 +185,7 @@ func TestOfficeJob_UsesRowLang(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime, lang: "it-IT"}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	h.waitStatus(id, testVersion, db.StatusReady)
+	h.waitSize(id, testVersion, "m", db.StatusReady)
 	if len(*calls) != 1 || (*calls)[0].lang != "it-IT" {
 		t.Fatalf("calls = %+v, want lang it-IT from the row", *calls)
 	}

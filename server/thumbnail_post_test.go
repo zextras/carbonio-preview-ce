@@ -75,9 +75,9 @@ func TestThumbnailPost_UseOriginal(t *testing.T) {
 }
 
 func TestThumbnailPost_PDF(t *testing.T) {
-	prev := pdfPairFunc
-	pdfPairFunc = func(context.Context, []byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
-	t.Cleanup(func() { pdfPairFunc = prev })
+	prev := pdfThumbFunc
+	pdfThumbFunc = func(_ context.Context, _ []byte, side int) (render.Rendition, error) { return stubFor(side), nil }
+	t.Cleanup(func() { pdfThumbFunc = prev })
 	h := newHarness(t, harnessOpts{noDB: true})
 	rec := h.post("m", "application/pdf", []byte("%PDF"), true)
 	if rec.Code != http.StatusOK || rec.Body.String() != string(stubM.Body) || rec.Header().Get("Content-Type") != stubM.ContentType {
@@ -163,7 +163,7 @@ func TestThumbnailPost_AnimatedGIFFailureFallsBackToStatic(t *testing.T) {
 
 func stubVideoCodec(t *testing.T, codec string, sem func() int, slots *[]int) {
 	t.Helper()
-	prevCodec, prevFrame, prevPair := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc
+	prevCodec, prevFrame, prevThumb := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imageThumbFunc
 	videoDetectCodecFromFileFunc = func(context.Context, string) (string, error) {
 		if sem != nil {
 			*slots = append(*slots, sem())
@@ -171,9 +171,9 @@ func stubVideoCodec(t *testing.T, codec string, sem func() int, slots *[]int) {
 		return codec, nil
 	}
 	videoFirstFrameFromFileFunc = func(context.Context, string) ([]byte, error) { return []byte("frame"), nil }
-	imagePairFunc = func([]byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
+	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil }
 	t.Cleanup(func() {
-		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc = prevCodec, prevFrame, prevPair
+		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imageThumbFunc = prevCodec, prevFrame, prevThumb
 	})
 }
 
@@ -214,15 +214,15 @@ func TestThumbnailPost_VideoExtractFailureIs400(t *testing.T) {
 
 func TestThumbnailPost_NotCached(t *testing.T) {
 	var mu sync.Mutex
-	pairs := 0
-	prev := imagePairFunc
-	imagePairFunc = func(b []byte) (render.Pair, error) {
+	renders := 0
+	prev := imageThumbFunc
+	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) {
 		mu.Lock()
-		pairs++
+		renders++
 		mu.Unlock()
-		return render.Pair{S: stubS, M: stubM}, nil
+		return stubFor(side), nil
 	}
-	t.Cleanup(func() { imagePairFunc = prev })
+	t.Cleanup(func() { imageThumbFunc = prev })
 	prevProbe := probeFunc
 	probeFunc = func([]byte) (render.Info, error) { return render.Info{Width: 4000, Height: 3000, Pages: 1}, nil }
 	t.Cleanup(func() { probeFunc = prevProbe })
@@ -232,8 +232,8 @@ func TestThumbnailPost_NotCached(t *testing.T) {
 			t.Fatalf("status %d", rec.Code)
 		}
 	}
-	if pairs != 2 {
-		t.Errorf("renders = %d, a POST output must never be cached", pairs)
+	if renders != 2 {
+		t.Errorf("renders = %d, a POST output must never be cached", renders)
 	}
 	h.assertUntouched()
 }

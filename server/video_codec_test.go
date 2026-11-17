@@ -31,8 +31,8 @@ func unsupportedPair(t *testing.T, h *harness, codec string) string {
 	ctx := context.Background()
 	const instID = "inst-codec"
 	id := newID()
-	enqueuePair(t, h.st, id, testVersion)
-	claimPair(t, h.st, instID, id, testVersion)
+	seedPending(t, h.st, id, testVersion)
+	claimOne(t, h.st, instID, id, testVersion)
 	if codec != "" {
 		if err := h.st.SetCodec(ctx, id, testVersion, instID, db.AllSizes, codec); err != nil {
 			t.Fatalf("SetCodec: %v", err)
@@ -58,15 +58,12 @@ func TestResolve_Unsupported_CodecInList_Returns202(t *testing.T) {
 	}
 
 	rows := h.pair(id, testVersion)
-	for _, size := range []string{db.SizeS, db.SizeM} {
-		r := rows[size]
-		if r == nil || r.Status != db.StatusPending {
-			t.Errorf("size %s: got %+v, want PENDING (re-enqueued)", size, r)
-			continue
-		}
-		if r.Codec == nil || *r.Codec != codec {
-			t.Errorf("size %s Codec: got %v, want %q (must be preserved after re-enqueue)", size, r.Codec, codec)
-		}
+	r := rows[db.SizeM]
+	if len(rows) != 1 || r == nil || r.Status != db.StatusPending {
+		t.Fatalf("rows = %+v, want only the requested m row PENDING (re-enqueued)", rows)
+	}
+	if r.Codec == nil || *r.Codec != codec {
+		t.Errorf("Codec: got %v, want %q (must be preserved after re-enqueue)", r.Codec, codec)
 	}
 }
 
@@ -129,12 +126,12 @@ func TestAttempt_CodecNotSupported_MarksUnsupported(t *testing.T) {
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
-	attempsBefore := rows[0].Attempts
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
+	attempsBefore := row.Attempts
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	after := findRow(dbStore, fileID, version)
 	if after == nil {
@@ -168,12 +165,12 @@ func TestAttempt_ProbeFails_ReleasesWithAttempt(t *testing.T) {
 	}
 	defer func() { videoDetectCodecFromFileFunc = origProbe }()
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 	// maxAttempts=3 → with attempts=0, attempts+1=1 < 3 → ReleaseWithAttempt
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	after := findRow(dbStore, fileID, version)
 	if after == nil {
@@ -182,8 +179,8 @@ func TestAttempt_ProbeFails_ReleasesWithAttempt(t *testing.T) {
 	if after.Status != db.StatusPending {
 		t.Errorf("status: got %q, want PENDING (probe failure → ReleaseWithAttempt)", after.Status)
 	}
-	if after.Attempts != rows[0].Attempts+1 {
-		t.Errorf("Attempts: got %d, want %d (incremented)", after.Attempts, rows[0].Attempts+1)
+	if after.Attempts != row.Attempts+1 {
+		t.Errorf("Attempts: got %d, want %d (incremented)", after.Attempts, row.Attempts+1)
 	}
 }
 
@@ -202,21 +199,21 @@ func TestAttempt_ProbeFails_AtCap_MarksFailed(t *testing.T) {
 	}
 	defer func() { videoDetectCodecFromFileFunc = origProbe }()
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 	const maxAttempts = 2
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, maxAttempts)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 	// Bump attempts to maxAttempts-1 so the next attempt hits the cap.
 	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, db.AllSizes); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
-	rows = claimPair(t, dbStore, w.instanceID, fileID, version)
+	row = claimOne(t, dbStore, w.instanceID, fileID, version)
 
-	if rows[0].Attempts != 1 {
-		t.Fatalf("setup: expected attempts=1, got %d", rows[0].Attempts)
+	if row.Attempts != 1 {
+		t.Fatalf("setup: expected attempts=1, got %d", row.Attempts)
 	}
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	after := findRow(dbStore, fileID, version)
 	if after == nil {
@@ -250,11 +247,11 @@ func TestAttempt_CodecInList_GenerateOK_MarksReady(t *testing.T) {
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	after := findRow(dbStore, fileID, version)
 	if after == nil {
@@ -296,12 +293,12 @@ func TestAttempt_CodecInList_ErrExtractFailed_ReleasesWithAttempt(t *testing.T) 
 	}
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 	// maxAttempts=3 → 0+1=1 < 3 → ReleaseWithAttempt
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	after := findRow(dbStore, fileID, version)
 	if after == nil {
@@ -311,8 +308,8 @@ func TestAttempt_CodecInList_ErrExtractFailed_ReleasesWithAttempt(t *testing.T) 
 	if after.Status != db.StatusPending {
 		t.Errorf("status: got %q, want PENDING (ErrExtractFailed on supported codec → ReleaseWithAttempt)", after.Status)
 	}
-	if after.Attempts != rows[0].Attempts+1 {
-		t.Errorf("Attempts: got %d, want %d", after.Attempts, rows[0].Attempts+1)
+	if after.Attempts != row.Attempts+1 {
+		t.Errorf("Attempts: got %d, want %d", after.Attempts, row.Attempts+1)
 	}
 }
 
@@ -328,23 +325,23 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 	const instID = "inst-sp"
 	const codec = "h264"
 
-	enqueuePair(t, dbStore, fileID, version)
+	seedPending(t, dbStore, fileID, version)
 
 	// Simulate: row was UNSUPPORTED with codec stored, then re-enqueued to PENDING.
-	claimPair(t, dbStore, instID, fileID, version)
+	claimOne(t, dbStore, instID, fileID, version)
 	if err := dbStore.SetCodec(ctx, fileID, version, instID, db.AllSizes, codec); err != nil {
 		t.Fatalf("SetCodec (setup): %v", err)
 	}
 	if err := dbStore.MarkUnsupported(ctx, fileID, version, instID, db.AllSizes); err != nil {
 		t.Fatalf("MarkUnsupported (setup): %v", err)
 	}
-	if err := dbStore.ReenqueueUnsupported(ctx, fileID, version); err != nil {
+	if err := dbStore.ReenqueueUnsupported(ctx, fileID, version, db.SizeM); err != nil {
 		t.Fatalf("ReenqueueUnsupported (setup): %v", err)
 	}
 
 	// Now make a new worker and claim it.
 	w := makeWorkerWithDB(dbStore, &fakeVideoStore{}, 3)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	stubVideoPipeline(t)
 
@@ -363,11 +360,11 @@ func TestAttempt_StoredCodecSkipsProbe(t *testing.T) {
 	defer func() { videoFirstFrameFromFileFunc = origExtract }()
 
 	// Verify setup: codec must be stored on the row.
-	if rows[0].Codec == nil || *rows[0].Codec != codec {
-		t.Fatalf("setup: expected Codec=%q, got %v", codec, rows[0].Codec)
+	if row.Codec == nil || *row.Codec != codec {
+		t.Fatalf("setup: expected Codec=%q, got %v", codec, row.Codec)
 	}
 
-	w.attempt(ctx, rows)
+	w.attempt(ctx, row)
 
 	if probeCallCount != 0 {
 		t.Errorf("probe called %d times, want 0 (stored codec must skip re-probe)", probeCallCount)

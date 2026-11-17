@@ -213,13 +213,12 @@ func waitRec(t *testing.T, ch <-chan *httptest.ResponseRecorder) *httptest.Respo
 
 func stubRender(t *testing.T, f func(data []byte) ([]byte, error)) {
 	t.Helper()
-	swap(t, &imagePairFunc, func(data []byte) (render.Pair, error) {
+	swap(t, &imageThumbFunc, func(data []byte, _ int) (render.Rendition, error) {
 		out, err := f(data)
 		if err != nil {
-			return render.Pair{}, err
+			return render.Rendition{}, err
 		}
-		r := render.Rendition{Body: out, ContentType: "image/jpeg"}
-		return render.Pair{S: r, M: r}, nil
+		return render.Rendition{Body: out, ContentType: "image/jpeg"}, nil
 	})
 }
 
@@ -424,8 +423,8 @@ func TestRenderSlot_PostWithDoneCtxTakesNoFreeSlot(t *testing.T) {
 }
 
 func TestRenderSlot_PdfiumWaitEndedByCtxIsServerBusy(t *testing.T) {
-	swap(t, &pdfPairFunc, func(context.Context, []byte) (render.Pair, error) {
-		return render.Pair{}, fmt.Errorf("pdfium worker wait: %w", context.Canceled)
+	swap(t, &pdfThumbFunc, func(context.Context, []byte, int) (render.Rendition, error) {
+		return render.Rendition{}, fmt.Errorf("pdfium worker wait: %w", context.Canceled)
 	})
 	mux := slotMux(newLimits(1), newGatedStore(), nil)
 
@@ -887,10 +886,9 @@ func TestRenderSlot_RenderCallsNeverExceedN(t *testing.T) {
 		cur.Add(-1)
 	}
 	stubRender(t, func([]byte) ([]byte, error) { enter(); return []byte("rendered"), nil })
-	swap(t, &pdfPairFunc, func(context.Context, []byte) (render.Pair, error) {
+	swap(t, &pdfThumbFunc, func(context.Context, []byte, int) (render.Rendition, error) {
 		enter()
-		r := render.Rendition{Body: []byte("jpeg"), ContentType: "image/jpeg"}
-		return render.Pair{S: r, M: r}, nil
+		return render.Rendition{Body: []byte("jpeg"), ContentType: "image/jpeg"}, nil
 	})
 	mux := slotMux(lim, newGatedStore(), nil)
 

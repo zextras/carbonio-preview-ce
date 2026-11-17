@@ -92,8 +92,10 @@ func TestReenqueueUnsupported_MovesToPendingAndPreservesCodec(t *testing.T) {
 		}
 	}
 
-	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueUnsupported: %v", err)
+	for _, size := range AllSizes {
+		if err := store.ReenqueueUnsupported(ctx, fileID, version, size); err != nil {
+			t.Fatalf("ReenqueueUnsupported: %v", err)
+		}
 	}
 
 	for size, after := range pairOf(t, store, fileID, version) {
@@ -123,8 +125,10 @@ func TestReenqueueUnsupported_NoopOnPending(t *testing.T) {
 
 	enqueuePair(t, store, fileID, version)
 
-	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
+	for _, size := range AllSizes {
+		if err := store.ReenqueueUnsupported(ctx, fileID, version, size); err != nil {
+			t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
+		}
 	}
 
 	for size, row := range pairOf(t, store, fileID, version) {
@@ -150,8 +154,10 @@ func TestReenqueueUnsupported_NoopOnFailed(t *testing.T) {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
-	if err := store.ReenqueueUnsupported(ctx, fileID, version); err != nil {
-		t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
+	for _, size := range AllSizes {
+		if err := store.ReenqueueUnsupported(ctx, fileID, version, size); err != nil {
+			t.Fatalf("ReenqueueUnsupported: unexpected error: %v", err)
+		}
 	}
 
 	for size, row := range pairOf(t, store, fileID, version) {

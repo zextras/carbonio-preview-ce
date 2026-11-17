@@ -187,15 +187,25 @@ func TestProbe_NotAnImage(t *testing.T) {
 	}
 }
 
-func TestImagePair_LongSides(t *testing.T) {
-	p, err := ImagePair(encodeJPEG(t, noisyRGBA(6000, 4000)))
+var thumbSides = []int{SideS, SideM}
+
+func thumb(t *testing.T, src []byte, side int) Rendition {
+	t.Helper()
+	r, err := ImageThumbnail(src, side)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.M.Width != 1280 || p.M.Height != 853 || p.S.Width != 320 || p.S.Height != 213 {
-		t.Fatalf("M=%dx%d S=%dx%d", p.M.Width, p.M.Height, p.S.Width, p.S.Height)
-	}
-	for _, r := range []Rendition{p.M, p.S} {
+	return r
+}
+
+func TestImageThumbnail_LongSides(t *testing.T) {
+	src := encodeJPEG(t, noisyRGBA(6000, 4000))
+	want := map[int][2]int{SideM: {1280, 853}, SideS: {320, 213}}
+	for _, side := range thumbSides {
+		r := thumb(t, src, side)
+		if r.Width != want[side][0] || r.Height != want[side][1] {
+			t.Fatalf("side %d: %dx%d, want %dx%d", side, r.Width, r.Height, want[side][0], want[side][1])
+		}
 		if r.ContentType != "image/jpeg" || !isJPEGBytes(r.Body) {
 			t.Fatalf("rendition not JPEG: %s", r.ContentType)
 		}
@@ -205,17 +215,16 @@ func TestImagePair_LongSides(t *testing.T) {
 	}
 }
 
-func TestImagePair_NeverUpscales(t *testing.T) {
-	p, err := ImagePair(encodeJPEG(t, noisyRGBA(200, 100)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.M.Width != 200 || p.M.Height != 100 || p.S.Width != 200 || p.S.Height != 100 {
-		t.Fatalf("M=%dx%d S=%dx%d, want 200x100 both", p.M.Width, p.M.Height, p.S.Width, p.S.Height)
+func TestImageThumbnail_NeverUpscales(t *testing.T) {
+	src := encodeJPEG(t, noisyRGBA(200, 100))
+	for _, side := range thumbSides {
+		if r := thumb(t, src, side); r.Width != 200 || r.Height != 100 {
+			t.Fatalf("side %d: %dx%d, want 200x100", side, r.Width, r.Height)
+		}
 	}
 }
 
-func TestImagePair_AlphaUsedIsPNG(t *testing.T) {
+func TestImageThumbnail_AlphaUsedIsPNG(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 800, 600))
 	draw.Draw(img, img.Bounds(), image.NewUniform(color.NRGBA{R: 10, G: 200, B: 30, A: 255}), image.Point{}, draw.Src)
 	for y := 0; y < 100; y++ {
@@ -223,59 +232,51 @@ func TestImagePair_AlphaUsedIsPNG(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{A: 0})
 		}
 	}
-	p, err := ImagePair(encodePNG(t, img))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range []Rendition{p.M, p.S} {
-		if r.ContentType != "image/png" || !isPNGBytes(r.Body) {
-			t.Fatalf("want PNG, got %s", r.ContentType)
+	src := encodePNG(t, img)
+	for _, side := range thumbSides {
+		if r := thumb(t, src, side); r.ContentType != "image/png" || !isPNGBytes(r.Body) {
+			t.Fatalf("side %d: want PNG, got %s", side, r.ContentType)
 		}
 	}
 }
 
-func TestImagePair_OpaqueAlphaIsJPEGOnWhite(t *testing.T) {
+func TestImageThumbnail_OpaqueAlphaIsJPEGOnWhite(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 400, 300))
 	draw.Draw(img, img.Bounds(), image.NewUniform(color.NRGBA{R: 20, G: 40, B: 60, A: 255}), image.Point{}, draw.Src)
-	p, err := ImagePair(encodePNG(t, img))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.M.ContentType != "image/jpeg" || !isJPEGBytes(p.M.Body) || p.S.ContentType != "image/jpeg" {
-		t.Fatalf("want JPEG, got %s / %s", p.M.ContentType, p.S.ContentType)
+	src := encodePNG(t, img)
+	for _, side := range thumbSides {
+		if r := thumb(t, src, side); r.ContentType != "image/jpeg" || !isJPEGBytes(r.Body) {
+			t.Fatalf("side %d: want JPEG, got %s", side, r.ContentType)
+		}
 	}
 }
 
-func TestImagePair_FullyTransparentPixelFlattensToWhite(t *testing.T) {
+func TestImageThumbnail_FullyTransparentPixelFlattensToWhite(t *testing.T) {
 	rgba := image.NewRGBA(image.Rect(0, 0, 400, 300))
-	pair, err := rgbaPair(rgba)
+	r, err := rgbaThumbnail(rgba, SideM)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pair.M.ContentType != "image/jpeg" {
-		t.Fatalf("rgbaPair must flatten to JPEG, got %s", pair.M.ContentType)
+	if r.ContentType != "image/jpeg" {
+		t.Fatalf("rgbaThumbnail must flatten to JPEG, got %s", r.ContentType)
 	}
-	img, err := jpeg.Decode(bytes.NewReader(pair.M.Body))
+	img, err := jpeg.Decode(bytes.NewReader(r.Body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, g, b, _ := img.At(10, 10).RGBA()
-	if r>>8 < 250 || g>>8 < 250 || b>>8 < 250 {
-		t.Fatalf("transparent pixel is %d,%d,%d, want white", r>>8, g>>8, b>>8)
+	cr, cg, cb, _ := img.At(10, 10).RGBA()
+	if cr>>8 < 250 || cg>>8 < 250 || cb>>8 < 250 {
+		t.Fatalf("transparent pixel is %d,%d,%d, want white", cr>>8, cg>>8, cb>>8)
 	}
 }
 
-func TestImagePair_StripsMetadata(t *testing.T) {
+func TestImageThumbnail_StripsMetadata(t *testing.T) {
 	src := spliceAPP1(t, encodeJPEG(t, noisyRGBA(2000, 1500)), exifOrientation(1))
 	if len(jpegSegments(src)[0xE1]) == 0 {
 		t.Fatal("fixture has no APP1")
 	}
-	p, err := ImagePair(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range []Rendition{p.M, p.S} {
-		segs := jpegSegments(r.Body)
+	for _, side := range thumbSides {
+		segs := jpegSegments(thumb(t, src, side).Body)
 		if len(segs[0xE1]) != 0 {
 			t.Fatal("APP1/EXIF survived")
 		}
@@ -287,49 +288,40 @@ func TestImagePair_StripsMetadata(t *testing.T) {
 	}
 }
 
-func TestImagePair_EXIFAutorotate(t *testing.T) {
+func TestImageThumbnail_EXIFAutorotate(t *testing.T) {
 	src := spliceAPP1(t, encodeJPEG(t, noisyRGBA(600, 300)), exifOrientation(6))
-	p, err := ImagePair(src)
-	if err != nil {
-		t.Fatal(err)
+	r := thumb(t, src, SideM)
+	if r.Width != 300 || r.Height != 600 {
+		t.Fatalf("M=%dx%d, want portrait 300x600", r.Width, r.Height)
 	}
-	if p.M.Width != 300 || p.M.Height != 600 {
-		t.Fatalf("M=%dx%d, want portrait 300x600", p.M.Width, p.M.Height)
-	}
-	if w, h := dims(t, p.M.Body); w != 300 || h != 600 {
+	if w, h := dims(t, r.Body); w != 300 || h != 600 {
 		t.Fatalf("decoded %dx%d", w, h)
 	}
 }
 
-func TestImagePair_QualityS50M80(t *testing.T) {
-	p, err := ImagePair(encodeJPEG(t, noisyRGBA(2000, 1500)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s, m := lumaDQTSum(t, p.S.Body), lumaDQTSum(t, p.M.Body); s <= m {
+func TestImageThumbnail_QualityS50M80(t *testing.T) {
+	src := encodeJPEG(t, noisyRGBA(2000, 1500))
+	if s, m := lumaDQTSum(t, thumb(t, src, SideS).Body), lumaDQTSum(t, thumb(t, src, SideM).Body); s <= m {
 		t.Fatalf("S quantisation sum %d must exceed M %d (Q50 vs Q80)", s, m)
 	}
 }
 
-func TestImagePair_SFromM(t *testing.T) {
-	p, err := ImagePair(encodeJPEG(t, noisyRGBA(5000, 3000)))
-	if err != nil {
-		t.Fatal(err)
+func TestImageThumbnail_SizeIsRenderedFromTheSource(t *testing.T) {
+	src := encodeJPEG(t, noisyRGBA(5000, 3000))
+	s := thumb(t, src, SideS)
+	if s.Width != 320 || s.Height != 192 {
+		t.Fatalf("S = %dx%d, want 320x192", s.Width, s.Height)
 	}
-	again, err := ImagePair(p.M.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.S.Width != p.S.Width || again.S.Height != p.S.Height {
-		t.Fatalf("S %dx%d differs from S of M %dx%d", p.S.Width, p.S.Height, again.S.Width, again.S.Height)
+	if again := thumb(t, thumb(t, src, SideM).Body, SideS); len(again.Body) == len(s.Body) && bytes.Equal(again.Body, s.Body) {
+		t.Fatal("S straight from the source must not be identical to S derived from M")
 	}
 }
 
-func TestImagePair_InvalidInput(t *testing.T) {
-	if _, err := ImagePair([]byte("garbage")); err == nil {
+func TestImageThumbnail_InvalidInput(t *testing.T) {
+	if _, err := ImageThumbnail([]byte("garbage"), SideM); err == nil {
 		t.Fatal("want error")
 	}
-	if _, err := ImagePair(nil); err == nil {
+	if _, err := ImageThumbnail(nil, SideM); err == nil {
 		t.Fatal("want error on empty input")
 	}
 }

@@ -52,11 +52,7 @@ func thumbKey(tag, serviceType, owner, id string, version int, size, digest stri
 }
 
 func (q thumbRequest) key(tag string) string {
-	return q.keyFor(tag, q.size)
-}
-
-func (q thumbRequest) keyFor(tag, size string) string {
-	return thumbKey(tag, q.serviceType, q.owner, q.id, q.version, size, q.digest)
+	return thumbKey(tag, q.serviceType, q.owner, q.id, q.version, q.size, q.digest)
 }
 
 func errFormatNotSupported() error {

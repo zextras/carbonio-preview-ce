@@ -70,15 +70,13 @@ func buildPostThumbnail(deps Deps) func(context.Context, *apispec.ThumbnailPostI
 func postSource(step runner, deps Deps, p pipeline, data []byte, size, lang string) (produced, error) {
 	switch p.kind {
 	case kindPDF:
-		set, err := step.pdfRenditions(data)
-		return set[size], err
+		return step.pdfThumb(data, size)
 	case kindOffice:
 		png, err := step.convert(deps.Cfg, data, lang, "png")
 		if err != nil {
 			return produced{}, err
 		}
-		set, err := step.frameRenditions(png)
-		return set[size], err
+		return step.imageThumb(png, size)
 	}
 	info, err := step.imageInfo(p, data)
 	if err != nil {
@@ -87,8 +85,7 @@ func postSource(step runner, deps Deps, p pipeline, data []byte, size, lang stri
 	if isAnimatedGIF(p, info) {
 		return postAnimatedGIF(step, deps, data, info, size)
 	}
-	set, err := step.staticRenditions(p, data, info)
-	return set[size], err
+	return step.staticThumb(p, data, info, size)
 }
 
 func postAnimatedGIF(step runner, deps Deps, data []byte, info render.Info, size string) (produced, error) {
@@ -103,8 +100,7 @@ func postAnimatedGIF(step runner, deps Deps, data []byte, info render.Info, size
 		return produced{}, errServerBusy()
 	}
 	slog.Warn("postThumbnail: animated GIF resize failed, serving the static frame", "err", err)
-	set, err := step.frameRenditions(data)
-	return set[size], err
+	return step.imageThumb(data, size)
 }
 
 func resizeGIFUnderSlot(step runner, deps Deps, data []byte, info render.Info, size string) ([]byte, error) {
@@ -148,8 +144,7 @@ func postVideo(step runner, deps Deps, part *huma.FormFile, size string) (produc
 	if err != nil {
 		return produced{}, err
 	}
-	set, err := step.frameRenditions(frame)
-	return set[size], err
+	return step.imageThumb(frame, size)
 }
 
 func postVideoFrame(step runner, deps Deps, path string) ([]byte, error) {

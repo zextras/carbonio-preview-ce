@@ -92,11 +92,11 @@ func slotWorker(st *db.Store, store storage.Client, v int) *AsyncWorker {
 	})
 }
 
-func runAttempt(ctx context.Context, w *AsyncWorker, rows []db.Thumbnail) <-chan struct{} {
+func runAttempt(ctx context.Context, w *AsyncWorker, row db.Thumbnail) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 	return done
 }
@@ -145,15 +145,15 @@ func TestAsyncSlot(t *testing.T) {
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
 		idA, idB := testUID(t, "A"), testUID(t, "B")
-		rowsA, rowsB := claimedRows(t, st, w, idA, 0), claimedRows(t, st, w, idB, 0)
+		rowA, rowB := claimedRow(t, st, w, idA, 0), claimedRow(t, st, w, idB, 0)
 
-		doneA := runAttempt(ctx, w, rowsA)
+		doneA := runAttempt(ctx, w, rowA)
 		select {
 		case <-inFFmpeg:
 		case <-time.After(slotWatchdog):
 			t.Fatal("first job never reached ffmpeg")
 		}
-		doneB := runAttempt(ctx, w, rowsB)
+		doneB := runAttempt(ctx, w, rowB)
 		store.waitEOF(t, 2)
 		eventually(t, "second job waiting for the slot or probing", func() bool {
 			return w.slotWaiters.Load() == 1 || probes.Load() > 1
@@ -203,7 +203,7 @@ func TestAsyncSlot(t *testing.T) {
 		for i := 0; i < jobs; i++ {
 			id := testUID(t, "j"+strconv.Itoa(i))
 			ids = append(ids, id)
-			done = append(done, runAttempt(ctx, w, claimedRows(t, st, w, id, 0)))
+			done = append(done, runAttempt(ctx, w, claimedRow(t, st, w, id, 0)))
 		}
 		store.waitEOF(t, jobs)
 		for i := 0; i < v; i++ {
@@ -246,13 +246,13 @@ func TestAsyncSlot(t *testing.T) {
 		for _, id := range []string{idA, idB} {
 			enqueueKind(t, st, id, 1, "office")
 		}
-		doneA := runAttempt(ctx, w, claimPair(t, st, w.instanceID, idA, 1))
+		doneA := runAttempt(ctx, w, claimOne(t, st, w.instanceID, idA, 1))
 		select {
 		case <-inCollabora:
 		case <-time.After(slotWatchdog):
 			t.Fatal("first conversion never started")
 		}
-		doneB := runAttempt(ctx, w, claimPair(t, st, w.instanceID, idB, 1))
+		doneB := runAttempt(ctx, w, claimOne(t, st, w.instanceID, idB, 1))
 		eventually(t, "second job waiting for the slot", func() bool { return w.slotWaiters.Load() == 1 })
 		if len(inCollabora) != 0 {
 			t.Fatal("second conversion started while the first holds the only slot (V=1)")
@@ -280,10 +280,10 @@ func TestAsyncSlot(t *testing.T) {
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
 		id := testUID(t, "hb")
-		rows := claimedRows(t, st, w, id, 0)
+		row := claimedRow(t, st, w, id, 0)
 		w.deps.AsyncSem <- struct{}{}
 
-		done := runAttempt(ctx, w, rows)
+		done := runAttempt(ctx, w, row)
 		store.waitEOF(t, 1)
 		seen := map[time.Time]struct{}{}
 		eventually(t, "claimed_at refreshed three times while waiting for the slot", func() bool {
@@ -311,19 +311,19 @@ func TestAsyncSlot(t *testing.T) {
 		store := newEOFStore()
 		w := slotWorker(st, store, 1)
 		id := testUID(t, "cancel")
-		rows := claimedRows(t, st, w, id, 1)
+		row := claimedRow(t, st, w, id, 1)
 		w.deps.AsyncSem <- struct{}{}
 
 		runCtx, cancel := context.WithCancel(ctx)
-		done := runAttempt(runCtx, w, rows)
+		done := runAttempt(runCtx, w, row)
 		store.waitEOF(t, 1)
 		cancel()
 		waitDone(t, done)
 
 		after := findRow(st, id, 1)
-		if after.Status != db.StatusPending || after.Attempts != rows[0].Attempts || after.ClaimedBy != nil {
+		if after.Status != db.StatusPending || after.Attempts != row.Attempts || after.ClaimedBy != nil {
 			t.Fatalf("row after cancel: status=%s attempts=%d claimed_by=%v, want PENDING/%d/nil",
-				after.Status, after.Attempts, after.ClaimedBy, rows[0].Attempts)
+				after.Status, after.Attempts, after.ClaimedBy, row.Attempts)
 		}
 		if probes.Load() != 0 {
 			t.Error("ffmpeg ran without a slot")
@@ -341,7 +341,7 @@ func TestAsyncSlot(t *testing.T) {
 		w.deps.AsyncSem <- struct{}{}
 		const rows = maxInFlight + 6
 		for i := 0; i < rows; i++ {
-			enqueuePair(t, st, testUID(t, "m"+strconv.Itoa(i)), 1)
+			seedPending(t, st, testUID(t, "m"+strconv.Itoa(i)), 1)
 		}
 		tickCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -365,8 +365,8 @@ func TestAsyncSlot(t *testing.T) {
 		cancel()
 		eventually(t, "all jobs returned their rows", func() bool { return w.liveCount() == 0 })
 		pending, _ := st.FindPendingNewest(ctx, 2*rows)
-		if len(pending) != 2*rows {
-			t.Errorf("PENDING rows after cancel=%d, want %d", len(pending), 2*rows)
+		if len(pending) != rows {
+			t.Errorf("PENDING rows after cancel=%d, want %d", len(pending), rows)
 		}
 	})
 
@@ -380,12 +380,12 @@ func TestAsyncSlot(t *testing.T) {
 		const stale = 3
 		for i := 0; i < stale; i++ {
 			id := testUID(t, "s"+strconv.Itoa(i))
-			enqueuePair(t, st, id, 1)
-			claimPair(t, st, "dead-instance", id, 1)
+			seedPending(t, st, id, 1)
+			claimOne(t, st, "dead-instance", id, 1)
 			sqlExec(t, dsn, `UPDATE thumbnail SET claimed_at = now() - interval '1 hour' WHERE file_id=$1`, id)
 		}
 		for i := 0; i < maxInFlight-1; i++ {
-			w.live[liveKey("busy", i)] = struct{}{}
+			w.live[liveKey("busy", i, db.SizeM)] = struct{}{}
 		}
 		tickCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -426,14 +426,14 @@ func TestThumbnailGet_AsyncAttemptFiresOnlyForPendingRows(t *testing.T) {
 	h.deps.AsyncSem <- struct{}{}
 	idOther, idPending := newID(), newID()
 
-	enqueuePair(t, st, idOther, testVersion)
-	claimPair(t, st, "other-instance", idOther, testVersion)
+	seedPending(t, st, idOther, testVersion)
+	claimOne(t, st, "other-instance", idOther, testVersion)
 	before := findRow(st, idOther, testVersion)
 	if rec := h.get(thumbReq{id: idOther, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("GENERATING row: status %d, want 202", rec.Code)
 	}
 
-	enqueuePair(t, st, idPending, testVersion)
+	seedPending(t, st, idPending, testVersion)
 	if rec := h.get(thumbReq{id: idPending, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("PENDING row: status %d, want 202", rec.Code)
 	}

@@ -105,41 +105,39 @@ func makeWorkerWithDB(dbStore *db.Store, storeClient storage.Client, maxAttempts
 	})
 }
 
-func enqueuePair(t *testing.T, st *db.Store, fileID string, version int) {
+func seedPending(t *testing.T, st *db.Store, fileID string, version int) {
 	t.Helper()
 	enqueueKind(t, st, fileID, version, "video")
 }
 
 func enqueueKind(t *testing.T, st *db.Store, fileID string, version int, kind string) {
 	t.Helper()
-	for _, size := range []string{db.SizeS, db.SizeM} {
-		row := db.Thumbnail{FileID: fileID, Version: version, Size: size, Kind: kind, OwnerID: "owner1", ServiceType: "files"}
-		if ok, err := st.Enqueue(context.Background(), row, nil); err != nil || !ok {
-			t.Fatalf("Enqueue %s: ok=%v err=%v", size, ok, err)
-		}
+	row := db.Thumbnail{FileID: fileID, Version: version, Size: db.SizeM, Kind: kind, OwnerID: "owner1", ServiceType: "files"}
+	if ok, err := st.Enqueue(context.Background(), row, nil); err != nil || !ok {
+		t.Fatalf("Enqueue: ok=%v err=%v", ok, err)
 	}
 }
 
-func claimPair(t *testing.T, st *db.Store, instanceID, fileID string, version int) []db.Thumbnail {
+func claimOne(t *testing.T, st *db.Store, instanceID, fileID string, version int) db.Thumbnail {
 	t.Helper()
-	rows, err := st.Claim(context.Background(), fileID, version, instanceID)
-	if err != nil || len(rows) != 2 {
+	rows, err := st.Claim(context.Background(), fileID, version, db.SizeM, instanceID)
+	if err != nil || len(rows) != 1 {
 		t.Fatalf("Claim: rows=%d err=%v", len(rows), err)
 	}
-	return rows
+	return rows[0]
 }
 
-func claimedRows(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, attempts int) []db.Thumbnail {
+func claimedRow(t *testing.T, st *db.Store, w *AsyncWorker, fileID string, attempts int) db.Thumbnail {
 	t.Helper()
 	ctx := context.Background()
-	enqueuePair(t, st, fileID, 1)
+	seedPending(t, st, fileID, 1)
 	for i := 0; i < attempts; i++ {
-		claimPair(t, st, w.instanceID, fileID, 1)
+		claimOne(t, st, w.instanceID, fileID, 1)
 		if err := st.ReleaseWithAttempt(ctx, fileID, 1, w.instanceID, db.AllSizes); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return claimPair(t, st, w.instanceID, fileID, 1)
+	return claimOne(t, st, w.instanceID, fileID, 1)
 }
 
 func pairOf(t *testing.T, st *db.Store, fileID string, version int) map[string]*db.Thumbnail {
@@ -193,8 +191,8 @@ func TestAttempt_FailureClassification(t *testing.T) {
 
 			w := makeWorkerWithDB(st, c.store, 3)
 			id := testUID(t, "cls")
-			rows := claimedRows(t, st, w, id, c.attempts)
-			w.attempt(ctx, rows)
+			row := claimedRow(t, st, w, id, c.attempts)
+			w.attempt(ctx, row)
 
 			after := findRow(st, id, 1)
 			if !c.wantRow {
@@ -220,9 +218,9 @@ func TestAttempt_ConnectivityFailure_DoesNotDeleteRowOwnedByAnotherInstance(t *t
 
 	w := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
 	id := testUID(t, "foreign")
-	rows := claimedRows(t, st, w, id, 0)
+	row := claimedRow(t, st, w, id, 0)
 	w2 := makeWorkerWithDB(st, &scriptedStore{retrieveErr: storage.ErrUnavailable}, 3)
-	w2.attempt(ctx, rows)
+	w2.attempt(ctx, row)
 	if after := findRow(st, id, 1); after == nil || after.Status != db.StatusGenerating {
 		t.Fatalf("row of another instance must stay GENERATING, got %v", after)
 	}
@@ -242,7 +240,7 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		store := newEOFStore()
 		w := makeWorkerWithSem(st, store, 3)
 		id := testUID(t, "busy")
-		enqueuePair(t, st, id, 1)
+		seedPending(t, st, id, 1)
 		w.deps.AsyncSem <- struct{}{}
 		tickCtx, cancel := context.WithCancel(ctx)
 		t.Cleanup(cancel)
@@ -267,14 +265,14 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
 		id := testUID(t, "lost")
-		enqueuePair(t, st, id, 1)
-		claimPair(t, st, "other-instance", id, 1)
-		w.runOne(id, 1)
+		seedPending(t, st, id, 1)
+		claimOne(t, st, "other-instance", id, 1)
+		w.runOne(id, 1, db.SizeM)
 		if w.liveCount() != 0 || len(w.deps.AsyncSem) != 0 {
 			t.Fatalf("lost claim left live=%d slots=%d", w.liveCount(), len(w.deps.AsyncSem))
 		}
 		sqlExec(t, dsn, `UPDATE thumbnail SET status='PENDING', claimed_by=NULL WHERE file_id=$1`, id)
-		w.runOne(id, 1)
+		w.runOne(id, 1, db.SizeM)
 		eventually(t, "row READY", func() bool {
 			r := findRow(st, id, 1)
 			return r != nil && r.Status == db.StatusReady
@@ -286,12 +284,12 @@ func TestClaimNeedsNoSemaphore(t *testing.T) {
 		w := makeWorkerWithSem(st, &scriptedStore{body: "x"}, 3)
 		w.bind(ctx)
 		id := testUID(t, "full")
-		enqueuePair(t, st, id, 1)
+		seedPending(t, st, id, 1)
 		for i := 0; i < maxInFlight; i++ {
-			w.live[liveKey("busy", i)] = struct{}{}
+			w.live[liveKey("busy", i, db.SizeM)] = struct{}{}
 		}
 		before := findRow(st, id, 1)
-		w.runOne(id, 1)
+		w.runOne(id, 1, db.SizeM)
 		after := findRow(st, id, 1)
 		if after.Status != db.StatusPending || after.ClaimedBy != nil || !after.UpdatedAt.Equal(before.UpdatedAt) {
 			t.Fatalf("row must be untouched while the instance is full: %+v", after)

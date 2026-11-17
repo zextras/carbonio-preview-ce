@@ -6,7 +6,7 @@
 // guard, the worker borrow loop (getPdfInstance, against a fake pool), the DPI
 // helper — plus SetVipsConcurrency.
 //
-// The genuinely cgo-pipeline path (PDFPage1Pair: OpenDocument, page size,
+// The genuinely cgo-pipeline path (PDFPage1: OpenDocument, page size,
 // RenderPageInDPI and the libvips renditions) is NOT exercised here and stays
 // covered by pdf_e2e_test.go (//go:build cgo, which boots a real multi-threaded
 // PDFium worker).
@@ -160,35 +160,38 @@ func TestSetVipsConcurrency(t *testing.T) {
 	SetVipsConcurrency(2)
 }
 
-func TestPDFPage1Pair_PoolNotInitialised(t *testing.T) {
+func TestPDFPage1_PoolNotInitialised(t *testing.T) {
 	withNilPool(t)
-	_, err := PDFPage1Pair(context.Background(), []byte("%PDF-1.4"))
+	_, err := PDFPage1(context.Background(), []byte("%PDF-1.4"), SideM)
 	if err == nil || !strings.Contains(err.Error(), "pool not initialised") {
 		t.Fatalf("err=%v, want pool not initialised", err)
 	}
 }
 
-func TestPDFPage1Pair_PoolUnavailable(t *testing.T) {
+func TestPDFPage1_PoolUnavailable(t *testing.T) {
 	withFakePool(t, &fakePool{borrow: func(context.Context, int32) (pdfium.Pdfium, error) {
 		return nil, errors.New("worker failed to start")
 	}})
-	if _, err := PDFPage1Pair(context.Background(), []byte("%PDF-1.4")); !errors.Is(err, ErrRenderUnavailable) {
+	if _, err := PDFPage1(context.Background(), []byte("%PDF-1.4"), SideM); !errors.Is(err, ErrRenderUnavailable) {
 		t.Fatalf("err=%v, want ErrRenderUnavailable", err)
 	}
 }
 
 func TestPDFPage1DPI(t *testing.T) {
-	if dpi, err := pdfPage1DPI(595, 842); err != nil || dpi != 110 {
-		t.Fatalf("A4 portrait dpi=%d err=%v, want 110 (ceil(1280*72/842))", dpi, err)
+	if dpi, err := pdfPage1DPI(595, 842, SideM); err != nil || dpi != 110 {
+		t.Fatalf("A4 portrait M dpi=%d err=%v, want 110 (ceil(1280*72/842))", dpi, err)
 	}
-	if dpi, err := pdfPage1DPI(842, 595); err != nil || dpi != 110 {
-		t.Fatalf("A4 landscape dpi=%d err=%v, want 110", dpi, err)
+	if dpi, err := pdfPage1DPI(842, 595, SideM); err != nil || dpi != 110 {
+		t.Fatalf("A4 landscape M dpi=%d err=%v, want 110", dpi, err)
 	}
-	if dpi, err := pdfPage1DPI(10, 10); err != nil || dpi != 9216 {
+	if dpi, err := pdfPage1DPI(595, 842, SideS); err != nil || dpi != 28 {
+		t.Fatalf("A4 portrait S dpi=%d err=%v, want 28 (ceil(320*72/842))", dpi, err)
+	}
+	if dpi, err := pdfPage1DPI(10, 10, SideM); err != nil || dpi != 9216 {
 		t.Fatalf("tiny page dpi=%d err=%v, want 9216", dpi, err)
 	}
 	for _, sz := range [][2]float64{{0, 0}, {0, 100}, {-1, 5}} {
-		if _, err := pdfPage1DPI(sz[0], sz[1]); err == nil {
+		if _, err := pdfPage1DPI(sz[0], sz[1], SideM); err == nil {
 			t.Errorf("size %v: want error", sz)
 		}
 	}

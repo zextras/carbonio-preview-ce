@@ -202,14 +202,14 @@ func TestWorker_StalledDownload_WatchdogDropsRow(t *testing.T) {
 	})
 
 	// Enqueue + claim so attempt() has a valid row.
-	enqueuePair(t, dbStore, fileID, version)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	// Run attempt in a goroutine (it will block until the watchdog fires).
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 
 	// attempt() should complete within 1s (watchdog fires at 50ms, HTTP unblocks quickly).
@@ -273,13 +273,13 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	}
 	w := makeWorkerWithSem(dbStore, store, 3)
 
-	enqueuePair(t, dbStore, fileID, version)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 
 	// Generous timeout: probe/extract stubs are instant; the slow reader takes
@@ -298,8 +298,11 @@ func TestWorker_FlowingDownload_NotCancelled(t *testing.T) {
 	if after.Status != db.StatusReady {
 		t.Errorf("status: got %q, want READY (flowing download should succeed)", after.Status)
 	}
-	if pair, err := dbStore.FindPair(ctx, fileID, version); err != nil || pair[db.SizeS] == nil || pair[db.SizeS].Status != db.StatusReady || pair[db.SizeS].BlobID == nil || after.BlobID == nil {
-		t.Errorf("both sizes must be READY with a blob: %+v err=%v", pair, err)
+	if after.BlobID == nil {
+		t.Errorf("the READY row must reference its blob: %+v", after)
+	}
+	if rows, err := dbStore.FindPair(ctx, fileID, version); err != nil || len(rows) != 1 {
+		t.Errorf("a job writes only its own size: %+v err=%v", rows, err)
 	}
 }
 
@@ -324,7 +327,7 @@ func TestWorker_LiveSet_KeyInsertAndDelete(t *testing.T) {
 
 	const fileID = "file-live-test"
 	const version = 2
-	key := liveKey(fileID, version)
+	key := liveKey(fileID, version, db.SizeM)
 
 	// Initially not in live.
 	w.mu.Lock()
@@ -392,8 +395,8 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	})
 
 	// Enqueue + claim (row becomes GENERATING).
-	enqueuePair(t, dbStore, fileID, version)
-	claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	// Manually set claimed_at far in the past so ReclaimStale considers it stale.
 	// Do this by sleeping > staleTTL (1s). In a CI-speed test, force the row
@@ -402,7 +405,7 @@ func TestWorker_LiveSet_StaleSkipWithDB(t *testing.T) {
 	time.Sleep(5 * time.Millisecond) // ensure claimed_at is old enough
 
 	// Inject the key into live — simulating the goroutine is still running.
-	key := liveKey(fileID, version)
+	key := liveKey(fileID, version, db.SizeM)
 	w.mu.Lock()
 	w.live[key] = struct{}{}
 	w.mu.Unlock()
@@ -500,16 +503,16 @@ func TestWorker_HeartbeatKeepsLongDownloadAlive(t *testing.T) {
 	// than heartbeatInterval, so ReclaimStale would fire without heartbeats.
 	w.staleTTL = 200 * time.Millisecond
 
-	enqueuePair(t, dbStore, fileID, version)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	// Record claimed_at before download starts.
-	claimedAtBefore := rows[0].ClaimedAt
+	claimedAtBefore := row.ClaimedAt
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 
 	// Wait for attempt to complete (slow reader takes ~300ms; give 3s overhead).
@@ -589,13 +592,13 @@ func TestWorker_ExtractCeilingCancelsHungExtract(t *testing.T) {
 	}
 	w := makeWorkerWithSem(dbStore, store, 3)
 
-	enqueuePair(t, dbStore, fileID, version)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 
 	// attempt() must return within 2s (ceiling = 80ms + overhead).
@@ -654,8 +657,8 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	w.staleTTL = 1 * time.Millisecond
 
 	// Enqueue + claim (PENDING → GENERATING, attempts=0).
-	enqueuePair(t, dbStore, fileID, version)
-	claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	// Bump attempts to maxAttempts-1 via ReleaseWithAttempt + re-Claim so that
 	// ReclaimStale's +1 will hit exactly maxAttempts.  We do this by:
@@ -665,13 +668,13 @@ func TestWorker_StaleSkipLiveSet_NoMarkFailedAndNoRelease(t *testing.T) {
 	if rerr := dbStore.ReleaseWithAttempt(ctx, fileID, version, w.instanceID, db.AllSizes); rerr != nil {
 		t.Fatalf("ReleaseWithAttempt (setup): %v", rerr)
 	}
-	claimPair(t, dbStore, w.instanceID, fileID, version)
+	claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	// Wait for claimed_at to be old enough for ReclaimStale.
 	time.Sleep(5 * time.Millisecond)
 
 	// Inject the key into live — simulating the goroutine is still running.
-	key := liveKey(fileID, version)
+	key := liveKey(fileID, version, db.SizeM)
 	w.mu.Lock()
 	w.live[key] = struct{}{}
 	w.mu.Unlock()
@@ -723,13 +726,13 @@ func TestWorker_HeaderWaitBoundedByReadIdleTimeout(t *testing.T) {
 	const version = 1
 
 	w := makeWorkerWithSem(dbStore, &headerBlockingStore{}, 3)
-	enqueuePair(t, dbStore, fileID, version)
-	rows := claimPair(t, dbStore, w.instanceID, fileID, version)
+	seedPending(t, dbStore, fileID, version)
+	row := claimOne(t, dbStore, w.instanceID, fileID, version)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		w.attempt(ctx, rows)
+		w.attempt(ctx, row)
 	}()
 	select {
 	case <-done:

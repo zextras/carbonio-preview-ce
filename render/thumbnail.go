@@ -63,27 +63,18 @@ static int tb_probe(void *buf, size_t len, int *w, int *h, int *pages, int *orie
 	return 0;
 }
 
-static int tb_pair_from(VipsImage *m, int qm, int qs, int side_s, tb_out *om, tb_out *os) {
-	VipsImage *s = NULL;
-	if (tb_encode(m, qm, om)) return -1;
-	if (vips_thumbnail_image(m, &s, side_s, "height", side_s, "size", VIPS_SIZE_DOWN, NULL)) return -1;
-	int rc = tb_encode(s, qs, os);
-	g_object_unref(s);
-	return rc;
-}
-
-static int tb_pair(void *buf, size_t len, int side_m, int side_s, int qm, int qs, tb_out *om, tb_out *os) {
+static int tb_thumb(void *buf, size_t len, int side, int q, tb_out *o) {
 	VipsImage *t = NULL;
-	if (vips_thumbnail_buffer(buf, len, &t, side_m, "height", side_m, "size", VIPS_SIZE_DOWN, NULL)) return -1;
+	if (vips_thumbnail_buffer(buf, len, &t, side, "height", side, "size", VIPS_SIZE_DOWN, NULL)) return -1;
 	VipsImage *m = vips_image_copy_memory(t);
 	g_object_unref(t);
 	if (!m) return -1;
-	int rc = tb_pair_from(m, qm, qs, side_s, om, os);
+	int rc = tb_encode(m, q, o);
 	g_object_unref(m);
 	return rc;
 }
 
-static int tb_pair_rgba(void *px, size_t size, int iw, int ih, int side_m, int side_s, int qm, int qs, tb_out *om, tb_out *os) {
+static int tb_thumb_rgba(void *px, size_t size, int iw, int ih, int side, int q, tb_out *o) {
 	VipsImage *raw = vips_image_new_from_memory(px, size, iw, ih, 4, VIPS_FORMAT_UCHAR);
 	if (!raw) return -1;
 	VipsImage *c = NULL;
@@ -96,24 +87,13 @@ static int tb_pair_rgba(void *px, size_t size, int iw, int ih, int side_m, int s
 	g_object_unref(c);
 	if (rc) return -1;
 	VipsImage *t = NULL;
-	rc = vips_thumbnail_image(flat, &t, side_m, "height", side_m, "size", VIPS_SIZE_DOWN, NULL);
+	rc = vips_thumbnail_image(flat, &t, side, "height", side, "size", VIPS_SIZE_DOWN, NULL);
 	g_object_unref(flat);
 	if (rc) return -1;
 	VipsImage *m = vips_image_copy_memory(t);
 	g_object_unref(t);
 	if (!m) return -1;
-	rc = tb_pair_from(m, qm, qs, side_s, om, os);
-	g_object_unref(m);
-	return rc;
-}
-
-static int tb_full(void *buf, size_t len, int q, tb_out *o) {
-	VipsImage *t = NULL;
-	if (vips_thumbnail_buffer(buf, len, &t, VIPS_MAX_COORD, "height", VIPS_MAX_COORD, "size", VIPS_SIZE_DOWN, NULL)) return -1;
-	VipsImage *m = vips_image_copy_memory(t);
-	g_object_unref(t);
-	if (!m) return -1;
-	int rc = tb_encode(m, q, o);
+	rc = tb_encode(m, q, o);
 	g_object_unref(m);
 	return rc;
 }
@@ -162,8 +142,6 @@ type Rendition struct {
 	Height      int
 }
 
-type Pair struct{ S, M Rendition }
-
 func vipsError(op string) error {
 	msg := C.GoString(C.vips_error_buffer())
 	C.vips_error_clear()
@@ -205,18 +183,24 @@ func Probe(data []byte) (Info, error) {
 	return Info{Width: int(w), Height: int(h), Pages: int(pages), Orientation: int(orientation), Loader: name}, nil
 }
 
-func ImagePair(data []byte) (Pair, error) {
+func quality(side int) int {
+	if side == SideS {
+		return qualityS
+	}
+	return qualityM
+}
+
+// ImageThumbnail renders data straight to the given long side, never upscaling.
+func ImageThumbnail(data []byte, side int) (Rendition, error) {
 	if len(data) == 0 {
-		return Pair{}, errors.New("empty input buffer")
+		return Rendition{}, errors.New("empty input buffer")
 	}
-	var om, os C.tb_out
-	rc := C.tb_pair(unsafe.Pointer(&data[0]), C.size_t(len(data)), SideM, SideS, qualityM, qualityS, &om, &os)
-	if rc != 0 {
-		freeOut(&om)
-		freeOut(&os)
-		return Pair{}, vipsError("pair")
+	var o C.tb_out
+	if C.tb_thumb(unsafe.Pointer(&data[0]), C.size_t(len(data)), C.int(side), C.int(quality(side)), &o) != 0 {
+		freeOut(&o)
+		return Rendition{}, vipsError("thumbnail")
 	}
-	return Pair{M: takeRendition(&om), S: takeRendition(&os)}, nil
+	return takeRendition(&o), nil
 }
 
 func FullImage(data []byte) (Rendition, error) {
@@ -224,20 +208,20 @@ func FullImage(data []byte) (Rendition, error) {
 		return Rendition{}, errors.New("empty input buffer")
 	}
 	var o C.tb_out
-	if C.tb_full(unsafe.Pointer(&data[0]), C.size_t(len(data)), previewQuality, &o) != 0 {
+	if C.tb_thumb(unsafe.Pointer(&data[0]), C.size_t(len(data)), C.VIPS_MAX_COORD, previewQuality, &o) != 0 {
 		freeOut(&o)
 		return Rendition{}, vipsError("full")
 	}
 	return takeRendition(&o), nil
 }
 
-func rgbaPair(img *image.RGBA) (Pair, error) {
+func rgbaThumbnail(img *image.RGBA, side int) (Rendition, error) {
 	if img == nil {
-		return Pair{}, errors.New("nil RGBA image")
+		return Rendition{}, errors.New("nil RGBA image")
 	}
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	if w <= 0 || h <= 0 {
-		return Pair{}, errors.New("empty RGBA image")
+		return Rendition{}, errors.New("empty RGBA image")
 	}
 	packed := img.Pix
 	if img.Stride != w*4 {
@@ -247,13 +231,12 @@ func rgbaPair(img *image.RGBA) (Pair, error) {
 			copy(packed[y*w*4:(y+1)*w*4], img.Pix[off:off+w*4])
 		}
 	}
-	var om, os C.tb_out
-	rc := C.tb_pair_rgba(unsafe.Pointer(&packed[0]), C.size_t(len(packed)), C.int(w), C.int(h), SideM, SideS, qualityM, qualityS, &om, &os)
+	var o C.tb_out
+	rc := C.tb_thumb_rgba(unsafe.Pointer(&packed[0]), C.size_t(len(packed)), C.int(w), C.int(h), C.int(side), C.int(quality(side)), &o)
 	runtime.KeepAlive(packed)
 	if rc != 0 {
-		freeOut(&om)
-		freeOut(&os)
-		return Pair{}, vipsError("pair_rgba")
+		freeOut(&o)
+		return Rendition{}, vipsError("thumbnail_rgba")
 	}
-	return Pair{M: takeRendition(&om), S: takeRendition(&os)}, nil
+	return takeRendition(&o), nil
 }

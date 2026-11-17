@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package video extracts the first frame of a video as a still image (PNG),
-// so it can be fed to the existing libvips image pipeline (render.ImagePair)
+// so it can be fed to the existing libvips image pipeline (render.ImageThumbnail)
 // exactly like a photo. Extraction shells out to ffmpeg; the input is always
 // written to a SEEKABLE temp file first, because moov-at-end MP4 (the common
 // phone/screen-recording layout) cannot be decoded from a non-seekable pipe.

@@ -17,8 +17,8 @@ package server
 //     concurrency is ONE number shared between the worker and any immediate
 //     on-request generation attempts in the GET handlers. Source download,
 //     blob upload and DB updates take no slot.
-//   - A job is the set of rows of one (file_id, version) claimed together: one
-//     or two sizes of the same kind.
+//   - A job is one row: one size of one (file_id, version). Claims, heartbeats,
+//     releases and failures are per row.
 //   - Live jobs on this instance (claimed rows, whether downloading, waiting for
 //     the ffmpeg slot or extracting) are bounded by maxInFlight.
 //   - Only render failures (codec probe, frame extraction, extraction ceiling,
@@ -122,7 +122,7 @@ type AsyncWorker struct {
 	maxAttempts   int
 
 	// live is the per-instance set of jobs whose goroutine is still running.
-	// Key format: fileID + "\x00" + strconv.Itoa(version).
+	// Key format: fileID + "\x00" + strconv.Itoa(version) + "\x00" + size.
 	// Guards against ReclaimStale re-spawning a row whose goroutine is alive
 	// on this instance, and bounds the live jobs by maxInFlight.
 	mu   sync.Mutex
@@ -276,23 +276,22 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 
 	// (a) PENDING newest-first: fetch up to MAX_IN_FLIGHT*4 candidates and claim
 	//     them while fewer than MAX_IN_FLIGHT jobs are live on this instance.
-	//     The two sizes of one file version are one job.
 	rows, err := w.db().FindPendingNewest(ctx, maxInFlight*4)
 	if err != nil {
 		slog.Warn("AsyncWorker: FindPendingNewest failed", "err", err)
 	} else {
 		for _, row := range rows {
-			key := liveKey(row.FileID, row.Version)
+			key := liveKey(row.FileID, row.Version, row.Size)
 			if r := w.reserve(key); r == reserveFull || r == reserveClosed {
 				break
 			} else if r == reserveDuplicate {
 				continue
 			}
 			claimCtx, cancelClaim := dbCtx(ctx)
-			claimed, cerr := w.db().Claim(claimCtx, row.FileID, row.Version, w.instanceID)
+			claimed, cerr := w.db().Claim(claimCtx, row.FileID, row.Version, row.Size, w.instanceID)
 			cancelClaim()
 			if cerr != nil {
-				slog.Warn("AsyncWorker: Claim failed", "file_id", row.FileID, "version", row.Version, "err", cerr)
+				slog.Warn("AsyncWorker: Claim failed", "file_id", row.FileID, "version", row.Version, "size", row.Size, "err", cerr)
 			}
 			if cerr != nil || len(claimed) == 0 {
 				w.unreserve(key)
@@ -300,7 +299,7 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 			}
 			go func() {
 				defer w.unreserve(key)
-				w.attempt(ctx, claimed)
+				w.attempt(ctx, claimed[0])
 			}()
 		}
 	}
@@ -316,13 +315,12 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 		slog.Warn("AsyncWorker: ReclaimStale failed", "err", serr)
 		return
 	}
-	for _, group := range groupByJob(staleRows) {
-		first := group[0]
+	for _, row := range staleRows {
 		// LIVE-SET CHECK FIRST — before any cap/MarkFailed logic.
 		//
 		// If a goroutine for this job is still alive on this instance, leave the
-		// rows in GENERATING untouched.  Do NOT call Release (→ PENDING) here:
-		//   • Release would let the PENDING sweep immediately re-claim the rows,
+		// row in GENERATING untouched.  Do NOT call Release (→ PENDING) here:
+		//   • Release would let the PENDING sweep immediately re-claim the row,
 		//     creating a duplicate attempt.
 		//   • The live goroutine's own terminal transition (MarkReady / MarkFailed /
 		//     ReleaseWithAttempt) is the authoritative outcome; interfering with it
@@ -330,22 +328,22 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 		//   • With the heartbeat, the idle-watchdog (60s) and extractCeiling (120s),
 		//     no LIVE job should ever legitimately reach staleTTL (900s).  This guard
 		//     is defence-in-depth for delayed-kill edges only.
-		staleKey := liveKey(first.FileID, first.Version)
+		staleKey := liveKey(row.FileID, row.Version, row.Size)
 		w.mu.Lock()
 		_, isLive := w.live[staleKey]
 		w.mu.Unlock()
 		if isLive {
 			slog.Debug("AsyncWorker: stale-reclaim skipped (goroutine still alive)",
-				"file_id", first.FileID, "version", first.Version)
+				"file_id", row.FileID, "version", row.Version, "size", row.Size)
 			continue
 		}
-		// Rows are genuinely dead (crashed instance or this instance lost the goroutine).
+		// The row is genuinely dead (crashed instance or this instance lost the goroutine).
 		// ReclaimStale already incremented attempts. If cap is reached, mark FAILED.
-		if maxAttempts(group) >= w.maxAttempts {
+		if row.Attempts >= w.maxAttempts {
 			slog.Warn("AsyncWorker: max attempts reached after stale reclaim, marking FAILED",
-				"file_id", first.FileID, "version", first.Version, "max_attempts", w.maxAttempts)
+				"file_id", row.FileID, "version", row.Version, "size", row.Size, "max_attempts", w.maxAttempts)
 			failCtx, cancelFail := dbCtx(ctx)
-			ferr := w.db().MarkFailed(failCtx, first.FileID, first.Version, w.instanceID, sizesOf(group))
+			ferr := w.db().MarkFailed(failCtx, row.FileID, row.Version, w.instanceID, []string{row.Size})
 			cancelFail()
 			if ferr != nil {
 				slog.Warn("AsyncWorker: MarkFailed (stale cap) failed", "err", ferr)
@@ -353,54 +351,22 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 			continue
 		}
 		if ctx.Err() != nil {
-			w.releaseRows(ctx, first.FileID, first.Version, sizesOf(group))
+			w.releaseRow(ctx, row)
 			continue
 		}
 		switch w.reserve(staleKey) {
 		case reserveFull, reserveClosed, reserveDuplicate:
 			slog.Debug("AsyncWorker: instance at maxInFlight on stale-reclaimed rows, releasing without attempt increment",
-				"file_id", first.FileID, "version", first.Version)
-			w.releaseRows(ctx, first.FileID, first.Version, sizesOf(group))
+				"file_id", row.FileID, "version", row.Version, "size", row.Size)
+			w.releaseRow(ctx, row)
 			continue
 		}
-		job := group
+		job := row
 		go func() {
 			defer w.unreserve(staleKey)
 			w.attempt(ctx, job)
 		}()
 	}
-}
-
-func groupByJob(rows []db.Thumbnail) [][]db.Thumbnail {
-	var groups [][]db.Thumbnail
-	index := map[string]int{}
-	for _, r := range rows {
-		k := liveKey(r.FileID, r.Version)
-		i, ok := index[k]
-		if !ok {
-			i = len(groups)
-			index[k] = i
-			groups = append(groups, nil)
-		}
-		groups[i] = append(groups[i], r)
-	}
-	return groups
-}
-
-func sizesOf(rows []db.Thumbnail) []string {
-	sizes := make([]string, 0, len(rows))
-	for _, r := range rows {
-		sizes = append(sizes, r.Size)
-	}
-	return sizes
-}
-
-func maxAttempts(rows []db.Thumbnail) int {
-	m := 0
-	for _, r := range rows {
-		m = max(m, r.Attempts)
-	}
-	return m
 }
 
 type reserveResult int
@@ -447,24 +413,24 @@ func dbCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
 }
 
-// runOne claims the rows of (fileID, version) and runs one attempt on the
+// runOne claims the row (fileID, version, size) and runs one attempt on the
 // worker context. A worker that is not running, a full instance or a lost claim
-// leaves the rows for the next sweep tick.
-func (w *AsyncWorker) runOne(fileID string, version int) {
+// leaves the row for the next sweep tick.
+func (w *AsyncWorker) runOne(fileID string, version int, size string) {
 	store := w.db()
 	ctx := w.jobContext()
 	if store == nil || ctx == nil || ctx.Err() != nil {
 		return
 	}
-	key := liveKey(fileID, version)
+	key := liveKey(fileID, version, size)
 	if w.reserve(key) != reserveOK {
 		return
 	}
 	claimCtx, cancel := dbCtx(ctx)
-	claimed, err := store.Claim(claimCtx, fileID, version, w.instanceID)
+	claimed, err := store.Claim(claimCtx, fileID, version, size, w.instanceID)
 	cancel()
 	if err != nil {
-		slog.Warn("AsyncWorker: Claim failed", "file_id", fileID, "version", version, "err", err)
+		slog.Warn("AsyncWorker: Claim failed", "file_id", fileID, "version", version, "size", size, "err", err)
 	}
 	if err != nil || len(claimed) == 0 {
 		w.unreserve(key)
@@ -472,30 +438,30 @@ func (w *AsyncWorker) runOne(fileID string, version int) {
 	}
 	go func() {
 		defer w.unreserve(key)
-		w.attempt(ctx, claimed)
+		w.attempt(ctx, claimed[0])
 	}()
 }
 
-// releaseRows returns the rows of a job this instance claimed to PENDING without counting an attempt.
-func (w *AsyncWorker) releaseRows(ctx context.Context, fileID string, version int, sizes []string) {
+// releaseRow returns a row this instance claimed to PENDING without counting an attempt.
+func (w *AsyncWorker) releaseRow(ctx context.Context, row db.Thumbnail) {
 	c, cancel := dbCtx(ctx)
 	defer cancel()
-	if rerr := w.db().Release(c, fileID, version, w.instanceID, sizes); rerr != nil {
-		slog.Warn("AsyncWorker: Release failed", "file_id", fileID, "version", version, "err", rerr)
+	if rerr := w.db().Release(c, row.FileID, row.Version, w.instanceID, []string{row.Size}); rerr != nil {
+		slog.Warn("AsyncWorker: Release failed", "file_id", row.FileID, "version", row.Version, "size", row.Size, "err", rerr)
 	}
 }
 
-// dropRows handles a connectivity failure (source download, blob upload, temp
-// file, Collabora unreachable): the GENERATING rows owned by this instance are
+// dropRow handles a connectivity failure (source download, blob upload, temp
+// file, Collabora unreachable): the GENERATING row owned by this instance is
 // deleted as if the thumbnail had never been requested, so the next user
 // request starts over. No attempt is counted and no backoff applies.
-func (w *AsyncWorker) dropRows(ctx context.Context, fileID string, version int, sizes []string, err error) {
-	slog.Warn("AsyncWorker: connectivity failure, dropping rows",
-		"file_id", fileID, "version", version, "err", err)
+func (w *AsyncWorker) dropRow(ctx context.Context, row db.Thumbnail, err error) {
+	slog.Warn("AsyncWorker: connectivity failure, dropping row",
+		"file_id", row.FileID, "version", row.Version, "size", row.Size, "err", err)
 	c, cancel := dbCtx(ctx)
 	defer cancel()
-	if derr := w.db().DeleteClaimed(c, fileID, version, w.instanceID, sizes); derr != nil {
-		slog.Warn("AsyncWorker: DeleteClaimed failed", "file_id", fileID, "version", version, "err", derr)
+	if derr := w.db().DeleteClaimed(c, row.FileID, row.Version, w.instanceID, []string{row.Size}); derr != nil {
+		slog.Warn("AsyncWorker: DeleteClaimed failed", "file_id", row.FileID, "version", row.Version, "size", row.Size, "err", derr)
 	}
 }
 
@@ -503,21 +469,21 @@ func (w *AsyncWorker) dropRows(ctx context.Context, fileID string, version int, 
 // releases to PENDING or marks FAILED at cap.
 // The triggering error is logged here (in full, untruncated) for observability;
 // it is never persisted to the DB.
-func (w *AsyncWorker) releaseOrFail(ctx context.Context, rows []db.Thumbnail, err error) {
+func (w *AsyncWorker) releaseOrFail(ctx context.Context, row db.Thumbnail, err error) {
 	ctx, cancel := dbCtx(ctx)
 	defer cancel()
-	first := rows[0]
+	sizes := []string{row.Size}
 	slog.Warn("AsyncWorker: render failure, releasing to PENDING with attempt increment",
-		"file_id", first.FileID, "version", first.Version, "err", err,
-		"attempts_after", maxAttempts(rows)+1)
-	if maxAttempts(rows)+1 >= w.maxAttempts {
+		"file_id", row.FileID, "version", row.Version, "size", row.Size, "err", err,
+		"attempts_after", row.Attempts+1)
+	if row.Attempts+1 >= w.maxAttempts {
 		slog.Warn("AsyncWorker: max attempts reached, marking FAILED",
-			"file_id", first.FileID, "version", first.Version, "max_attempts", w.maxAttempts, "err", err)
-		if merr := w.db().MarkFailed(ctx, first.FileID, first.Version, w.instanceID, sizesOf(rows)); merr != nil {
+			"file_id", row.FileID, "version", row.Version, "size", row.Size, "max_attempts", w.maxAttempts, "err", err)
+		if merr := w.db().MarkFailed(ctx, row.FileID, row.Version, w.instanceID, sizes); merr != nil {
 			slog.Warn("AsyncWorker: MarkFailed (transient cap) failed", "err", merr)
 		}
 	} else {
-		if rerr := w.db().ReleaseWithAttempt(ctx, first.FileID, first.Version, w.instanceID, sizesOf(rows)); rerr != nil {
+		if rerr := w.db().ReleaseWithAttempt(ctx, row.FileID, row.Version, w.instanceID, sizes); rerr != nil {
 			slog.Warn("AsyncWorker: ReleaseWithAttempt failed", "err", rerr)
 		}
 	}
@@ -556,6 +522,6 @@ func isStorageNotFound(err error) bool {
 }
 
 // liveKey returns the map key used to track a running goroutine in AsyncWorker.live.
-func liveKey(fileID string, version int) string {
-	return fileID + "\x00" + strconv.Itoa(version)
+func liveKey(fileID string, version int, size string) string {
+	return fileID + "\x00" + strconv.Itoa(version) + "\x00" + size
 }

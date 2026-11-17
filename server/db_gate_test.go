@@ -105,10 +105,10 @@ func TestIsDBConnError(t *testing.T) {
 
 func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 	store := &mockStore{blob: []byte("src")}
-	prevPair, prevProbe := imagePairFunc, probeFunc
-	imagePairFunc = func([]byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
+	prevThumb, prevProbe := imageThumbFunc, probeFunc
+	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil }
 	probeFunc = func([]byte) (render.Info, error) { return render.Info{Width: 4000, Height: 3000, Pages: 1}, nil }
-	defer func() { imagePairFunc, probeFunc = prevPair, prevProbe }()
+	defer func() { imageThumbFunc, probeFunc = prevThumb, prevProbe }()
 
 	// New server with NO WithDB — DB layer disabled.
 	s := New(testCfg(), store, cache.New(8<<20))
@@ -187,8 +187,8 @@ func TestThumbnailGet_GateFlipsReady_Proceeds(t *testing.T) {
 	if ferr != nil {
 		t.Fatalf("FindPair: %v", ferr)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("expected both sizes enqueued after gate flip, got %d rows", len(rows))
+	if len(rows) != 1 || rows[db.SizeM] == nil {
+		t.Fatalf("expected only the requested size enqueued after gate flip, got %d rows", len(rows))
 	}
 }
 

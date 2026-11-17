@@ -84,12 +84,12 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 
 func stubVideoPipeline(t *testing.T) {
 	t.Helper()
-	prevCodec, prevFrame, prevPair := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc
+	prevCodec, prevFrame, prevThumb := videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imageThumbFunc
 	videoDetectCodecFromFileFunc = func(context.Context, string) (string, error) { return "h264", nil }
 	videoFirstFrameFromFileFunc = func(context.Context, string) ([]byte, error) { return []byte("frame"), nil }
-	imagePairFunc = func([]byte) (render.Pair, error) { return render.Pair{S: stubS, M: stubM}, nil }
+	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil }
 	t.Cleanup(func() {
-		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imagePairFunc = prevCodec, prevFrame, prevPair
+		videoDetectCodecFromFileFunc, videoFirstFrameFromFileFunc, imageThumbFunc = prevCodec, prevFrame, prevThumb
 	})
 }
 
@@ -122,6 +122,13 @@ func (r thumbReq) path() string {
 
 func (h *harness) get(r thumbReq) *httptest.ResponseRecorder {
 	h.t.Helper()
+	rec := h.getNow(r)
+	h.settle()
+	return rec
+}
+
+func (h *harness) getNow(r thumbReq) *httptest.ResponseRecorder {
+	h.t.Helper()
 	if r.owner == "" {
 		r.owner = testOwner
 	}
@@ -149,6 +156,16 @@ func (h *harness) waitStatus(id string, version int, status string) map[string]*
 		return len(rows) == 2 && rows[db.SizeS].Status == status && rows[db.SizeM].Status == status
 	})
 	return rows
+}
+
+func (h *harness) waitSize(id string, version int, size, status string) *db.Thumbnail {
+	h.t.Helper()
+	var row *db.Thumbnail
+	eventually(h.t, "size "+size+" "+status, func() bool {
+		row = h.pair(id, version)[size]
+		return row != nil && row.Status == status
+	})
+	return row
 }
 
 func (h *harness) seedReady(id string, version int, size, kind, blob, owner, serviceType string, data []byte, digest string) {
@@ -225,7 +242,7 @@ func TestThumbnailGet_OfficeDisabledByFlag400(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_VideoMissEnqueuesBothSizes202(t *testing.T) {
+func TestThumbnailGet_VideoMissEnqueuesOnlyTheRequestedSize202(t *testing.T) {
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
 	rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime, size: "s", serviceType: "chats", owner: "owner-x", lang: "it-IT", digest: "dg1"})
@@ -233,14 +250,12 @@ func TestThumbnailGet_VideoMissEnqueuesBothSizes202(t *testing.T) {
 		t.Fatalf("status %d, want 202 (%s)", rec.Code, rec.Body)
 	}
 	rows := h.pair(id, testVersion)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want both sizes", len(rows))
+	if len(rows) != 1 || rows["s"] == nil {
+		t.Fatalf("rows = %+v, want only the s row", rows)
 	}
-	for size, r := range rows {
-		if r.Status != db.StatusPending || r.Kind != "video" || r.OwnerID != "owner-x" || r.ServiceType != "chats" ||
-			r.Digest == nil || *r.Digest != "dg1" || r.Lang == nil || *r.Lang != "it-IT" {
-			t.Errorf("size %s row = %+v", size, r)
-		}
+	if r := rows["s"]; r.Status != db.StatusPending || r.Kind != "video" || r.OwnerID != "owner-x" || r.ServiceType != "chats" ||
+		r.Digest == nil || *r.Digest != "dg1" || r.Lang == nil || *r.Lang != "it-IT" {
+		t.Errorf("s row = %+v", r)
 	}
 }
 
@@ -270,7 +285,7 @@ func TestThumbnailGet_PendingAndGeneratingAnswer202(t *testing.T) {
 	if rec := h.get(req); rec.Code != http.StatusAccepted {
 		t.Fatalf("first: %d", rec.Code)
 	}
-	if _, err := h.st.Claim(context.Background(), id, 1, "inst"); err != nil {
+	if _, err := h.st.Claim(context.Background(), id, 1, db.SizeM, "inst"); err != nil {
 		t.Fatal(err)
 	}
 	rec := h.get(req)
@@ -285,12 +300,15 @@ func TestThumbnailGet_ReadyServesStoredRendition(t *testing.T) {
 	src := newID()
 	h.store.seed(src, testVersion, "files", "owner-a", []byte("fake-video"))
 
-	if rec := h.get(thumbReq{id: src, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
-		t.Fatalf("miss: %d", rec.Code)
+	for _, size := range []string{"s", "m"} {
+		if rec := h.get(thumbReq{id: src, version: testVersion, mime: videoMime, size: size}); rec.Code != http.StatusAccepted {
+			t.Fatalf("miss %s: %d", size, rec.Code)
+		}
 	}
 	rows := h.waitStatus(src, testVersion, db.StatusReady)
 
 	for size, want := range map[string]render.Rendition{"s": stubS, "m": stubM} {
+		h.deps.Cache.Delete(h.thumbKeyOf(thumbReq{id: src, version: testVersion}, size))
 		rec := h.get(thumbReq{id: src, version: testVersion, mime: videoMime, size: size})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("size %s: %d", size, rec.Code)
@@ -399,7 +417,7 @@ func TestThumbnailGet_LegacyRowRegeneratesAndDeletesFrameBlob(t *testing.T) {
 		t.Errorf("legacy frame blob must be deleted at once, using the row's owner and service type")
 	}
 	rows := h.pair(id, 1)
-	if len(rows) != 2 || rows["m"].Status != db.StatusPending || rows["m"].BlobID != nil || rows["m"].OwnerID != "request-owner" {
+	if len(rows) != 1 || rows["m"].Status != db.StatusPending || rows["m"].BlobID != nil || rows["m"].OwnerID != "request-owner" {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
@@ -414,13 +432,18 @@ func TestThumbnailGet_DigestMismatchReenqueuesAndDeletesOldBlob(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d, want 202", rec.Code)
 	}
-	if h.store.has("blob-m", 1, "files", "row-owner") || h.store.has("blob-s", 1, "files", "row-owner") {
-		t.Errorf("old blobs must be deleted at once")
+	if h.store.has("blob-m", 1, "files", "row-owner") {
+		t.Errorf("the old blob of the requested size must be deleted at once")
 	}
-	for size, r := range h.pair(id, 1) {
-		if r.Status != db.StatusPending || r.Digest == nil || *r.Digest != "d2" || r.BlobID != nil {
-			t.Errorf("size %s = %+v", size, r)
-		}
+	if !h.store.has("blob-s", 1, "files", "row-owner") {
+		t.Errorf("the other size is not regenerated by a request for m: its blob must stay")
+	}
+	rows := h.pair(id, 1)
+	if r := rows["m"]; r.Status != db.StatusPending || r.Digest == nil || *r.Digest != "d2" || r.BlobID != nil {
+		t.Errorf("size m = %+v", r)
+	}
+	if r := rows["s"]; r.Status != db.StatusReady || r.Digest == nil || *r.Digest != "d1" || r.BlobID == nil {
+		t.Errorf("size s = %+v, want untouched until s is requested", r)
 	}
 	for _, k := range h.store.deletedKeys() {
 		if k.Owner != "row-owner" {
@@ -742,7 +765,7 @@ func TestDeleteThumbnails_RunningJobDeletesItsBlobs(t *testing.T) {
 	close(release)
 
 	eventually(t, "the job deleted the blobs it uploaded", func() bool {
-		return len(h.store.putKeys()) == 2 && h.store.blobCount() == 1
+		return len(h.store.putKeys()) == 1 && h.store.blobCount() == 1
 	})
 	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
 		t.Errorf("a deleted file must stay without rows: %+v", rows)
@@ -788,8 +811,10 @@ func TestThumbnailGet_ConcurrentMissesEnqueueOnce(t *testing.T) {
 	if len(rows) != 2 || rows["s"].Status != db.StatusPending || rows["m"].Status != db.StatusPending {
 		t.Fatalf("rows = %+v, want two PENDING rows", rows)
 	}
-	claimed, err := h.st.Claim(context.Background(), id, 1, "inst")
-	if err != nil || len(claimed) != 2 {
-		t.Fatalf("one claim must take both sizes: n=%d err=%v", len(claimed), err)
+	for _, size := range db.AllSizes {
+		claimed, err := h.st.Claim(context.Background(), id, 1, size, "inst")
+		if err != nil || len(claimed) != 1 || claimed[0].Size != size {
+			t.Fatalf("a claim must take only its own size %s: %+v err=%v", size, claimed, err)
+		}
 	}
 }
