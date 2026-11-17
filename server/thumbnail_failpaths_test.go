@@ -142,6 +142,24 @@ func TestThumbnailGet_RegenLosingTheRaceDeletesOnlyItsOwnBlob(t *testing.T) {
 	}
 }
 
+func assertCachedWithoutRowThenRegenerates(t *testing.T, h *harness, req thumbReq) {
+	t.Helper()
+	if rec := h.get(req); rec.Code != http.StatusOK || rec.Body.String() != string(stubM.Body) {
+		t.Fatalf("poll after the dropped row: %d %q, want 200 from the cache", rec.Code, rec.Body)
+	}
+	if n := h.rowCount(req.id); n != 0 {
+		t.Fatalf("rows = %d, a cache hit must not create a row", n)
+	}
+	h.cancel()
+	h.deps.Cache.Delete(h.thumbKeyOf(req, "m"))
+	if rec := h.get(req); rec.Code != http.StatusAccepted {
+		t.Fatalf("after the cache entry is gone: %d, want 202", rec.Code)
+	}
+	if r := h.pair(req.id, req.version)["m"]; r == nil || r.Status != db.StatusPending {
+		t.Errorf("row = %+v, want a new PENDING row", r)
+	}
+}
+
 func TestWorker_UploadFailureDropsTheRowAndLeavesOnlyTheSource(t *testing.T) {
 	stubVideoPipeline(t)
 	h := newHarness(t, harnessOpts{})
@@ -154,6 +172,7 @@ func TestWorker_UploadFailureDropsTheRowAndLeavesOnlyTheSource(t *testing.T) {
 	eventually(t, "row dropped and nothing uploaded", func() bool {
 		return h.rowCount(id) == 0 && h.store.blobCount() == 1
 	})
+	assertCachedWithoutRowThenRegenerates(t, h, thumbReq{id: id, version: testVersion, mime: videoMime})
 	if !h.store.has(id, testVersion, "files", testOwner) {
 		t.Errorf("only the source blob must remain")
 	}
@@ -172,6 +191,7 @@ func TestWorker_MarkReadyErrorDeletesBlobsAndDropsRows(t *testing.T) {
 	eventually(t, "blob deleted and row dropped after the MarkReady error", func() bool {
 		return len(h.store.putKeys()) == 1 && h.rowCount(id) == 0 && h.store.blobCount() == 1
 	})
+	assertCachedWithoutRowThenRegenerates(t, h, thumbReq{id: id, version: testVersion, mime: videoMime})
 }
 
 func TestLimits_DrainWaitsForFlightsAndBackgroundCleanup(t *testing.T) {

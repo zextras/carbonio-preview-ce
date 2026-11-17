@@ -57,13 +57,13 @@ func resolveThumbnail(step runner, deps Deps, worker *AsyncWorker, q thumbReques
 		if asyncKind(q.p.kind) {
 			return cache.Entry{}, errDependencyDown()
 		}
-		return generateSync(step, deps, worker, q, nil)
+		return generateSync(step, deps, worker, nil, q, nil)
 	}
 	switch {
 	case needsRegen(r, q.digest):
-		return regenerate(step, deps, worker, q, r)
+		return regenerate(step, deps, worker, store, q, r)
 	case r.Status == db.StatusReady:
-		return serveReady(step, deps, worker, q, r)
+		return serveReady(step, deps, worker, store, q, r)
 	case r.Status == db.StatusPending:
 		fireAsyncAttempt(deps, worker, q.id, q.version, q.size)
 		return cache.Entry{}, pendingAnswer(step, deps, q, r)
@@ -89,9 +89,9 @@ func resolveThumbnail(step runner, deps Deps, worker *AsyncWorker, q thumbReques
 	}
 }
 
-func serveReady(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, r *db.Thumbnail) (cache.Entry, error) {
+func serveReady(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, r *db.Thumbnail) (cache.Entry, error) {
 	if time.Since(r.LastAccessedAt) > touchEvery {
-		if err := deps.dbStore().TouchReady(step.work, q.id, q.version, q.size); err != nil {
+		if err := store.TouchReady(step.work, q.id, q.version, q.size); err != nil {
 			slog.Warn("resolveThumbnail: TouchReady failed", "file_id", q.id, "version", q.version, "err", err)
 		}
 	}
@@ -106,14 +106,14 @@ func serveReady(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, r *
 		return cache.Entry{}, originalAnswer{contentType: contentType}
 	}
 	if r.BlobID == nil {
-		return regenerate(step, deps, worker, q, r)
+		return regenerate(step, deps, worker, store, q, r)
 	}
 	data, err := deps.Store.RetrieveData(step.work, *r.BlobID, r.Version, r.ServiceType, r.OwnerID)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			slog.Warn("resolveThumbnail: blob missing, regenerating",
 				"file_id", q.id, "version", q.version, "size", q.size, "blob_id", *r.BlobID)
-			return regenerate(step, deps, worker, q, r)
+			return regenerate(step, deps, worker, store, q, r)
 		}
 		slog.Warn("resolveThumbnail: blob read failed", "file_id", q.id, "blob_id", *r.BlobID, "err", err)
 		return cache.Entry{}, huma.NewError(http.StatusBadGateway, config.Msg.GenericErrorStorage)
@@ -134,23 +134,23 @@ func pendingRow(q thumbRequest, rowKind string) db.Thumbnail {
 	return row
 }
 
-func regenerate(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, expected *db.Thumbnail) (cache.Entry, error) {
+func regenerate(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, expected *db.Thumbnail) (cache.Entry, error) {
 	if asyncKind(q.p.kind) {
-		if err := enqueueRow(step, deps, q, expected, string(q.p.kind)); err != nil {
+		if err := enqueueRow(step, deps, store, q, expected, string(q.p.kind)); err != nil {
 			return cache.Entry{}, err
 		}
 		fireAsyncAttempt(deps, worker, q.id, q.version, q.size)
 		return cache.Entry{}, acceptedError{}
 	}
-	return generateSync(step, deps, worker, q, expected)
+	return generateSync(step, deps, worker, store, q, expected)
 }
 
 // The old blob goes before the row is replaced: a row left pointing at a deleted blob regenerates on its next read, a blob without a row is never reclaimed.
-func enqueueRow(step runner, deps Deps, q thumbRequest, expected *db.Thumbnail, rowKind string) error {
+func enqueueRow(step runner, deps Deps, store *db.Store, q thumbRequest, expected *db.Thumbnail, rowKind string) error {
 	if expected != nil && !deleteRowBlob(step.work, deps.Store, expected, "regenerate") {
 		return nil
 	}
-	if _, err := deps.dbStore().Enqueue(step.work, pendingRow(q, rowKind), expected); err != nil {
+	if _, err := store.Enqueue(step.work, pendingRow(q, rowKind), expected); err != nil {
 		slog.Warn("regenerate: Enqueue failed", "file_id", q.id, "version", q.version, "size", q.size, "err", err)
 		return errDependencyDown()
 	}
@@ -158,7 +158,7 @@ func enqueueRow(step runner, deps Deps, q thumbRequest, expected *db.Thumbnail, 
 }
 
 // generateSync renders only the requested size from the source and answers before it is persisted.
-func generateSync(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, expected *db.Thumbnail) (cache.Entry, error) {
+func generateSync(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, expected *db.Thumbnail) (cache.Entry, error) {
 	data, err := step.fetch(deps.Store, q.id, q.version, q.serviceType, q.owner)
 	if err != nil {
 		return cache.Entry{}, err
@@ -168,10 +168,10 @@ func generateSync(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, e
 		return cache.Entry{}, err
 	}
 	if isAnimatedGIF(q.p, info) {
-		if deps.dbStore() == nil {
+		if store == nil {
 			return cache.Entry{}, errDependencyDown()
 		}
-		return regenerateGIF(step, deps, worker, q, expected, data, info)
+		return regenerateGIF(step, deps, worker, store, q, expected, data, info)
 	}
 	var g produced
 	if q.p.kind == kindPDF {
@@ -182,17 +182,17 @@ func generateSync(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, e
 	if err != nil {
 		return cache.Entry{}, err
 	}
-	return answer(step, deps, q, string(q.p.kind), expected, g)
+	return answer(step, deps, store, q, string(q.p.kind), expected, g)
 }
 
 // answer puts the rendition in the memory cache under its final key and returns it; the row and the blob are saved afterwards in the background.
 // Originals are never cached: the handler streams the source instead.
-func answer(step runner, deps Deps, q thumbRequest, rowKind string, expected *db.Thumbnail, g produced) (cache.Entry, error) {
+func answer(step runner, deps Deps, store *db.Store, q thumbRequest, rowKind string, expected *db.Thumbnail, g produced) (cache.Entry, error) {
 	if !g.original {
 		deps.Cache.Put(q.key(cacheTagThumbnail), g.entry())
 	}
-	if store := deps.dbStore(); store != nil {
-		deps.slotLimits().background(func() { persist(step.work, deps, store, q, rowKind, expected, g) })
+	if store != nil {
+		deps.slotLimits().save(func(ctx context.Context) { persist(ctx, deps, store, q, rowKind, expected, g) })
 	}
 	if g.original {
 		return cache.Entry{}, originalAnswer{contentType: g.contentType}
@@ -223,19 +223,21 @@ func persist(ctx context.Context, deps Deps, store *db.Store, q thumbRequest, ro
 			slog.Warn("persist: PutReady failed", "file_id", q.id, "version", q.version, "size", q.size, "err", err)
 		}
 		if row.BlobID != nil && (err == nil || !blobReferenced(ctx, store, q.id, q.version, *row.BlobID)) {
-			deleteRowBlob(ctx, deps.Store, &row, "persist")
+			dctx, cancel := dbCtx(ctx)
+			defer cancel()
+			deleteRowBlob(dctx, deps.Store, &row, "persist")
 		}
 	}
 }
 
-// blobReferenced is true when a row points at the blob or the rows cannot be read: an ambiguous write must not delete a blob a row may use.
+// blobReferenced is true only when a row is read that points at the blob: with unreadable rows the blob counts as unreferenced, and a row that does point at it self-heals through the 404 regeneration of serveReady.
 func blobReferenced(ctx context.Context, store *db.Store, fileID string, version int, blobID string) bool {
 	rctx, cancel := dbCtx(ctx)
 	defer cancel()
 	rows, err := store.FindPair(rctx, fileID, version)
 	if err != nil {
-		slog.Warn("blobReferenced: FindPair failed, keeping the blob", "file_id", fileID, "blob_id", blobID, "err", err)
-		return true
+		slog.Warn("blobReferenced: FindPair failed, treating the blob as unreferenced", "file_id", fileID, "blob_id", blobID, "err", err)
+		return false
 	}
 	for _, r := range rows {
 		if r.BlobID != nil && *r.BlobID == blobID {
@@ -245,12 +247,12 @@ func blobReferenced(ctx context.Context, store *db.Store, fileID string, version
 	return false
 }
 
-func regenerateGIF(step runner, deps Deps, worker *AsyncWorker, q thumbRequest, expected *db.Thumbnail, data []byte, info render.Info) (cache.Entry, error) {
+func regenerateGIF(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, expected *db.Thumbnail, data []byte, info render.Info) (cache.Entry, error) {
 	if longSide(info) <= sideOf(q.size) {
 		g := produced{contentType: mimeGIF, original: true}
-		return answer(step, deps, q, string(kindGIF), expected, g)
+		return answer(step, deps, store, q, string(kindGIF), expected, g)
 	}
-	if err := enqueueRow(step, deps, q, expected, string(kindGIF)); err != nil {
+	if err := enqueueRow(step, deps, store, q, expected, string(kindGIF)); err != nil {
 		return cache.Entry{}, err
 	}
 	fireAsyncAttempt(deps, worker, q.id, q.version, q.size)

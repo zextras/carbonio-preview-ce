@@ -51,12 +51,21 @@ type limits struct {
 	inflight map[string]*flight
 	closed   bool
 	bg       sync.WaitGroup
+
+	saveCtx    context.Context
+	cancelSave context.CancelFunc
 }
 
+// drainCancelLead is how long before its own deadline drain cancels the background saves, so an interrupted upload can delete its half-written node.
+var drainCancelLead = 4 * time.Second
+
 func newLimits(renderConcurrency int) *limits {
+	saveCtx, cancelSave := context.WithCancel(context.Background())
 	return &limits{
-		render:   newSlots(renderConcurrency),
-		inflight: map[string]*flight{},
+		render:     newSlots(renderConcurrency),
+		inflight:   map[string]*flight{},
+		saveCtx:    saveCtx,
+		cancelSave: cancelSave,
 	}
 }
 
@@ -197,6 +206,11 @@ func (l *limits) background(fn func()) {
 	}()
 }
 
+// save runs fn in a tracked background goroutine on a context that drain cancels shortly before its deadline.
+func (l *limits) save(fn func(ctx context.Context)) {
+	l.background(func() { fn(l.saveCtx) })
+}
+
 // drain stops tracking new work and waits for the flights and background cleanups already running, until ctx ends.
 func (l *limits) drain(ctx context.Context) bool {
 	l.mu.Lock()
@@ -207,6 +221,19 @@ func (l *limits) drain(ctx context.Context) bool {
 		l.bg.Wait()
 		close(done)
 	}()
+	cancelAt := make(<-chan time.Time)
+	if dl, ok := ctx.Deadline(); ok {
+		timer := time.NewTimer(time.Until(dl) - drainCancelLead)
+		defer timer.Stop()
+		cancelAt = timer.C
+	}
+	select {
+	case <-done:
+		return true
+	case <-cancelAt:
+	case <-ctx.Done():
+	}
+	l.cancelSave()
 	select {
 	case <-done:
 		return true

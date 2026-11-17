@@ -312,8 +312,11 @@ func TestImageThumbnail_SizeIsRenderedFromTheSource(t *testing.T) {
 	if s.Width != 320 || s.Height != 192 {
 		t.Fatalf("S = %dx%d, want 320x192", s.Width, s.Height)
 	}
-	if again := thumb(t, thumb(t, src, SideM).Body, SideS); len(again.Body) == len(s.Body) && bytes.Equal(again.Body, s.Body) {
-		t.Fatal("S straight from the source must not be identical to S derived from M")
+	if again := thumb(t, src, SideS); !bytes.Equal(again.Body, s.Body) {
+		t.Fatal("S from the source must be deterministic")
+	}
+	if derived := thumb(t, thumb(t, src, SideM).Body, SideS); bytes.Equal(derived.Body, s.Body) {
+		t.Fatal("S straight from the source must differ from S derived from M")
 	}
 }
 

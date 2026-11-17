@@ -16,19 +16,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zextras/carbonio-preview-ce/v4/cache"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 	"github.com/zextras/carbonio-preview-ce/v4/render"
 )
 
 type sideLog struct {
-	mu    sync.Mutex
-	sides []int
+	mu     sync.Mutex
+	sides  []int
+	inputs [][]byte
 }
 
-func (l *sideLog) add(side int) {
+func (l *sideLog) add(side int, input []byte) {
 	l.mu.Lock()
 	l.sides = append(l.sides, side)
+	l.inputs = append(l.inputs, slices.Clone(input))
 	l.mu.Unlock()
+}
+
+func (l *sideLog) allInputsEqual(t *testing.T, want string) {
+	t.Helper()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.inputs) == 0 {
+		t.Fatal("nothing was rendered")
+	}
+	for i, in := range l.inputs {
+		if string(in) != want {
+			t.Errorf("render %d (side %d) input = %q, want %q", i, l.sides[i], in, want)
+		}
+	}
 }
 
 func (l *sideLog) get() []int {
@@ -47,12 +64,12 @@ func stubFor(side int) render.Rendition {
 func stubImageRender(t *testing.T) *sideLog {
 	t.Helper()
 	l := &sideLog{}
-	swap(t, &imageThumbFunc, func(_ []byte, side int) (render.Rendition, error) {
-		l.add(side)
+	swap(t, &imageThumbFunc, func(in []byte, side int) (render.Rendition, error) {
+		l.add(side, in)
 		return stubFor(side), nil
 	})
-	swap(t, &pdfThumbFunc, func(_ context.Context, _ []byte, side int) (render.Rendition, error) {
-		l.add(side)
+	swap(t, &pdfThumbFunc, func(_ context.Context, in []byte, side int) (render.Rendition, error) {
+		l.add(side, in)
 		return stubFor(side), nil
 	})
 	return l
@@ -119,6 +136,7 @@ func TestSyncGet_RendersAndStoresOnlyTheRequestedSize(t *testing.T) {
 				if got := log.get(); !slices.Equal(got, []int{side}) {
 					t.Errorf("rendered sides = %v, want only %d", got, side)
 				}
+				log.allInputsEqual(t, k.source)
 				rows := h.pair(id, testVersion)
 				if len(rows) != 1 || rows[size] == nil || rows[size].Status != db.StatusReady || rows[size].BlobID == nil {
 					t.Fatalf("rows = %+v, want only a READY %s row with a blob", rows, size)
@@ -234,15 +252,17 @@ func TestSyncGet_ShutdownDrainsAPendingBackgroundSave(t *testing.T) {
 	}
 	recv(t, started, "the background upload to start")
 
-	short, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if h.deps.Limits.drain(short) {
+	drained := make(chan bool, 1)
+	go func() { drained <- h.deps.Limits.drain(ctx) }()
+	select {
+	case <-drained:
 		t.Fatal("drain returned while the save was still uploading")
+	case <-time.After(200 * time.Millisecond):
 	}
 	release()
-	long, cancelLong := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancelLong()
-	if !h.deps.Limits.drain(long) {
+	if !recv(t, drained, "the drain to finish") {
 		t.Fatal("drain did not finish after the upload completed")
 	}
 	if r := h.pair(id, testVersion)[db.SizeM]; r == nil || r.Status != db.StatusReady || r.BlobID == nil {
@@ -269,6 +289,7 @@ func TestOfficeJob_OnlyTheRequestedSizeIsProcessed(t *testing.T) {
 	if got := log.get(); !slices.Equal(got, []int{render.SideS}) {
 		t.Errorf("rendered sides = %v, want only S", got)
 	}
+	log.allInputsEqual(t, "png")
 	if n := len(h.store.putKeys()); n != 1 {
 		t.Errorf("uploads = %d, want 1", n)
 	}
@@ -309,6 +330,7 @@ func TestVideoJob_OnlyTheRequestedSizeIsProcessed(t *testing.T) {
 	if got := log.get(); !slices.Equal(got, []int{render.SideS}) {
 		t.Errorf("rendered sides = %v, want only S", got)
 	}
+	log.allInputsEqual(t, "frame")
 	if n := len(h.store.putKeys()); n != 1 {
 		t.Errorf("uploads = %d, want 1", n)
 	}
@@ -376,5 +398,115 @@ func TestGIFJob_OnlyTheRequestedSizeFromTheSource(t *testing.T) {
 	}
 	if rows := h.pair(id, testVersion); len(rows) != 1 {
 		t.Errorf("rows = %+v, an S request must not create an M row", rows)
+	}
+}
+
+func TestSyncGet_UnreadableDBServesWithoutPersisting(t *testing.T) {
+	for _, k := range syncKinds {
+		t.Run(k.name, func(t *testing.T) {
+			stubImageRender(t)
+			h := newHarness(t, harnessOpts{noWorker: true})
+			id := newID()
+			h.seedSource(id, []byte(k.source))
+			chk, err := db.New(context.Background(), h.dsn, db.PoolConfig{MaxConns: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer chk.Close()
+			h.st.Close()
+
+			rec := h.get(thumbReq{id: id, version: testVersion, mime: k.mime, size: "s"})
+			if rec.Code != http.StatusOK || rec.Body.String() != string(stubS.Body) {
+				t.Fatalf("%d %q, want 200 with S", rec.Code, rec.Body)
+			}
+			if n := len(h.store.putKeys()); n != 0 {
+				t.Errorf("uploads = %d, nothing may be persisted while the DB is unreadable", n)
+			}
+			if n := h.store.blobCount(); n != 1 {
+				t.Errorf("blobs = %d, only the source must remain", n)
+			}
+			if rows, err := chk.FindByFile(context.Background(), id); err != nil || len(rows) != 0 {
+				t.Errorf("rows = %+v err=%v, want none", rows, err)
+			}
+		})
+	}
+}
+
+func TestGIFGet_UnreadableDBIs424(t *testing.T) {
+	h, id := gifHarness(t, harnessOpts{noWorker: true})
+	h.seedSource(id, gifOf(t, 1600, 900, 4))
+	h.st.Close()
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"}); rec.Code != http.StatusFailedDependency {
+		t.Fatalf("status %d, want 424", rec.Code)
+	}
+}
+
+func TestPersist_UnreadableRowsAfterAFailedWriteDeletesTheBlob(t *testing.T) {
+	st := startDBStore(t)
+	store := newMemStore()
+	deps := Deps{Cfg: testCfg(), Store: store, Cache: cache.New(1 << 20), Limits: newLimits(0)}
+	st.Close()
+	q := thumbRequest{p: pipelines["image/webp"], id: newID(), version: testVersion, size: "s", serviceType: "files", owner: testOwner}
+
+	persist(context.Background(), deps, st, q, "image", nil, produced{body: []byte("x"), contentType: "image/jpeg"})
+	if store.blobCount() != 0 {
+		t.Errorf("blobs = %d, an upload whose row could not be written or read back must be deleted", store.blobCount())
+	}
+}
+
+func TestWorker_UnreadableRowsAfterAFailedReadyDeletesTheBlob(t *testing.T) {
+	st := startDBStore(t)
+	store := newMemStore()
+	store.seed("blob-x", testVersion, "files", testOwner, []byte("x"))
+	w := slotWorker(st, store, 1)
+	st.Close()
+	row := db.Thumbnail{FileID: newID(), Version: testVersion, Size: "s", BlobID: strp("blob-x"), OwnerID: testOwner, ServiceType: "files"}
+
+	w.deleteUnreferenced(context.Background(), row)
+	if store.blobCount() != 0 {
+		t.Errorf("blobs = %d, an unverifiable blob must be deleted", store.blobCount())
+	}
+}
+
+type ctxStore struct {
+	*memStore
+	started chan struct{}
+}
+
+func (s *ctxStore) StoreData(ctx context.Context, id string, version int, serviceType, owner string, data []byte) (string, error) {
+	s.started <- struct{}{}
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestLimits_DrainCancelsBackgroundSavesBeforeItsDeadline(t *testing.T) {
+	stubImageRender(t)
+	swap(t, &drainCancelLead, 2*time.Second)
+	store := &ctxStore{memStore: newMemStore(), started: make(chan struct{}, 4)}
+	h := newHarness(t, harnessOpts{cfg: func(_ *testing.T, d Deps) Deps {
+		d.Store = store
+		return d
+	}})
+	id := newID()
+	store.seed(id, testVersion, "files", testOwner, []byte("webp-bytes"))
+	if rec := recv(t, h.getAsync(thumbReq{id: id, version: testVersion, mime: "image/webp", size: "s"}), "the response"); rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	recv(t, store.started, "the background upload to start")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	if !h.deps.Limits.drain(ctx) {
+		t.Fatal("drain gave up: the blocked upload was never cancelled")
+	}
+	if d := time.Since(start); d > 4*time.Second {
+		t.Errorf("drain took %v, the save must be cancelled before the deadline", d)
+	}
+	if n := len(store.deletedKeys()); n != 1 {
+		t.Errorf("cleanup deletes = %d, want the half-written node deleted", n)
+	}
+	if rows := h.pair(id, testVersion); len(rows) != 0 {
+		t.Errorf("rows = %+v", rows)
 	}
 }
