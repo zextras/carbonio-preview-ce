@@ -48,6 +48,9 @@ consul config write /etc/carbonio/preview/service-discover/service-protocol.json
 # Allow other services to contact this service
 consul config write /etc/carbonio/preview/service-discover/intentions.json
 
+# Raise the route timeout of the preview and thumbnail endpoints to 1 hour, as Files does for its transfers
+consul config write /etc/carbonio/preview/service-discover/service-router.json
+
 service-discover service-token ensure --service carbonio-preview --policy "${POLICY_NAME}" \
   --token-file /etc/carbonio/preview/service-discover/token --owner carbonio-preview
 

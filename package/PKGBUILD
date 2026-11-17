@@ -66,6 +66,7 @@ source=(
   "intentions.json"
   "policies.json"
   "service-protocol.json"
+  "service-router.json"
   "carbonio-preview-ce-src.tar.gz"
   "pdfium-linux-x64.tgz::https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz"
   "sharp-libvips-x64.tgz::https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.0.tgz"
@@ -77,12 +78,13 @@ sha256sums=(
   '9beb19457089ee60f06cd77cdf7a631012dd1391eafb85742a65260af85a8b18'
   'ce115c11ca2ebc53ec4bac914ca0b63ae83e309578b2d5aade3698a05f9dbbbc'
   '5b135d5eafa56e9006dfdd6b231f9048b0a446ba9753d7f2f8bf72b0dbfdd4e2'
-  '476cb748250ec66c059a666813ed51a91e3dc9db6e6790209e9269c0a21cdd61'
-  'be35ce50e21b0f8243b8825d829924abde4b68777bf1c91b613754b070ed11c7'
+  'e0b4e946528d5263561528e871896abf7b8d6711180cacc60fbaec40583d2fd4'
+  '501af12a7fd86c6cceec49f2045667999aba095ec5feb296d08fe7444041241c'
   'ab03b6a13ea59be29a0d21547865d1f0060397d96aad8a5eb7a88ea0b360a11b'
   '5eab74e1c04db43cdc3b2a39d6264b8de630b682d2d1987cdd731b92e9cc1210'
   'b85f7aed633545c66303204e2d77d80434b9bf595570b967357c1b130edc1741'
   'e7231b48b3b796a377442a192b1f500faa3bcef075f800708ec9ed8772b74a82'
+  'cf42a7683e8103f9abacb350238d4ccbaa59378702d96a2015b805bd982d0161'
   'SKIP'
   'SKIP'
   'SKIP'
@@ -208,6 +210,8 @@ package() {
     "${pkgdir}/etc/carbonio/preview/service-discover/policies.json"
   install -Dm644 "${srcdir}/service-protocol.json" \
     "${pkgdir}/etc/carbonio/preview/service-discover/service-protocol.json"
+  install -Dm644 "${srcdir}/service-router.json" \
+    "${pkgdir}/etc/carbonio/preview/service-discover/service-router.json"
   install -Dm644 "${srcdir}/messages.ini" \
     "${pkgdir}/etc/carbonio/preview/messages.ini"
   install -Ddm755 "${pkgdir}/var/log/carbonio/preview/"
@@ -238,6 +242,8 @@ package__rocky_8() {
     "${pkgdir}/etc/carbonio/preview/service-discover/policies.json"
   install -Dm644 "${srcdir}/service-protocol.json" \
     "${pkgdir}/etc/carbonio/preview/service-discover/service-protocol.json"
+  install -Dm644 "${srcdir}/service-router.json" \
+    "${pkgdir}/etc/carbonio/preview/service-discover/service-router.json"
   install -Dm644 "${srcdir}/messages.ini" \
     "${pkgdir}/etc/carbonio/preview/messages.ini"
   install -Ddm755 "${pkgdir}/var/log/carbonio/preview/"
@@ -268,6 +274,8 @@ package__ubuntu_jammy() {
     "${pkgdir}/etc/carbonio/preview/service-discover/policies.json"
   install -Dm644 "${srcdir}/service-protocol.json" \
     "${pkgdir}/etc/carbonio/preview/service-discover/service-protocol.json"
+  install -Dm644 "${srcdir}/service-router.json" \
+    "${pkgdir}/etc/carbonio/preview/service-discover/service-router.json"
   install -Dm644 "${srcdir}/messages.ini" \
     "${pkgdir}/etc/carbonio/preview/messages.ini"
   install -Ddm755 "${pkgdir}/var/log/carbonio/preview/"

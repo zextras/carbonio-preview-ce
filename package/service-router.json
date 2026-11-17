@@ -1,0 +1,26 @@
+{
+  "Kind": "service-router",
+  "Name": "carbonio-preview",
+  "Routes": [
+    {
+      "Match": {
+        "HTTP": {
+          "PathPrefix": "/preview"
+        }
+      },
+      "Destination": {
+        "RequestTimeout": "3600s"
+      }
+    },
+    {
+      "Match": {
+        "HTTP": {
+          "PathPrefix": "/thumbnail"
+        }
+      },
+      "Destination": {
+        "RequestTimeout": "3600s"
+      }
+    }
+  ]
+}
