@@ -425,7 +425,7 @@ func TestSyncGet_UnreadableDBServesWithoutPersisting(t *testing.T) {
 			if n := h.store.blobCount(); n != 1 {
 				t.Errorf("blobs = %d, only the source must remain", n)
 			}
-			if rows, err := chk.FindByFile(context.Background(), id); err != nil || len(rows) != 0 {
+			if rows, err := chk.FindPair(context.Background(), id, testVersion); err != nil || len(rows) != 0 {
 				t.Errorf("rows = %+v err=%v, want none", rows, err)
 			}
 		})

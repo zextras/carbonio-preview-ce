@@ -37,7 +37,7 @@ const (
 
 // StartDBAsync wires up the thumbnail DB the same way for every
 // caller: if cfg.DBDSN is empty it logs a WARN and returns immediately — no
-// goroutine is spawned, asynchronous thumbnails stay disabled (424) forever, and
+// goroutine is spawned, thumbnails are generated per request without persistence, and
 // image/pdf/document/health are unaffected. Otherwise it launches a
 // background goroutine that retries opening the pool and running migrations
 // with capped exponential backoff (initial 1s, max 60s) until it succeeds or
@@ -49,12 +49,10 @@ const (
 // instead of hand-rolling the DSN-empty check and the retry loop themselves.
 func (s *Server) StartDBAsync(ctx context.Context, cfg *config.Config) {
 	if cfg.DBDSN == "" {
-		// No credentials: run WITHOUT a thumbnail DB. Asynchronous thumbnails return 424
-		// (unsupported/dependency-down), the worker stays off; all other previews
-		// and health are unaffected. A single clear WARN — not a fatal.
-		slog.Warn("thumbnail DB not configured; asynchronous thumbnails disabled " +
-			"(returning failed-dependency); image/pdf/document previews and health unaffected. " +
-			"Run carbonio-preview-db-bootstrap to enable asynchronous thumbnails.")
+		// No credentials: run WITHOUT a thumbnail DB. Thumbnails are generated per request and cached
+		// in memory only, the worker stays off. A single clear WARN, not a fatal.
+		slog.Warn("thumbnail DB not configured; thumbnails are generated per request and never persisted. " +
+			"Run carbonio-preview-db-bootstrap to enable persistence and asynchronous generation.")
 		return
 	}
 
@@ -80,7 +78,7 @@ func (s *Server) StartDBAsync(ctx context.Context, cfg *config.Config) {
 // readiness gate + starts the worker) and records the pool for stopAsync.
 //
 // It NEVER exits the process: a persistently-unreachable DB simply means asynchronous
-// thumbnails stay disabled (424) while everything else keeps serving.
+// thumbnails are generated per request without persistence while everything else keeps serving.
 func (s *Server) initDBWithRetry(ctx context.Context, cfg *config.Config) {
 	backoff := dbInitialBackoff
 	attempt := 0

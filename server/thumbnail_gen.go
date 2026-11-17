@@ -77,11 +77,11 @@ func (w *AsyncWorker) attempt(ctx context.Context, row db.Thumbnail) {
 	var fail *jobFailure
 	switch kind(row.Kind) {
 	case kindVideo:
-		out, fail = w.runVideo(ctx, row)
+		out, fail = w.runVideo(ctx, row, w.ownSlot())
 	case kindOffice:
-		out, fail = w.runOffice(ctx, row)
+		out, fail = w.runOffice(ctx, row, w.ownSlot())
 	case kindGIF:
-		out, fail = w.runGIF(ctx, row)
+		out, fail = w.runGIF(ctx, row, w.ownSlot())
 	default:
 		fail = failure(failContent, fmt.Errorf("unsupported job kind %q", row.Kind))
 	}
@@ -251,7 +251,7 @@ func sourceFailure(ctx context.Context, err error) *jobFailure {
 
 // runVideo streams the source into a sparse temp file (head and tail only), then probes the codec and
 // extracts the first frame under the async slot, and builds the row's size from the frame.
-func (w *AsyncWorker) runVideo(ctx context.Context, row db.Thumbnail) (produced, *jobFailure) {
+func (w *AsyncWorker) runVideo(ctx context.Context, row db.Thumbnail, slot jobSlot) (produced, *jobFailure) {
 
 	rc, _, err := openSource(ctx, w.deps.Store, row.FileID, row.Version, row.ServiceType, row.OwnerID, readIdleTimeout)
 	if err != nil {
@@ -290,10 +290,10 @@ func (w *AsyncWorker) runVideo(ctx context.Context, row db.Thumbnail) (produced,
 	// and network-independent and should take seconds. Beyond extractCeiling ffmpeg
 	// is hung, which is a render failure (NOT UNSUPPORTED). The ceiling covers
 	// neither the download nor the wait for the slot.
-	if err := w.acquireSem(ctx); err != nil {
+	if err := slot.acquire(ctx); err != nil {
 		return produced{}, failure(failReleased, err)
 	}
-	res := w.runFFmpeg(ctx, row, tmpName)
+	res := w.runFFmpeg(ctx, row, tmpName, slot)
 	if ctx.Err() != nil {
 		return produced{}, failure(failReleased, ctx.Err())
 	}
@@ -301,7 +301,7 @@ func (w *AsyncWorker) runVideo(ctx context.Context, row db.Thumbnail) (produced,
 		slog.Warn("AsyncWorker: codec probe failed", "file_id", row.FileID, "version", row.Version, "err", res.probeErr)
 		return produced{}, failure(failContent, fmt.Errorf("codec probe failed: %w", res.probeErr))
 	}
-	if res.probed && w.db() != nil {
+	if res.probed && row.ClaimedBy != nil && w.db() != nil {
 		stateCtx, cancel := dbCtx(ctx)
 		if serr := w.db().SetCodec(stateCtx, row.FileID, row.Version, w.instanceID, []string{row.Size}, res.codec); serr != nil {
 			slog.Warn("AsyncWorker: SetCodec failed (non-fatal)", "err", serr)
@@ -332,8 +332,8 @@ type ffmpegResult struct {
 }
 
 // runFFmpeg takes over the caller's AsyncSem slot and releases it when the ffmpeg work ends, even on panic.
-func (w *AsyncWorker) runFFmpeg(ctx context.Context, row db.Thumbnail, tmpName string) ffmpegResult {
-	defer w.releaseSem()
+func (w *AsyncWorker) runFFmpeg(ctx context.Context, row db.Thumbnail, tmpName string, slot jobSlot) ffmpegResult {
+	defer slot.release()
 	extractCtx, extractCancel := context.WithTimeout(ctx, extractCeiling)
 	defer extractCancel()
 
@@ -360,7 +360,7 @@ func (w *AsyncWorker) runFFmpeg(ctx context.Context, row db.Thumbnail, tmpName s
 // runOffice downloads the whole document, converts it to a PNG of the first page under the async slot
 // (the wait is bounded by the job context, the call by Collabora's inactivity window) and builds the
 // row's size from it.
-func (w *AsyncWorker) runOffice(ctx context.Context, row db.Thumbnail) (produced, *jobFailure) {
+func (w *AsyncWorker) runOffice(ctx context.Context, row db.Thumbnail, slot jobSlot) (produced, *jobFailure) {
 	data, err := w.deps.Store.RetrieveData(ctx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
 		return produced{}, sourceFailure(ctx, err)
@@ -370,11 +370,11 @@ func (w *AsyncWorker) runOffice(ctx context.Context, row db.Thumbnail) (produced
 		lang = *row.Lang
 	}
 	cfg := w.deps.Cfg
-	if err := w.acquireSem(ctx); err != nil {
+	if err := slot.acquire(ctx); err != nil {
 		return produced{}, failure(failReleased, err)
 	}
 	png, err := func() ([]byte, error) {
-		defer w.releaseSem()
+		defer slot.release()
 		return collaboraConvertFunc(ctx, data, lang, cfg.DocumentConversionFullConvertAddress+"/png",
 			time.Duration(cfg.ServiceDocsTimeout)*time.Second)
 	}()
@@ -391,7 +391,7 @@ func (w *AsyncWorker) runOffice(ctx context.Context, row db.Thumbnail) (produced
 }
 
 // runGIF downloads the source and builds the row's size from it.
-func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail) (produced, *jobFailure) {
+func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail, slot jobSlot) (produced, *jobFailure) {
 	data, err := w.deps.Store.RetrieveData(ctx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
 		return produced{}, sourceFailure(ctx, err)
@@ -400,11 +400,11 @@ func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail) (produced, *
 	if fail != nil {
 		return produced{}, fail
 	}
-	return w.gifOutput(ctx, data, info, row.Size)
+	return w.gifOutput(ctx, data, info, row.Size, slot)
 }
 
 // gifOutput takes the source as is when it fits the size, otherwise resizes it with ffmpeg straight from the source under the async slot.
-func (w *AsyncWorker) gifOutput(ctx context.Context, data []byte, info render.Info, size string) (produced, *jobFailure) {
+func (w *AsyncWorker) gifOutput(ctx context.Context, data []byte, info render.Info, size string, slot jobSlot) (produced, *jobFailure) {
 	if longSide(info) <= sideOf(size) {
 		return produced{body: data, contentType: mimeGIF, original: true}, nil
 	}
@@ -419,10 +419,10 @@ func (w *AsyncWorker) gifOutput(ctx context.Context, data []byte, info render.In
 		return produced{}, failure(failConnectivity, err)
 	}
 
-	if err := w.acquireSem(ctx); err != nil {
+	if err := slot.acquire(ctx); err != nil {
 		return produced{}, failure(failReleased, err)
 	}
-	defer w.releaseSem()
+	defer slot.release()
 	out, fail := w.gifPass(ctx, src, info, size, filepath.Join(dir, size))
 	if fail != nil {
 		return produced{}, fail
@@ -445,6 +445,16 @@ func (w *AsyncWorker) gifPass(ctx context.Context, input string, info render.Inf
 	}
 	return out, nil
 }
+
+// jobSlot is how a job takes the async slot: its own for a worker job, or none for an inline generation whose caller already holds one.
+type jobSlot struct {
+	acquire func(context.Context) error
+	release func()
+}
+
+func (w *AsyncWorker) ownSlot() jobSlot { return jobSlot{acquire: w.acquireSem, release: w.releaseSem} }
+
+var heldSlot = jobSlot{acquire: func(context.Context) error { return nil }, release: func() {}}
 
 type produced struct {
 	body        []byte

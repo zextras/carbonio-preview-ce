@@ -46,16 +46,16 @@ func TestMigration3_KeepsReadyBlobRowsAsLegacy(t *testing.T) {
 	}
 
 	for _, id := range []string{"ready-no-blob", "pending", "unsupported", "failed"} {
-		rows, err := st.FindByFile(ctx, id)
+		rows, err := st.FindPair(ctx, id, 3)
 		if err != nil || len(rows) != 0 {
 			t.Errorf("%s: rows=%v err=%v, want none", id, rows, err)
 		}
 	}
-	rows, err := st.FindByFile(ctx, "keep")
-	if err != nil || len(rows) != 1 {
+	rows, err := st.FindPair(ctx, "keep", 3)
+	if err != nil || len(rows) != 1 || rows[SizeM] == nil {
 		t.Fatalf("keep: rows=%v err=%v, want exactly one", rows, err)
 	}
-	r := rows[0]
+	r := rows[SizeM]
 	if r.Size != SizeM || r.Kind != "video" || r.Status != StatusLegacy {
 		t.Errorf("size/kind/status = %q/%q/%q, want m/video/LEGACY", r.Size, r.Kind, r.Status)
 	}

@@ -10,10 +10,9 @@ package server
 // carbonio-preview must boot and serve image/pdf/document/health even when the
 // thumbnail database is absent or its connection is temporarily down (e.g.
 // the Consul mesh upstream is not up yet at boot). In that state:
-//   - the asynchronous thumbnail (video, office) requests return HTTP 424 (Failed
-//     Dependency): an OPERATIONAL "the DB dependency is down" signal, distinct
-//     from 415 (which means the file's codec is genuinely unsupported and
-//     requires a working DB to have been probed);
+//   - thumbnails are generated per request and served from the memory cache, nothing
+//     is uploaded or recorded; video, office and animated GIF are generated in the
+//     request under the async slot instead of by the worker;
 //   - the async worker does not run;
 //   - delete is a no-op with success so the fire-and-forget WSC caller is happy.
 //
@@ -85,8 +84,8 @@ func (d Deps) dbStore() *db.Store {
 // of wrapped concrete types (net.OpError, pgconn errors, puddle "closed pool",
 // io.ErrUnexpectedEOF, …) and matching on substrings is far more robust across
 // pgx versions than enumerating every concrete type. A connection-level error
-// at runtime means the DB dependency is down → the video path degrades to 424
-// rather than surfacing a 500/503.
+// at runtime means the DB dependency is down → the thumbnail is generated in the
+// request without persisting, rather than surfacing a 500/503.
 func isDBConnError(err error) bool {
 	if err == nil {
 		return false

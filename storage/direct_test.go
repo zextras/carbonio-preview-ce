@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -647,5 +648,29 @@ func TestStoreData_StalledServerFailsOnInactivity(t *testing.T) {
 	}
 	if err := c.Delete(context.Background(), "n", 1, "files", ""); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "no data for") {
 		t.Fatalf("Delete err = %v", err)
+	}
+}
+
+func TestDirectClient_Delete_StatusClassification(t *testing.T) {
+	rejected := []int{400, 401, 403, 405, 409, 410, 413, 422, 500, 501}
+	outage := []int{408, 429, 502, 503, 504, 507}
+	done := []int{200, 204, 404}
+	for _, code := range append(append(append([]int{}, rejected...), outage...), done...) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }))
+		c := NewDirectClient(srv.URL, "download", "upload", "delete", 5*time.Second)
+		err := c.Delete(context.Background(), "n", 1, "files", "")
+		srv.Close()
+		wantRejected := slices.Contains(rejected, code)
+		wantFailure := wantRejected || slices.Contains(outage, code)
+		if (err != nil) != wantFailure {
+			t.Errorf("HTTP %d: err = %v, want failure=%v", code, err, wantFailure)
+			continue
+		}
+		if wantFailure && !errors.Is(err, ErrUnavailable) {
+			t.Errorf("HTTP %d: err = %v, want ErrUnavailable", code, err)
+		}
+		if errors.Is(err, ErrRejected) != wantRejected {
+			t.Errorf("HTTP %d: ErrRejected = %v, want %v (outages never count)", code, errors.Is(err, ErrRejected), wantRejected)
+		}
 	}
 }

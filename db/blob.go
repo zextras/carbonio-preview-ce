@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,20 +46,35 @@ func tombstoneRowBlob(ctx context.Context, tx pgx.Tx, r *Thumbnail) error {
 	return tombstoneBlob(ctx, tx, *r.BlobID, r.OwnerID, r.ServiceType, r.Version)
 }
 
-// settleBlobs finishes the blob side of a row write: a won write consumes the reservation of the new blob and tombstones the replaced one, a lost write tombstones the new blob.
+// settleBlobs finishes the blob side of a row write: a won write tombstones the replaced blob, a lost one the new blob.
 func settleBlobs(ctx context.Context, tx pgx.Tx, won bool, row Thumbnail, replaced *Thumbnail) error {
 	if won {
-		if row.BlobID != nil {
-			if _, err := tx.Exec(ctx, `DELETE FROM thumbnail_blob WHERE blob_id=$1 AND status='PENDING'`, *row.BlobID); err != nil {
-				return err
-			}
-		}
 		if replaced != nil {
 			return tombstoneRowBlob(ctx, tx, replaced)
 		}
 		return nil
 	}
 	return tombstoneRowBlob(ctx, tx, &row)
+}
+
+// consumeReservation takes the reservation of a blob about to be published. It reports false when the reservation already expired into a tombstone, so the blob must not be published.
+func consumeReservation(ctx context.Context, tx pgx.Tx, r *Thumbnail) (bool, error) {
+	if r.BlobID == nil || r.Original {
+		return true, nil
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM thumbnail_blob WHERE blob_id=$1 AND status='PENDING'`, *r.BlobID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	var expired int
+	err = tx.QueryRow(ctx, `SELECT 1 FROM thumbnail_blob WHERE blob_id=$1 AND status='TOMBSTONE'`, *r.BlobID).Scan(&expired)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return false, err
 }
 
 // Reserve records a PENDING reservation; the caller uploads only when it succeeds.

@@ -461,6 +461,7 @@ func TestMarkReady_OnlyAffectsOwnedRow(t *testing.T) {
 		}
 	}
 
+	store.exec(t, `DELETE FROM thumbnail_blob`)
 	written, err = store.MarkReady(ctx, realInst, rows[1:])
 	if err != nil {
 		t.Fatalf("MarkReady (correct inst): %v", err)
@@ -868,36 +869,6 @@ func TestMarkReady_WritesOnlyClaimedSizes(t *testing.T) {
 	}
 }
 
-func TestDeleteByFile_AllVersionsAndSizes(t *testing.T) {
-	st := startPostgres(t)
-	ctx := context.Background()
-	id, other := uid(t, "del"), uid(t, "other")
-
-	for _, v := range []int{1, 2} {
-		for _, size := range []string{SizeS, SizeM} {
-			if ok, err := st.Enqueue(ctx, newPending(id, v, size, "video"), nil); err != nil || !ok {
-				t.Fatal(ok, err)
-			}
-		}
-	}
-	if ok, err := st.Enqueue(ctx, newPending(other, 1, SizeS, "video"), nil); err != nil || !ok {
-		t.Fatal(ok, err)
-	}
-	rows, err := st.FindByFile(ctx, id)
-	if err != nil || len(rows) != 4 {
-		t.Fatalf("FindByFile = %d rows err=%v, want 4", len(rows), err)
-	}
-	if err := st.DeleteByFile(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	if rows, _ := st.FindByFile(ctx, id); len(rows) != 0 {
-		t.Errorf("rows left: %v", rows)
-	}
-	if rows, _ := st.FindByFile(ctx, other); len(rows) != 1 {
-		t.Errorf("other file must be kept: %v", rows)
-	}
-}
-
 func TestEnqueue_CASRefreshesCreatedAt(t *testing.T) {
 	st := startPostgres(t)
 	ctx := context.Background()
@@ -983,7 +954,7 @@ func TestDeleteFile_RollsBackWhenTheTombstoneCannotBeWritten(t *testing.T) {
 		t.Fatal("want the tombstone error")
 	}
 	st.exec(t, `ALTER TABLE thumbnail_blob_gone RENAME TO thumbnail_blob`)
-	if rows, _ := st.FindByFile(ctx, id); len(rows) != 1 {
+	if rows, _ := st.FindPair(ctx, id, 1); len(rows) != 1 {
 		t.Fatalf("rows = %d, the row delete must roll back with the failed tombstone", len(rows))
 	}
 }
@@ -1117,5 +1088,37 @@ func TestClaimedTransitions_ScopedToSizes(t *testing.T) {
 	got = pairOf(t, st, id, 1)
 	if got[SizeS].Status != StatusPending || got[SizeM].Status != StatusFailed {
 		t.Fatalf("MarkFailed scoped to m: s=%s m=%s", got[SizeS].Status, got[SizeM].Status)
+	}
+}
+
+func TestPutReady_ExpiredReservationLosesTheWriteAndKeepsTheBlobTombstoned(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "expired_confirm")
+	if err := st.Reserve(ctx, "b-stalled", "owner1", "files", 1); err != nil {
+		t.Fatal(err)
+	}
+	st.exec(t, `UPDATE thumbnail_blob SET status='TOMBSTONE' WHERE blob_id='b-stalled'`)
+	row := newPending(id, 1, SizeM, "image")
+	row.BlobID = strp("b-stalled")
+	if ok, err := st.PutReady(ctx, row, nil); err != nil || ok {
+		t.Fatalf("PutReady: ok=%v err=%v, want a clean loss", ok, err)
+	}
+	if got, _ := st.FindPair(ctx, id, 1); len(got) != 0 {
+		t.Errorf("a READY row must never point at a tombstoned blob: %+v", got)
+	}
+	if tombstoneStatus(t, st, "b-stalled") != BlobTombstone {
+		t.Error("the blob stays tombstoned for the purge")
+	}
+
+	enqueuePair(t, st, id, 2)
+	claimPair(t, st, id, 2, "inst")
+	if err := st.Reserve(ctx, "b-stalled-2", "owner1", "files", 2); err != nil {
+		t.Fatal(err)
+	}
+	st.exec(t, `UPDATE thumbnail_blob SET status='TOMBSTONE' WHERE blob_id='b-stalled-2'`)
+	written, err := st.MarkReady(ctx, "inst", []Thumbnail{{FileID: id, Version: 2, Size: SizeM, BlobID: strp("b-stalled-2"), OwnerID: "owner1", ServiceType: "files"}})
+	if err != nil || len(written) != 0 {
+		t.Fatalf("MarkReady: %v %v, want the row left GENERATING", written, err)
 	}
 }

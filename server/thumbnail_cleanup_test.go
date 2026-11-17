@@ -336,6 +336,7 @@ func TestCleanupOnce(t *testing.T) {
 	seed("c_legacy", 31*day, seedOpts{status: db.StatusLegacy})
 	seed("c_old_404", 32*day, seedOpts{noBlob: true})
 	seed("c_old_err", 33*day, seedOpts{})
+	seed("c_touched", 30*day+12*time.Hour, seedOpts{})
 	seed("c_recent", 29*day, seedOpts{})
 	for _, status := range []string{db.StatusFailed, db.StatusUnsupported, db.StatusPending, db.StatusGenerating} {
 		seed("c_"+status, 90*day, seedOpts{status: status})
@@ -344,6 +345,8 @@ func TestCleanupOnce(t *testing.T) {
 		switch k {
 		case key("c_old_err"):
 			return errors.New("storage down")
+		case key("c_ready"):
+			sqlExec(t, dsn, `UPDATE thumbnail SET last_accessed_at = now() WHERE file_id='c_touched'`)
 		}
 		return nil
 	}
@@ -354,7 +357,7 @@ func TestCleanupOnce(t *testing.T) {
 	}
 
 	gone := []string{"c_ready", "c_original", "c_legacy", "c_old_404", "c_old_err"}
-	kept := []string{"c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating}
+	kept := []string{"c_touched", "c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating}
 	for _, id := range gone {
 		if row := findRow(st, id, version); row != nil {
 			t.Errorf("%s must be deleted", id)
@@ -390,6 +393,12 @@ func TestCleanupOnce(t *testing.T) {
 	}
 	if n := sqlInt(t, dsn, `SELECT count(*) FROM thumbnail_blob`); n != 1 {
 		t.Errorf("tombstones = %d, only the failed one may be left", n)
+	}
+	if !store.has("blob-c_touched", version, "docs", owner("c_touched")) || deleted[key("c_touched")] {
+		t.Error("a row accessed after FindExpired keeps its blob")
+	}
+	if n := sqlInt(t, dsn, `SELECT count(*) FROM thumbnail_blob WHERE blob_id='blob-c_touched'`); n != 0 {
+		t.Error("a row accessed after FindExpired must get no tombstone")
 	}
 	for _, id := range []string{"c_recent", "c_" + db.StatusFailed, "c_" + db.StatusUnsupported, "c_" + db.StatusPending, "c_" + db.StatusGenerating} {
 		if deleted[key(id)] {

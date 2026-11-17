@@ -83,8 +83,8 @@ type Option func(*Server)
 // (background pool-open + Migrate, then gate + worker start).
 //
 // When EnableDB has not yet fired, the thumbnail DB layer is disabled:
-// asynchronous thumbnails (video, office) return 424 (Failed Dependency) and the worker does not
-// process rows. Image/PDF/document/health are unaffected.
+// thumbnails are generated in the request and only cached in memory, and the worker does not
+// process rows. Preview/health are unaffected.
 func New(cfg *config.Config, store storage.Client, c *cache.Cache, opts ...Option) *Server {
 	s := &Server{cfg: cfg, store: store, cache: c, dbGate: newDBGate()}
 	for _, opt := range opts {

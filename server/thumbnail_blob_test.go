@@ -6,8 +6,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -452,4 +454,153 @@ func TestDBLess_DBComingBackPersistsOnTheNextMiss(t *testing.T) {
 	if err != nil || rows[db.SizeS] == nil || rows[db.SizeS].Status != db.StatusReady {
 		t.Errorf("rows = %+v err=%v, want the thumbnail persisted", rows, err)
 	}
+}
+
+func (h *harness) getCtx(ctx context.Context, r thumbReq) *httptest.ResponseRecorder {
+	h.t.Helper()
+	req := httptest.NewRequest(http.MethodGet, r.path(), nil).WithContext(ctx)
+	req.Header.Set("fileownerid", testOwner)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestDBLess_CallerLeavingWhileWaitingForTheSlotDownloadsNothing(t *testing.T) {
+	stubOffice(t, nil, func(collaboraCall) ([]byte, error) { return []byte("png"), nil })
+	stubImageRender(t)
+	h := newHarness(t, harnessOpts{noDB: true})
+	id := newID()
+	h.store.seed(id, testVersion, "files", testOwner, []byte("docx"))
+	for i := 0; i < cap(h.deps.AsyncSem); i++ {
+		h.deps.AsyncSem <- struct{}{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- h.getCtx(ctx, thumbReq{id: id, version: testVersion, mime: docxMime, size: "s"}) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	rec := recv(t, done, "the request to give up")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status %d, want 503 when the caller leaves while waiting for the slot", rec.Code)
+	}
+	if n := h.store.getCount(); n != 0 {
+		t.Errorf("source downloads = %d, nothing is downloaded before the slot is held", n)
+	}
+	if n := len(h.deps.AsyncSem); n != cap(h.deps.AsyncSem) {
+		t.Errorf("slots held = %d, want only the test's %d", n, cap(h.deps.AsyncSem))
+	}
+}
+
+func TestDBLess_ErrorPathsReleaseTheSlot(t *testing.T) {
+	stubOffice(t, nil, func(collaboraCall) ([]byte, error) { return nil, errors.New("collabora returned status 400") })
+	stubImageRender(t)
+	h := newHarness(t, harnessOpts{noDB: true})
+	missing := newID()
+	if rec := h.get(thumbReq{id: missing, version: testVersion, mime: docxMime}); rec.Code != http.StatusNotFound {
+		t.Errorf("missing source: %d, want 404", rec.Code)
+	}
+	id := newID()
+	h.store.seed(id, testVersion, "files", testOwner, []byte("docx"))
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: docxMime}); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("failed conversion: %d, want 422", rec.Code)
+	}
+	if n := len(h.deps.AsyncSem); n != 0 {
+		t.Errorf("slots leaked = %d", n)
+	}
+}
+
+func TestDBLess_InlineGenerationsAreBoundedByTheAsyncSlots(t *testing.T) {
+	const slots, requests = 2, 6
+	var mu sync.Mutex
+	var cur, peak int
+	release := make(chan struct{})
+	stubOffice(t, nil, func(collaboraCall) ([]byte, error) {
+		mu.Lock()
+		cur++
+		peak = max(peak, cur)
+		mu.Unlock()
+		<-release
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return []byte("png"), nil
+	})
+	stubImageRender(t)
+	h := newHarness(t, harnessOpts{noDB: true, cfg: func(_ *testing.T, d Deps) Deps {
+		d.AsyncSem = make(chan struct{}, slots)
+		return d
+	}})
+	var done []<-chan *httptest.ResponseRecorder
+	for i := 0; i < requests; i++ {
+		id := newID()
+		h.store.seed(id, testVersion, "files", testOwner, []byte("docx"))
+		done = append(done, h.getAsync(thumbReq{id: id, version: testVersion, mime: docxMime, size: "s"}))
+	}
+	eventually(t, "the slots are full", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return cur == slots
+	})
+	time.Sleep(200 * time.Millisecond)
+	if n := h.store.getCount(); n != slots {
+		t.Errorf("source downloads while the slots are held = %d, want %d (a download needs a slot)", n, slots)
+	}
+	close(release)
+	for _, d := range done {
+		if rec := recv(t, d, "a request"); rec.Code != http.StatusOK {
+			t.Errorf("status %d", rec.Code)
+		}
+	}
+	if peak != slots {
+		t.Errorf("peak concurrent generations = %d, want %d", peak, slots)
+	}
+}
+
+func TestBlobCycle_PurgeSurvivesATombstoneRemovedMeanwhile(t *testing.T) {
+	h := newHarness(t, harnessOpts{noWorker: true})
+	h.store.seed("b-a", 1, "files", "o", []byte("a"))
+	h.store.seed("b-b", 1, "files", "o", []byte("b"))
+	h.exec(`INSERT INTO thumbnail_blob (blob_id, owner_id, service_type, version, status, created_at) VALUES
+        ('b-a', 'o', 'files', 1, 'TOMBSTONE', now() - interval '2 hours'),
+        ('b-b', 'o', 'files', 1, 'TOMBSTONE', now() - interval '1 hour')`)
+	h.store.deleteErr = func(k memKey) error {
+		if k.Node == "b-a" {
+			h.exec(`DELETE FROM thumbnail_blob WHERE blob_id='b-a'`)
+			return fmt.Errorf("%w: %w: HTTP 400", storage.ErrUnavailable, storage.ErrRejected)
+		}
+		return nil
+	}
+	h.purge()
+	if h.blobStatus("b-b") != "" || h.store.has("b-b", 1, "files", "o") {
+		t.Errorf("the run must go on after a tombstone vanished: b-b status %q", h.blobStatus("b-b"))
+	}
+}
+
+func TestDBLess_DBDroppingBetweenReadAndEnqueueFallsBack(t *testing.T) {
+	t.Run("animated_gif", func(t *testing.T) {
+		swap(t, &animatedGIFFunc, func(context.Context, string, render.Info, int, string) ([]byte, error) {
+			return []byte("GIF89a-small"), nil
+		})
+		h, id := gifHarness(t, harnessOpts{noWorker: true})
+		h.seedSource(id, gifOf(t, 1600, 900, 4))
+		h.store.onGet = func(memKey) { h.st.Close() }
+		rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"})
+		if rec.Code != http.StatusOK || rec.Body.String() != "GIF89a-small" {
+			t.Fatalf("status %d %q, want the request generation instead of 424", rec.Code, rec.Body)
+		}
+	})
+	t.Run("video", func(t *testing.T) {
+		stubVideoPipeline(t)
+		h := newHarness(t, harnessOpts{noWorker: true})
+		id := newID()
+		h.store.seed(id, testVersion, "files", testOwner, []byte("fake-video"))
+		h.st.Close()
+		p, _ := pipelineFor(videoMime)
+		q := thumbRequest{p: p, id: id, version: testVersion, size: "s", serviceType: "files", owner: testOwner}
+		step := h.deps.slotLimits().forCaller(context.Background(), "t")
+		e, err := regenerate(step, h.deps, h.worker, h.st, q, nil)
+		if err != nil || string(e.Body) != string(stubS.Body) {
+			t.Fatalf("regenerate with a dropped DB: %v %q, want the request generation instead of 424", err, e.Body)
+		}
+	})
 }

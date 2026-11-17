@@ -11,6 +11,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 	"github.com/zextras/carbonio-preview-ce/v4/storage"
 )
@@ -132,6 +134,9 @@ func (w *AsyncWorker) purgeTombstones(ctx context.Context, store *db.CleanupConn
 				purged++
 			case errors.Is(berr, storage.ErrRejected):
 				n, aerr := store.RecordAttempt(ctx, b.BlobID)
+				if errors.Is(aerr, pgx.ErrNoRows) {
+					continue
+				}
 				if aerr != nil {
 					return aerr
 				}

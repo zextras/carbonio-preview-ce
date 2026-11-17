@@ -24,11 +24,7 @@ import (
 
 func (h *harness) rowCount(id string) int {
 	h.t.Helper()
-	rows, err := h.st.FindByFile(context.Background(), id)
-	if err != nil {
-		h.t.Fatalf("FindByFile: %v", err)
-	}
-	return len(rows)
+	return sqlInt(h.t, h.dsn, `SELECT count(*) FROM thumbnail WHERE file_id=$1`, id)
 }
 
 func (h *harness) deleteThumbnails(id string) *httptest.ResponseRecorder {
@@ -37,31 +33,32 @@ func (h *harness) deleteThumbnails(id string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestDeleteThumbnails_ConcurrentReadyKeepsNewBlob(t *testing.T) {
+func TestDeleteThumbnails_RacingWriteLosesAndItsBlobIsTombstoned(t *testing.T) {
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
 	h.seedReady(id, 1, "m", "video", "b-old", "o", "files", []byte("x"), "")
-	var once sync.Once
-	h.store.deleteErr = func(memKey) error {
-		once.Do(func() {
-			cur := h.pair(id, 1)
-			next := db.Thumbnail{FileID: id, Version: 1, Size: "m", Kind: "video", OwnerID: "o", ServiceType: "files", BlobID: strp("b-new")}
-			h.store.seed("b-new", 1, "files", "o", []byte("y"))
-			if ok, err := h.st.PutReady(context.Background(), next, cur["m"]); err != nil || !ok {
-				t.Errorf("concurrent PutReady: ok=%v err=%v", ok, err)
-			}
-		})
-		return nil
-	}
+	snapshot := h.pair(id, 1)["m"]
+
 	if rec := h.deleteThumbnails(id); rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", rec.Code)
 	}
-	row := h.pair(id, 1)["m"]
-	if row == nil || row.BlobID == nil || *row.BlobID != "b-new" {
-		t.Fatalf("the row written meanwhile must survive: %+v", row)
+	if err := h.st.Reserve(context.Background(), "b-new", "o", "files", 1); err != nil {
+		t.Fatal(err)
 	}
-	if !h.store.has("b-new", 1, "files", "o") {
-		t.Errorf("the blob of the surviving row was deleted")
+	h.store.seed("b-new", 1, "files", "o", []byte("y"))
+	next := db.Thumbnail{FileID: id, Version: 1, Size: "m", Kind: "video", OwnerID: "o", ServiceType: "files", BlobID: strp("b-new")}
+	if ok, err := h.st.PutReady(context.Background(), next, snapshot); err != nil || ok {
+		t.Fatalf("a write racing the delete with the old snapshot: ok=%v err=%v, want a clean loss", ok, err)
+	}
+	if n := h.rowCount(id); n != 0 {
+		t.Errorf("rows = %d, a deleted file stays without rows", n)
+	}
+	if h.blobStatus("b-new") != "TOMBSTONE" {
+		t.Errorf("the losing write's blob status = %q, want TOMBSTONE", h.blobStatus("b-new"))
+	}
+	h.purge()
+	if h.store.has("b-new", 1, "files", "o") {
+		t.Errorf("the purge must delete the losing write's blob")
 	}
 }
 

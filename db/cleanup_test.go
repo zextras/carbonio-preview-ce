@@ -227,12 +227,12 @@ func TestExpired_SelectionDeletionAndPaging(t *testing.T) {
 			}
 		}
 		for _, id := range []string{both, legacy, expired[1], expired[2]} {
-			if rows, _ := st.FindByFile(ctx, id); len(rows) != 0 {
+			if rows, _ := st.FindPair(ctx, id, 1); len(rows) != 0 {
 				t.Errorf("%s should be deleted: %v", id, rows)
 			}
 		}
 		for _, id := range append([]string{recent, expired[0]}, keys(others)...) {
-			if rows, _ := st.FindByFile(ctx, id); len(rows) != 1 {
+			if rows, _ := st.FindPair(ctx, id, 1); len(rows) != 1 {
 				t.Errorf("%s must be kept: %v", id, rows)
 			}
 		}
@@ -324,9 +324,9 @@ func TestCleanupRun_WorksWithSingleConnectionPool(t *testing.T) {
 	if err != nil || !locked {
 		t.Fatalf("run: locked=%v err=%v", locked, err)
 	}
-	rows, err := st.FindByFile(ctx, id)
+	rows, err := st.FindPair(ctx, id, 1)
 	if err != nil || len(rows) != 0 {
-		t.Fatalf("FindByFile after run: rows=%v err=%v", rows, err)
+		t.Fatalf("FindPair after run: rows=%v err=%v", rows, err)
 	}
 }
 

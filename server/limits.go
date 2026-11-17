@@ -56,7 +56,7 @@ type limits struct {
 	cancelSave context.CancelFunc
 }
 
-// drainCancelLead is how long before its own deadline drain cancels the background saves, so an interrupted upload can delete its half-written node.
+// drainCancelLead is how long before its own deadline drain cancels the background saves, so an interrupted upload leaves a tombstone instead of being cut mid-way.
 var drainCancelLead = 4 * time.Second
 
 func newLimits(renderConcurrency int) *limits {

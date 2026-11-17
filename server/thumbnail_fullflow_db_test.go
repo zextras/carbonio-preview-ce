@@ -103,7 +103,7 @@ func TestThumbnailFullFlowDB(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("DELETE: %d", resp.StatusCode)
 	}
-	if left, _ := st.FindByFile(context.Background(), id); len(left) != 0 {
+	if left, _ := st.FindPair(context.Background(), id, version); len(left) != 0 {
 		t.Errorf("rows left: %+v", left)
 	}
 	deleted := map[string]bool{}

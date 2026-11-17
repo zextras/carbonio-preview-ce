@@ -201,21 +201,6 @@ func (s *Store) FindPair(ctx context.Context, fileID string, version int) (map[s
 	return out, nil
 }
 
-func (s *Store) FindByFile(ctx context.Context, fileID string) ([]Thumbnail, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+selectCols+` FROM thumbnail WHERE file_id=$1 ORDER BY version, size`,
-		fileID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("db.FindByFile: %w", err)
-	}
-	all, err := scanAll(rows)
-	if err != nil {
-		return nil, fmt.Errorf("db.FindByFile: scan: %w", err)
-	}
-	return all, nil
-}
-
 const casWhere = `file_id=$1 AND version=$2 AND size=$3 AND status=$4
     AND blob_id IS NOT DISTINCT FROM $5 AND digest IS NOT DISTINCT FROM $6`
 
@@ -229,6 +214,11 @@ func (s *Store) PutReady(ctx context.Context, row Thumbnail, expected *Thumbnail
 		return false, fmt.Errorf("db.PutReady: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if ok, err := consumeReservation(ctx, tx, &row); err != nil {
+		return false, fmt.Errorf("db.PutReady: %w", err)
+	} else if !ok {
+		return false, tx.Commit(ctx)
+	}
 	var tag pgconn.CommandTag
 	if expected == nil {
 		tag, err = tx.Exec(ctx,
@@ -379,6 +369,11 @@ func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbna
 	defer func() { _ = tx.Rollback(ctx) }()
 	var written []string
 	for _, r := range rows {
+		if ok, err := consumeReservation(ctx, tx, &r); err != nil {
+			return nil, fmt.Errorf("db.MarkReady: %w", err)
+		} else if !ok {
+			continue
+		}
 		tag, err := tx.Exec(ctx,
 			`UPDATE thumbnail
              SET status='READY', blob_id=$1, original=$2, content_type=$3,
@@ -522,14 +517,6 @@ func (s *Store) DeleteFile(ctx context.Context, fileID string) ([]Thumbnail, err
 		return nil, fmt.Errorf("db.DeleteFile: commit: %w", err)
 	}
 	return deleted, nil
-}
-
-func (s *Store) DeleteByFile(ctx context.Context, fileID string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM thumbnail WHERE file_id=$1`, fileID)
-	if err != nil {
-		return fmt.Errorf("db.DeleteByFile: %w", err)
-	}
-	return nil
 }
 
 // CleanupConn is the connection holding the cleanup advisory lock; the job runs

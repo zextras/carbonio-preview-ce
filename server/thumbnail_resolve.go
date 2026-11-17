@@ -136,8 +136,11 @@ func pendingRow(q thumbRequest, rowKind string) db.Thumbnail {
 
 func regenerate(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q thumbRequest, expected *db.Thumbnail) (cache.Entry, error) {
 	if asyncKind(q.p.kind) {
-		if err := enqueueRow(step, deps, store, q, expected, string(q.p.kind)); err != nil {
-			return cache.Entry{}, err
+		if err := enqueueRow(step, store, q, expected, string(q.p.kind)); err != nil {
+			if isDBConnError(err) {
+				return generateInline(step, deps, worker, q)
+			}
+			return cache.Entry{}, errDependencyDown()
 		}
 		fireAsyncAttempt(deps, worker, q.id, q.version, q.size)
 		return cache.Entry{}, acceptedError{}
@@ -145,12 +148,12 @@ func regenerate(step runner, deps Deps, worker *AsyncWorker, store *db.Store, q 
 	return generateSync(step, deps, worker, store, q, expected)
 }
 
-func enqueueRow(step runner, deps Deps, store *db.Store, q thumbRequest, expected *db.Thumbnail, rowKind string) error {
-	if _, err := store.Enqueue(step.work, pendingRow(q, rowKind), expected); err != nil {
+func enqueueRow(step runner, store *db.Store, q thumbRequest, expected *db.Thumbnail, rowKind string) error {
+	_, err := store.Enqueue(step.work, pendingRow(q, rowKind), expected)
+	if err != nil {
 		slog.Warn("regenerate: Enqueue failed", "file_id", q.id, "version", q.version, "size", q.size, "err", err)
-		return errDependencyDown()
 	}
-	return nil
+	return err
 }
 
 // generateSync renders only the requested size from the source and answers before it is persisted.
@@ -220,13 +223,18 @@ func generateInline(step runner, deps Deps, worker *AsyncWorker, q thumbRequest)
 	if worker == nil {
 		worker = NewAsyncWorker(deps)
 	}
+	sem := slots(deps.AsyncSem)
+	if err := step.slot(sem); err != nil {
+		return cache.Entry{}, err
+	}
+	defer sem.release()
 	row := db.Thumbnail{FileID: q.id, Version: q.version, Size: q.size, Kind: string(q.p.kind), Lang: &q.lang, OwnerID: q.owner, ServiceType: q.serviceType}
 	var out produced
 	var fail *jobFailure
 	if q.p.kind == kindVideo {
-		out, fail = worker.runVideo(step.work, row)
+		out, fail = worker.runVideo(step.work, row, heldSlot)
 	} else {
-		out, fail = worker.runOffice(step.work, row)
+		out, fail = worker.runOffice(step.work, row, heldSlot)
 	}
 	return inlineAnswer(deps, q, out, fail)
 }
@@ -235,7 +243,12 @@ func generateGIFInline(step runner, deps Deps, worker *AsyncWorker, q thumbReque
 	if worker == nil {
 		worker = NewAsyncWorker(deps)
 	}
-	out, fail := worker.gifOutput(step.work, data, info, q.size)
+	sem := slots(deps.AsyncSem)
+	if err := step.slot(sem); err != nil {
+		return cache.Entry{}, err
+	}
+	defer sem.release()
+	out, fail := worker.gifOutput(step.work, data, info, q.size, heldSlot)
 	return inlineAnswer(deps, q, out, fail)
 }
 
@@ -270,8 +283,11 @@ func regenerateGIF(step runner, deps Deps, worker *AsyncWorker, store *db.Store,
 		g := produced{contentType: mimeGIF, original: true}
 		return answer(step, deps, store, q, string(kindGIF), expected, g)
 	}
-	if err := enqueueRow(step, deps, store, q, expected, string(kindGIF)); err != nil {
-		return cache.Entry{}, err
+	if err := enqueueRow(step, store, q, expected, string(kindGIF)); err != nil {
+		if isDBConnError(err) {
+			return generateGIFInline(step, deps, worker, q, data, info)
+		}
+		return cache.Entry{}, errDependencyDown()
 	}
 	fireAsyncAttempt(deps, worker, q.id, q.version, q.size)
 	return cache.Entry{}, cacheInterim(step, deps, q, data)
@@ -316,7 +332,7 @@ func failedGIFFrame(step runner, deps Deps, q thumbRequest) (cache.Entry, error)
 	return f.entry(), nil
 }
 
-// deleteRowBlob reports whether the row's blob is gone (a missing blob counts), so the caller may drop or replace the row.
+// deleteRowBlob deletes the blob of a row already removed from the DB and reports whether it is gone (a missing blob counts), so its tombstone can go.
 func deleteRowBlob(ctx context.Context, store storage.Client, row *db.Thumbnail, op string) bool {
 	if row.BlobID == nil || row.Original {
 		return true

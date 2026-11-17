@@ -599,16 +599,8 @@ func TestThumbnailGet_CacheHitTouchesAtMostDaily(t *testing.T) {
 
 	age := func() { h.age(id, 48*time.Hour) }
 	touched := func() bool {
-		rows, err := h.st.FindByFile(context.Background(), id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range rows {
-			if r.Size == "m" {
-				return time.Since(r.LastAccessedAt) < time.Hour
-			}
-		}
-		return false
+		r := h.pair(id, 1)["m"]
+		return r != nil && time.Since(r.LastAccessedAt) < time.Hour
 	}
 	hits := func(n int) {
 		for i := 0; i < n; i++ {
@@ -649,11 +641,8 @@ func TestThumbnailGet_ReadyTouchesOnlyWhenOlderThanOneDay(t *testing.T) {
 	h.seedReady(id, 1, "s", "video", "blob-s", "o", "files", []byte("S"), "")
 	read := func() { h.get(thumbReq{id: id, version: 1, mime: videoMime}) }
 	last := func() time.Time {
-		rows, _ := h.st.FindByFile(context.Background(), id)
-		for _, r := range rows {
-			if r.Size == "m" {
-				return r.LastAccessedAt
-			}
+		if r := h.pair(id, 1)["m"]; r != nil {
+			return r.LastAccessedAt
 		}
 		return time.Time{}
 	}
@@ -687,10 +676,10 @@ func TestDeleteThumbnails_AllVersionsAndSizes(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", rec.Code)
 	}
-	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
-		t.Errorf("rows left: %+v", rows)
+	if n := h.rowCount(id); n != 0 {
+		t.Errorf("rows left: %d", n)
 	}
-	if rows, _ := h.st.FindByFile(context.Background(), other); len(rows) != 1 {
+	if n := h.rowCount(other); n != 1 {
 		t.Errorf("another file's rows must be kept")
 	}
 	deleted := map[memKey]bool{}
@@ -721,8 +710,8 @@ func TestDeleteThumbnails_StorageErrorLeavesATombstoneNotTheRow(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", rec.Code)
 	}
-	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
-		t.Errorf("rows are deleted with the tombstone even when the blob delete fails: %+v", rows)
+	if n := h.rowCount(id); n != 0 {
+		t.Errorf("rows are deleted with the tombstone even when the blob delete fails: %d", n)
 	}
 	if h.blobStatus("b") != "TOMBSTONE" {
 		t.Errorf("tombstone status = %q, want TOMBSTONE for the purge to retry", h.blobStatus("b"))
@@ -785,8 +774,8 @@ func TestDeleteThumbnails_RunningJobDeletesItsBlobs(t *testing.T) {
 	if n := h.store.blobCount(); n != 1 {
 		t.Errorf("blobs after the purge = %d, only the source must remain", n)
 	}
-	if rows, _ := h.st.FindByFile(context.Background(), id); len(rows) != 0 {
-		t.Errorf("a deleted file must stay without rows: %+v", rows)
+	if n := h.rowCount(id); n != 0 {
+		t.Errorf("a deleted file must stay without rows: %d", n)
 	}
 }
 

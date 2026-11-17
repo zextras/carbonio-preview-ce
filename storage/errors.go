@@ -4,7 +4,11 @@
 
 package storage
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
 
 // ErrNotFound is returned when storage responds with HTTP 404,
 // meaning the requested file/version does not exist.
@@ -14,5 +18,15 @@ var ErrNotFound = errors.New("storage: item not found")
 // timeout, DNS failure, etc.) or returns any non-404 error response.
 var ErrUnavailable = errors.New("storage: unavailable or request error")
 
-// ErrRejected marks an HTTP error status returned by a reachable storage, as opposed to an outage.
+// ErrRejected marks a definitive refusal by a reachable storage, as opposed to an outage.
 var ErrRejected = errors.New("storage: request rejected")
+
+// StatusError is the ErrUnavailable error of a non-success HTTP status; it also wraps ErrRejected for 4xx other than 408 and 429, and for 500 and 501.
+func StatusError(op string, code int) error {
+	rejected := code >= 400 && code < 500 && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests ||
+		code == http.StatusInternalServerError || code == http.StatusNotImplemented
+	if rejected {
+		return fmt.Errorf("%w: %w: %s returned HTTP %d", ErrUnavailable, ErrRejected, op, code)
+	}
+	return fmt.Errorf("%w: %s returned HTTP %d", ErrUnavailable, op, code)
+}
