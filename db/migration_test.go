@@ -106,3 +106,32 @@ func TestMigration3_LegacyRowsAreSweptAfterThirtyDays(t *testing.T) {
 		}
 	})
 }
+
+func TestMigration5_DeletesOnlyOriginalRows(t *testing.T) {
+	st := startPostgresRaw(t)
+	ctx := context.Background()
+	migrateTo(t, st, 4)
+
+	st.exec(t, `INSERT INTO thumbnail (file_id, version, size, status, kind, original, content_type, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+        VALUES ('orig', 1, 'm', 'READY', 'image', true, 'image/jpeg', 'o', 'files', 0, now(), now(), now())`)
+	st.exec(t, `INSERT INTO thumbnail (file_id, version, size, status, kind, blob_id, original, content_type, owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
+        VALUES ('stored', 1, 'm', 'READY', 'image', 'blob-1', false, 'image/jpeg', 'o', 'files', 0, now(), now(), now())`)
+	st.exec(t, `INSERT INTO thumbnail_blob (blob_id, owner_id, service_type, version, status) VALUES ('blob-1', 'o', 'files', 1, 'PENDING'), ('blob-old', 'o', 'files', 1, 'TOMBSTONE')`)
+
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if rows, err := st.FindPair(ctx, "orig", 1); err != nil || len(rows) != 0 {
+		t.Errorf("the original row must be gone: %v err=%v", rows, err)
+	}
+	rows, err := st.FindPair(ctx, "stored", 1)
+	if err != nil || rows[SizeM] == nil || rows[SizeM].BlobID == nil || *rows[SizeM].BlobID != "blob-1" {
+		t.Fatalf("the stored row must stay: %v err=%v", rows, err)
+	}
+	if n := st.count(t, `SELECT count(*) FROM thumbnail_blob`); n != 2 {
+		t.Errorf("thumbnail_blob entries = %d, want both kept", n)
+	}
+	if n := st.count(t, `SELECT count(*) FROM information_schema.columns WHERE table_name='thumbnail' AND column_name='original'`); n != 0 {
+		t.Error("the original column must be dropped")
+	}
+}

@@ -21,7 +21,8 @@ import (
 
 var ErrGIFFailed = errors.New("animated gif resize failed")
 
-const gifMaxFPS = 10
+// gifSlotSelect keeps at most one frame per 100 ms slot and snaps it to the slot: frames are only dropped, never duplicated, so the cost follows the source frames.
+const gifSlotSelect = `select='isnan(prev_selected_t)+gt(floor(t*10)\,floor(prev_selected_t*10))',setpts='round(floor(T*10)/10/TB)'`
 
 func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, workDir string) ([]byte, error) {
 	long := strconv.Itoa(side)
@@ -29,21 +30,31 @@ func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, wor
 	if info.Width >= info.Height {
 		scale = "scale='min(" + long + ",iw)':-1:flags=lanczos"
 	}
-	chain := "fps=" + strconv.Itoa(gifMaxFPS) + "," + scale + ",mpdecimate=hi=1:lo=1:frac=1:max=0"
+	chain := gifSlotSelect + "," + scale + ",mpdecimate=hi=1:lo=1:frac=1:max=0"
 	palette := filepath.Join(workDir, "palette.png")
 	out := filepath.Join(workDir, "out.gif")
 
+	input, total, normalized := inputPath, 0, false
+	if src, err := os.ReadFile(inputPath); err == nil {
+		if norm, t, ok := normalizeGIFDelays(src); ok {
+			path := filepath.Join(workDir, "normalized.gif")
+			if os.WriteFile(path, norm, 0o600) == nil {
+				input, total, normalized = path, t, true
+			}
+		}
+	}
+
 	if err := runFFmpegGIF(ctx,
-		"-filter_threads", "1", "-i", inputPath,
+		"-filter_threads", "1", "-i", input,
 		"-vf", chain+",palettegen=stats_mode=diff",
 		"-y", palette,
 	); err != nil {
 		return nil, err
 	}
 	if err := runFFmpegGIF(ctx,
-		"-filter_complex_threads", "1", "-i", inputPath, "-i", palette,
+		"-filter_complex_threads", "1", "-i", input, "-i", palette,
 		"-lavfi", "[0:v]"+chain+"[x];[x][1:v]paletteuse=dither=none",
-		"-fps_mode", "vfr", "-f", "gif", "-y", out,
+		"-fps_mode", "vfr", "-enc_time_base", "1/100", "-f", "gif", "-y", out,
 	); err != nil {
 		return nil, err
 	}
@@ -54,20 +65,34 @@ func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, wor
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%w: ffmpeg produced no output", ErrGIFFailed)
 	}
-	if src, err := os.ReadFile(inputPath); err == nil {
-		if delays, ok := gifDelays(src); ok {
-			total := 0
-			for _, d := range delays {
-				total += d
-			}
-			data = patchLastDelay(data, total)
-		}
+	if normalized {
+		data = patchLastDelay(data, total)
 	}
 	return data, nil
 }
 
-// gifBlocks walks the GIF block structure without decoding pixels and returns the offset of every Graphic Control Extension delay; ok is false unless the stream ends with its trailer.
-func gifBlocks(data []byte) (offsets []int, ok bool) {
+func runFFmpegGIF(ctx context.Context, args ...string) error {
+	base := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1"}
+	cmd := exec.CommandContext(ctx, video.FFmpegPath, append(base, args...)...)
+	cmd.WaitDelay = 5 * time.Second
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: %v: %s", ErrGIFFailed, err, stderr.String())
+	}
+	return nil
+}
+
+type gifFrame struct {
+	image int
+	delay int
+}
+
+// gifBlocks walks the GIF block structure without decoding pixels. For every image it returns the offset of its descriptor and of the delay of its Graphic Control Extension (-1 when it has none); ok is false unless the stream ends with its trailer.
+func gifBlocks(data []byte) (frames []gifFrame, ok bool) {
 	if len(data) < 13 || (string(data[:6]) != "GIF87a" && string(data[:6]) != "GIF89a") {
 		return nil, false
 	}
@@ -88,19 +113,22 @@ func gifBlocks(data []byte) (offsets []int, ok bool) {
 			p += n
 		}
 	}
+	pending := -1
 	for pos < len(data) {
 		switch data[pos] {
+		case 0x00:
+			pos++
 		case 0x3B:
-			return offsets, true
+			return frames, true
 		case 0x21:
 			if pos+2 >= len(data) {
 				return nil, false
 			}
 			if data[pos+1] == 0xF9 {
-				if pos+6 > len(data) || data[pos+2] != 4 {
+				if pos+8 > len(data) || data[pos+2] != 4 {
 					return nil, false
 				}
-				offsets = append(offsets, pos+4)
+				pending = pos + 4
 			}
 			var good bool
 			if pos, good = skip(pos + 2); !good {
@@ -110,6 +138,8 @@ func gifBlocks(data []byte) (offsets []int, ok bool) {
 			if pos+10 > len(data) {
 				return nil, false
 			}
+			frames = append(frames, gifFrame{image: pos, delay: pending})
+			pending = -1
 			next := pos + 10
 			if data[pos+9]&0x80 != 0 {
 				next += 3 << (data[pos+9]&7 + 1)
@@ -125,43 +155,62 @@ func gifBlocks(data []byte) (offsets []int, ok bool) {
 	return nil, false
 }
 
+// gifDelays returns the raw delay in centiseconds of every frame, 0 for a frame without a Graphic Control Extension.
 func gifDelays(data []byte) ([]int, bool) {
-	offsets, ok := gifBlocks(data)
+	frames, ok := gifBlocks(data)
 	if !ok {
 		return nil, false
 	}
-	delays := make([]int, len(offsets))
-	for i, o := range offsets {
-		delays[i] = int(binary.LittleEndian.Uint16(data[o:]))
+	delays := make([]int, len(frames))
+	for i, f := range frames {
+		if f.delay >= 0 {
+			delays[i] = int(binary.LittleEndian.Uint16(data[f.delay:]))
+		}
 	}
 	return delays, true
 }
 
+// normalizeGIFDelays returns a copy of data where every delay of 0 or 1 cs, as a frame without a Graphic Control Extension, is 10 cs as browsers play it, and the total duration of that copy.
+func normalizeGIFDelays(data []byte) ([]byte, int, bool) {
+	frames, ok := gifBlocks(data)
+	if !ok {
+		return nil, 0, false
+	}
+	out := make([]byte, 0, len(data)+8*len(frames))
+	last, total := 0, 0
+	for _, f := range frames {
+		switch {
+		case f.delay < 0:
+			out = append(out, data[last:f.image]...)
+			out = append(out, 0x21, 0xF9, 0x04, 0x00, 10, 0x00, 0x00, 0x00)
+			last = f.image
+			total += 10
+		default:
+			d := int(binary.LittleEndian.Uint16(data[f.delay:]))
+			if d < 2 {
+				out = append(out, data[last:f.delay]...)
+				out = append(out, 10, 0x00)
+				last = f.delay + 2
+				d = 10
+			}
+			total += d
+		}
+	}
+	return append(out, data[last:]...), total, true
+}
+
 // patchLastDelay sets the last frame delay of out so its total duration is total centiseconds; unparsable input is returned untouched.
 func patchLastDelay(out []byte, total int) []byte {
-	offsets, ok := gifBlocks(out)
-	if !ok || len(offsets) == 0 {
+	frames, ok := gifBlocks(out)
+	if !ok || len(frames) == 0 || frames[len(frames)-1].delay < 0 {
 		return out
 	}
 	others := 0
-	for _, o := range offsets[:len(offsets)-1] {
-		others += int(binary.LittleEndian.Uint16(out[o:]))
-	}
-	binary.LittleEndian.PutUint16(out[offsets[len(offsets)-1]:], uint16(min(max(2, total-others), 65535)))
-	return out
-}
-
-func runFFmpegGIF(ctx context.Context, args ...string) error {
-	base := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1"}
-	cmd := exec.CommandContext(ctx, video.FFmpegPath, append(base, args...)...)
-	cmd.WaitDelay = 5 * time.Second
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	for _, f := range frames[:len(frames)-1] {
+		if f.delay >= 0 {
+			others += int(binary.LittleEndian.Uint16(out[f.delay:]))
 		}
-		return fmt.Errorf("%w: %v: %s", ErrGIFFailed, err, stderr.String())
 	}
-	return nil
+	binary.LittleEndian.PutUint16(out[frames[len(frames)-1].delay:], uint16(min(max(2, total-others), 65535)))
+	return out
 }
