@@ -110,7 +110,7 @@ func TestThumbnailGet_AnimatedGIF202WithInterimFrame(t *testing.T) {
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("%s: %d, want 202", size, rec.Code)
 		}
-		if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Retry-After") != "3" {
+		if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Retry-After") != "1" {
 			t.Errorf("%s: headers %v", size, rec.Header())
 		}
 		ct := rec.Header().Get("Content-Type")

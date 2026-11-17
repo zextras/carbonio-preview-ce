@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	retryAfterSeconds = 3
+	retryAfterSeconds = 1
 	cacheTagThumbnail = "t"
 	cacheTagInterim   = "g"
 )

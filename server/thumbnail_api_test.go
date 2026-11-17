@@ -273,7 +273,7 @@ func TestThumbnailGet_202Headers(t *testing.T) {
 		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 			t.Errorf("%s: Cache-Control = %q", mime, got)
 		}
-		if got := rec.Header().Get("Retry-After"); got != "3" {
+		if got := rec.Header().Get("Retry-After"); got != "1" {
 			t.Errorf("%s: Retry-After = %q", mime, got)
 		}
 		if rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
@@ -293,7 +293,7 @@ func TestThumbnailGet_PendingAndGeneratingAnswer202(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := h.get(req)
-	if rec.Code != http.StatusAccepted || rec.Header().Get("Retry-After") != "3" {
+	if rec.Code != http.StatusAccepted || rec.Header().Get("Retry-After") != "1" {
 		t.Fatalf("generating: %d %v", rec.Code, rec.Header())
 	}
 }
