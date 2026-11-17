@@ -1,3 +1,9 @@
+## [4.1.4](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.3...v4.1.4) (2026-11-17)
+
+### Bug Fixes
+
+* [CO-3502] start carbonio-preview.service with carbonio.target ([#221](https://github.com/zextras/carbonio-preview-ce/issues/221)) ([45829b6](https://github.com/zextras/carbonio-preview-ce/commit/45829b6f822428cf6b1b3949ba5948a9cf09bf0f))
+
 ## [4.1.3](https://github.com/zextras/carbonio-preview-ce/compare/v4.1.2...v4.1.3) (2026-11-16)
 
 ### Bug Fixes
