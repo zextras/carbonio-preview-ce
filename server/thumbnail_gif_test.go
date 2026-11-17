@@ -62,11 +62,13 @@ func TestThumbnailGet_StaticGIFIsSync(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_AnimatedGIFWithoutDB424(t *testing.T) {
+func TestThumbnailGet_AnimatedGIFWithoutDBIsServedInTheRequest(t *testing.T) {
 	h, id := gifHarness(t, harnessOpts{noDB: true})
-	h.seedSource(id, gifOf(t, 600, 400, 6))
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime}); rec.Code != http.StatusFailedDependency {
-		t.Fatalf("status %d, want 424", rec.Code)
+	src := gifOf(t, 600, 400, 6)
+	h.seedSource(id, src)
+	rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime})
+	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), src) || rec.Header().Get("Content-Type") != "image/gif" {
+		t.Fatalf("status %d, want 200 with the source GIF (it fits M)", rec.Code)
 	}
 }
 

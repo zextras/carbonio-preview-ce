@@ -103,12 +103,10 @@ func TestIsDBConnError(t *testing.T) {
 // End-to-end over the real mux: no DB configured ⇒ image works AND video → 424.
 // ---------------------------------------------------------------------------
 
-func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
+func TestBuildMux_NoDB_ImageWorks_VideoGeneratedInTheRequest(t *testing.T) {
 	store := &mockStore{blob: []byte("src")}
-	prevThumb, prevProbe := imageThumbFunc, probeFunc
-	imageThumbFunc = func(_ []byte, side int) (render.Rendition, error) { return stubFor(side), nil }
-	probeFunc = func([]byte) (render.Info, error) { return render.Info{Width: 4000, Height: 3000, Pages: 1}, nil }
-	defer func() { imageThumbFunc, probeFunc = prevThumb, prevProbe }()
+	stubVideoPipeline(t)
+	swap(t, &probeFunc, func([]byte) (render.Info, error) { return render.Info{Width: 4000, Height: 3000, Pages: 1}, nil })
 
 	// New server with NO WithDB — DB layer disabled.
 	s := New(testCfg(), store, cache.New(8<<20))
@@ -126,7 +124,6 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 		t.Errorf("image thumbnail status=%d body=%q, want 200 %q (must be unaffected by absent DB)", iresp.StatusCode, ibody, stubM.Body)
 	}
 
-	// Video thumbnail → 424.
 	vreq, err := http.NewRequest(http.MethodGet, ts.URL+"/thumbnail/"+validUUID+"/1/m?service_type=files&mime=video/mp4", nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
@@ -136,9 +133,10 @@ func TestBuildMux_NoDB_ImageWorks_Video424(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET video thumbnail: %v", err)
 	}
+	vbody, _ := io.ReadAll(vresp.Body)
 	vresp.Body.Close()
-	if vresp.StatusCode != http.StatusFailedDependency {
-		t.Errorf("video thumbnail status=%d, want 424 (DB absent)", vresp.StatusCode)
+	if vresp.StatusCode != http.StatusOK || string(vbody) != string(stubM.Body) {
+		t.Errorf("video thumbnail status=%d body=%q, want a synchronous 200 %q (DB absent)", vresp.StatusCode, vbody, stubM.Body)
 	}
 
 	// Health stays 200.
@@ -173,11 +171,14 @@ func TestThumbnailGet_GateFlipsReady_Proceeds(t *testing.T) {
 	h := gateHarness(t, gate)
 	fileID := newID()
 
-	if rec := h.get(thumbReq{id: fileID, version: 1, mime: videoMime}); rec.Code != http.StatusFailedDependency {
-		t.Fatalf("before flip: status %d, want 424", rec.Code)
+	stubVideoPipeline(t)
+	h.store.seed(fileID, 1, "files", testOwner, []byte("fake-video"))
+	if rec := h.get(thumbReq{id: fileID, version: 1, mime: videoMime}); rec.Code != http.StatusOK || rec.Body.String() != string(stubM.Body) {
+		t.Fatalf("before flip: status %d %q, want a synchronous 200", rec.Code, rec.Body)
 	}
 
 	gate.Set(dbStore)
+	h.deps.Cache.Delete(h.thumbKeyOf(thumbReq{id: fileID, version: 1}, "m"))
 
 	if rec := h.get(thumbReq{id: fileID, version: 1, mime: videoMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("after flip: status %d, want 202 (normal resolve path)", rec.Code)
@@ -197,7 +198,7 @@ func TestThumbnailGet_GateFlipsReady_Proceeds(t *testing.T) {
 // Simulated by closing the pool out from under a ready gate.
 // ---------------------------------------------------------------------------
 
-func TestThumbnailGet_RuntimeConnError_Returns424(t *testing.T) {
+func TestThumbnailGet_RuntimeConnError_FallsBackToTheRequestGeneration(t *testing.T) {
 	dbStore := startDBStore(t)
 
 	gate := newDBGate()
@@ -206,7 +207,10 @@ func TestThumbnailGet_RuntimeConnError_Returns424(t *testing.T) {
 
 	dbStore.Close()
 
-	if rec := h.get(thumbReq{id: newID(), version: 1, mime: videoMime}); rec.Code != http.StatusFailedDependency {
-		t.Errorf("runtime conn error: status %d, want 424 (graceful degrade, not 500/503)", rec.Code)
+	stubVideoPipeline(t)
+	id := newID()
+	h.store.seed(id, 1, "files", testOwner, []byte("fake-video"))
+	if rec := h.get(thumbReq{id: id, version: 1, mime: videoMime}); rec.Code != http.StatusOK || rec.Body.String() != string(stubM.Body) {
+		t.Errorf("runtime conn error: status %d %q, want a synchronous 200 (DB-less fallback)", rec.Code, rec.Body)
 	}
 }

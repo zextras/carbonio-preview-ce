@@ -23,7 +23,6 @@ import (
 	"github.com/zextras/carbonio-preview-ce/v4/config"
 	"github.com/zextras/carbonio-preview-ce/v4/db"
 	"github.com/zextras/carbonio-preview-ce/v4/render"
-	"github.com/zextras/carbonio-preview-ce/v4/storage"
 	"github.com/zextras/carbonio-preview-ce/v4/video"
 )
 
@@ -151,9 +150,8 @@ func (w *AsyncWorker) settleFailure(ctx context.Context, row db.Thumbnail, f *jo
 	}
 }
 
-// finish caches the rendition under its final key, uploads it and marks the row READY, so a poll that
-// arrives during the upload is answered from the cache. A blob that no row ended up referencing (upload
-// failure, row deleted meanwhile) is deleted at once.
+// finish caches the rendition under its final key, reserves and uploads the blob and marks the row READY, so a poll that
+// arrives during the upload is answered from the cache. A confirm that fails leaves the reservation, which expires into a tombstone.
 func (w *AsyncWorker) finish(ctx context.Context, row db.Thumbnail, out produced) {
 	ct := out.contentType
 	row.ContentType = &ct
@@ -161,7 +159,7 @@ func (w *AsyncWorker) finish(ctx context.Context, row db.Thumbnail, out produced
 		row.Original = true
 	} else {
 		w.deps.Cache.Put(thumbKey(cacheTagThumbnail, row.ServiceType, row.OwnerID, row.FileID, row.Version, row.Size, digestOf(&row)), out.entry())
-		blobID, err := storeBlob(ctx, w.deps.slotLimits(), w.deps.Store, out.body, row.Version, row.ServiceType, row.OwnerID)
+		blobID, err := storeReserved(ctx, w.deps, w.db(), out.body, row.Version, row.ServiceType, row.OwnerID)
 		if err != nil {
 			if ctx.Err() != nil {
 				w.releaseRow(ctx, row)
@@ -178,10 +176,8 @@ func (w *AsyncWorker) finish(ctx context.Context, row db.Thumbnail, out produced
 
 	readyCtx, cancel := dbCtx(ctx)
 	defer cancel()
-	written, err := w.db().MarkReady(readyCtx, w.instanceID, []db.Thumbnail{row})
-	if err != nil {
+	if _, err := w.db().MarkReady(readyCtx, w.instanceID, []db.Thumbnail{row}); err != nil {
 		slog.Warn("AsyncWorker: MarkReady failed", "file_id", row.FileID, "version", row.Version, "size", row.Size, "err", err)
-		w.deleteUnreferenced(ctx, row)
 		if ctx.Err() != nil {
 			w.releaseRow(ctx, row)
 			return
@@ -189,53 +185,33 @@ func (w *AsyncWorker) finish(ctx context.Context, row db.Thumbnail, out produced
 		w.dropRow(ctx, row, err)
 		return
 	}
-	if len(written) == 0 {
-		w.deleteBlob(ctx, &row)
-		return
-	}
 	slog.Info("AsyncWorker: thumbnail generated", "file_id", row.FileID, "version", row.Version,
 		"kind", row.Kind, "size", row.Size)
 }
 
-// deleteBlob deletes the blob on the live job context and falls back to a bounded one once it is done.
-func (w *AsyncWorker) deleteBlob(ctx context.Context, row *db.Thumbnail) {
-	dctx, cancel := ctx, context.CancelFunc(func() {})
-	if ctx.Err() != nil {
-		dctx, cancel = dbCtx(ctx)
+// storeReserved reserves a fresh node id, uploads data under it with the given version, service type and owner (so it
+// counts toward the owner's quota) and returns the id. Without a reservation nothing is uploaded; a failed upload turns the reservation into a tombstone.
+func storeReserved(ctx context.Context, deps Deps, store *db.Store, data []byte, version int, serviceType, ownerID string) (string, error) {
+	if store == nil {
+		return "", errNoDB
 	}
-	deleteRowBlob(dctx, w.deps.Store, row, "AsyncWorker")
-	cancel()
-}
-
-// deleteUnreferenced is for an ambiguous MarkReady: a commit that was applied but not acknowledged keeps its blob.
-func (w *AsyncWorker) deleteUnreferenced(ctx context.Context, row db.Thumbnail) {
-	if row.BlobID == nil || !blobReferenced(ctx, w.db(), row.FileID, row.Version, *row.BlobID) {
-		w.deleteBlob(ctx, &row)
-	}
-}
-
-// storeBlob uploads data under a fresh node id with the given version, service type and owner, so it
-// counts toward the owner's quota. On failure it deletes the possibly partial node: before returning
-// when ctx ended, in a tracked background goroutine otherwise; both are bounded by releaseTimeout.
-func storeBlob(ctx context.Context, lim *limits, store storage.Client, data []byte, version int, serviceType, ownerID string) (string, error) {
 	nodeID := uuid.New().String()
-	storedID, err := store.StoreData(ctx, nodeID, version, serviceType, ownerID, data)
-	if err == nil {
-		return storedID, nil
-	}
-	if ctx.Err() != nil {
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), releaseTimeout)
-		defer cancel()
-		_ = store.Delete(dctx, nodeID, version, serviceType, ownerID)
+	if err := store.Reserve(ctx, nodeID, ownerID, serviceType, version); err != nil {
 		return "", err
 	}
-	lim.background(func() {
-		dctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	storedID, err := deps.Store.StoreData(ctx, nodeID, version, serviceType, ownerID, data)
+	if err != nil {
+		actx, cancel := dbCtx(ctx)
 		defer cancel()
-		_ = store.Delete(dctx, nodeID, version, serviceType, ownerID)
-	})
-	return "", err
+		if aerr := store.Abandon(actx, nodeID); aerr != nil {
+			slog.Warn("storeReserved: abandon failed, the reservation will expire", "blob_id", nodeID, "err", aerr)
+		}
+		return "", err
+	}
+	return storedID, nil
 }
+
+var errNoDB = errors.New("thumbnail DB not available")
 
 func (w *AsyncWorker) probe(ctx context.Context, data []byte) (render.Info, *jobFailure) {
 	lim := w.deps.slotLimits()
@@ -325,7 +301,7 @@ func (w *AsyncWorker) runVideo(ctx context.Context, row db.Thumbnail) (produced,
 		slog.Warn("AsyncWorker: codec probe failed", "file_id", row.FileID, "version", row.Version, "err", res.probeErr)
 		return produced{}, failure(failContent, fmt.Errorf("codec probe failed: %w", res.probeErr))
 	}
-	if res.probed {
+	if res.probed && w.db() != nil {
 		stateCtx, cancel := dbCtx(ctx)
 		if serr := w.db().SetCodec(stateCtx, row.FileID, row.Version, w.instanceID, []string{row.Size}, res.codec); serr != nil {
 			slog.Warn("AsyncWorker: SetCodec failed (non-fatal)", "err", serr)
@@ -414,8 +390,7 @@ func (w *AsyncWorker) runOffice(ctx context.Context, row db.Thumbnail) (produced
 	return w.renderThumb(ctx, png, row.Size)
 }
 
-// runGIF downloads the source and either takes it as is, when it fits the row's size, or resizes it
-// with ffmpeg straight from the source under the async slot.
+// runGIF downloads the source and builds the row's size from it.
 func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail) (produced, *jobFailure) {
 	data, err := w.deps.Store.RetrieveData(ctx, row.FileID, row.Version, row.ServiceType, row.OwnerID)
 	if err != nil {
@@ -425,7 +400,12 @@ func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail) (produced, *
 	if fail != nil {
 		return produced{}, fail
 	}
-	if longSide(info) <= sideOf(row.Size) {
+	return w.gifOutput(ctx, data, info, row.Size)
+}
+
+// gifOutput takes the source as is when it fits the size, otherwise resizes it with ffmpeg straight from the source under the async slot.
+func (w *AsyncWorker) gifOutput(ctx context.Context, data []byte, info render.Info, size string) (produced, *jobFailure) {
+	if longSide(info) <= sideOf(size) {
 		return produced{body: data, contentType: mimeGIF, original: true}, nil
 	}
 
@@ -443,7 +423,7 @@ func (w *AsyncWorker) runGIF(ctx context.Context, row db.Thumbnail) (produced, *
 		return produced{}, failure(failReleased, err)
 	}
 	defer w.releaseSem()
-	out, fail := w.gifPass(ctx, src, info, row.Size, filepath.Join(dir, row.Size))
+	out, fail := w.gifPass(ctx, src, info, size, filepath.Join(dir, size))
 	if fail != nil {
 		return produced{}, fail
 	}

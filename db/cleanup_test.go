@@ -221,7 +221,7 @@ func TestExpired_SelectionDeletionAndPaging(t *testing.T) {
 		all := append(append([]string{recent, legacy, both}, expired...), keys(others)...)
 		for _, id := range all {
 			for _, size := range []string{SizeS, SizeM} {
-				if err := c.DeleteExpired(ctx, id, 1, size); err != nil {
+				if _, err := c.DeleteExpired(ctx, id, 1, size); err != nil {
 					t.Fatalf("DeleteExpired %s/%s: %v", id, size, err)
 				}
 			}
@@ -318,7 +318,8 @@ func TestCleanupRun_WorksWithSingleConnectionPool(t *testing.T) {
 		if len(rows) != 1 {
 			t.Errorf("expired rows: got %d, want 1", len(rows))
 		}
-		return c.DeleteExpired(ctx, id, 1, SizeM)
+		_, err = c.DeleteExpired(ctx, id, 1, SizeM)
+		return err
 	})
 	if err != nil || !locked {
 		t.Fatalf("run: locked=%v err=%v", locked, err)

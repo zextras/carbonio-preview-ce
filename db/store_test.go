@@ -920,34 +920,177 @@ func TestEnqueue_CASRefreshesCreatedAt(t *testing.T) {
 	}
 }
 
-func TestDeleteRow_OnlyWhileSnapshotMatches(t *testing.T) {
+func (s *Store) count(t *testing.T, q string) int {
+	t.Helper()
+	var n int
+	if err := s.pool.QueryRow(context.Background(), q).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func tombstoneStatus(t *testing.T, st *Store, blobID string) string {
+	t.Helper()
+	var status string
+	if err := st.pool.QueryRow(context.Background(), `SELECT status FROM thumbnail_blob WHERE blob_id=$1`, blobID).Scan(&status); err != nil {
+		return ""
+	}
+	return status
+}
+
+func TestDeleteFile_DeletesEveryRowAndTombstonesItsBlobsTogether(t *testing.T) {
 	st := startPostgres(t)
 	ctx := context.Background()
-	id := uid(t, "delrow")
-	old := newPending(id, 1, SizeM, "video")
-	old.BlobID = strp("old")
+	id := uid(t, "delfile")
+	for _, size := range []string{SizeS, SizeM} {
+		r := newPending(id, 1, size, "video")
+		r.BlobID = strp("blob-" + size)
+		if ok, err := st.PutReady(ctx, r, nil); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	orig := newPending(id, 2, SizeM, "image")
+	orig.Original = true
+	if ok, err := st.PutReady(ctx, orig, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+
+	deleted, err := st.DeleteFile(ctx, id)
+	if err != nil || len(deleted) != 3 {
+		t.Fatalf("DeleteFile: %d rows err=%v", len(deleted), err)
+	}
+	for _, size := range []string{SizeS, SizeM} {
+		if got := tombstoneStatus(t, st, "blob-"+size); got != BlobTombstone {
+			t.Errorf("blob-%s status %q, want TOMBSTONE", size, got)
+		}
+	}
+	if n := st.count(t, `SELECT count(*) FROM thumbnail_blob`); n != 2 {
+		t.Errorf("tombstones = %d, an original row has no blob", n)
+	}
+}
+
+func TestDeleteFile_RollsBackWhenTheTombstoneCannotBeWritten(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "delfile_tx")
+	r := newPending(id, 1, SizeM, "video")
+	r.BlobID = strp("blob-x")
+	if ok, err := st.PutReady(ctx, r, nil); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	st.exec(t, `ALTER TABLE thumbnail_blob RENAME TO thumbnail_blob_gone`)
+	if _, err := st.DeleteFile(ctx, id); err == nil {
+		t.Fatal("want the tombstone error")
+	}
+	st.exec(t, `ALTER TABLE thumbnail_blob_gone RENAME TO thumbnail_blob`)
+	if rows, _ := st.FindByFile(ctx, id); len(rows) != 1 {
+		t.Fatalf("rows = %d, the row delete must roll back with the failed tombstone", len(rows))
+	}
+}
+
+func TestPutReady_ConfirmConsumesTheReservationAndTombstonesTheReplacedBlob(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "confirm")
+	old := newPending(id, 1, SizeM, "image")
+	old.BlobID = strp("b-old")
 	if ok, err := st.PutReady(ctx, old, nil); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	snap, _ := st.FindPair(ctx, id, 1)
-
-	next := newPending(id, 1, SizeM, "video")
-	next.BlobID = strp("new")
-	if ok, err := st.PutReady(ctx, next, snap[SizeM]); err != nil || !ok {
-		t.Fatal(ok, err)
+	if err := st.Reserve(ctx, "b-new", "owner1", "files", 1); err != nil {
+		t.Fatal(err)
 	}
-	if ok, err := st.DeleteRow(ctx, *snap[SizeM]); err != nil || ok {
-		t.Fatalf("stale snapshot: ok=%v err=%v, want false", ok, err)
+	if err := st.Reserve(ctx, "b-new", "owner1", "files", 1); err == nil {
+		t.Fatal("a blob id can be reserved only once")
 	}
 	cur, _ := st.FindPair(ctx, id, 1)
-	if cur[SizeM] == nil || *cur[SizeM].BlobID != "new" {
-		t.Fatalf("the replaced row must survive: %+v", cur[SizeM])
+	next := newPending(id, 1, SizeM, "image")
+	next.BlobID = strp("b-new")
+	if ok, err := st.PutReady(ctx, next, cur[SizeM]); err != nil || !ok {
+		t.Fatalf("confirm: ok=%v err=%v", ok, err)
 	}
-	if ok, err := st.DeleteRow(ctx, *cur[SizeM]); err != nil || !ok {
-		t.Fatalf("matching snapshot: ok=%v err=%v, want true", ok, err)
+	if got := tombstoneStatus(t, st, "b-new"); got != "" {
+		t.Errorf("reservation status %q, want consumed", got)
 	}
-	if left, _ := st.FindPair(ctx, id, 1); len(left) != 0 {
-		t.Fatalf("rows left: %+v", left)
+	if got := tombstoneStatus(t, st, "b-old"); got != BlobTombstone {
+		t.Errorf("replaced blob status %q, want TOMBSTONE", got)
+	}
+
+	if err := st.Reserve(ctx, "b-lost", "owner1", "files", 1); err != nil {
+		t.Fatal(err)
+	}
+	lost := newPending(id, 1, SizeM, "image")
+	lost.BlobID = strp("b-lost")
+	if ok, err := st.PutReady(ctx, lost, cur[SizeM]); err != nil || ok {
+		t.Fatalf("stale CAS: ok=%v err=%v, want a clean loss", ok, err)
+	}
+	if got := tombstoneStatus(t, st, "b-lost"); got != BlobTombstone {
+		t.Errorf("lost blob status %q, want TOMBSTONE", got)
+	}
+}
+
+func TestMarkReady_SkippedRowTombstonesItsBlob(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	id := uid(t, "mr_lost")
+	enqueuePair(t, st, id, 1)
+	claimPair(t, st, id, 1, "inst-a")
+	if err := st.Reserve(ctx, "b-ok", "owner1", "files", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Reserve(ctx, "b-skipped", "owner1", "files", 1); err != nil {
+		t.Fatal(err)
+	}
+	written, err := st.MarkReady(ctx, "inst-a", []Thumbnail{
+		{FileID: id, Version: 1, Size: SizeS, BlobID: strp("b-ok"), OwnerID: "owner1", ServiceType: "files"},
+		{FileID: id, Version: 1, Size: SizeM, BlobID: strp("b-skipped"), OwnerID: "owner1", ServiceType: "files"},
+	})
+	if err != nil || len(written) != 2 {
+		t.Fatalf("MarkReady: %v %v", written, err)
+	}
+	written, err = st.MarkReady(ctx, "inst-a", []Thumbnail{{FileID: id, Version: 1, Size: SizeM, BlobID: strp("b-skipped-2"), OwnerID: "owner1", ServiceType: "files"}})
+	if err != nil || len(written) != 0 {
+		t.Fatalf("second MarkReady: %v %v", written, err)
+	}
+	if got := tombstoneStatus(t, st, "b-skipped-2"); got != BlobTombstone {
+		t.Errorf("blob of a row that was no longer owned: status %q, want TOMBSTONE", got)
+	}
+	if got := tombstoneStatus(t, st, "b-ok"); got != "" {
+		t.Errorf("a written row consumes its reservation, status %q", got)
+	}
+}
+
+func TestPurgeQueries_ExpireFindAndCountAttempts(t *testing.T) {
+	st := startPostgres(t)
+	ctx := context.Background()
+	st.exec(t, `INSERT INTO thumbnail_blob (blob_id, owner_id, service_type, version, status, created_at)
+        VALUES ('old', 'o', 'files', 1, 'PENDING', now() - interval '25 hours'),
+               ('young', 'o', 'files', 1, 'PENDING', now() - interval '1 hour'),
+               ('tomb', 'o', 'files', 1, 'TOMBSTONE', now())`)
+	locked, err := st.WithCleanupLock(ctx, func(ctx context.Context, c *CleanupConn) error {
+		if n, err := c.ExpireReservations(ctx, 24*time.Hour); err != nil || n != 1 {
+			t.Errorf("ExpireReservations: %d %v, want 1", n, err)
+		}
+		got, err := c.FindTombstones(ctx, nil, 10)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("FindTombstones: %v %v, want the expired reservation and the tombstone", got, err)
+		}
+		for i := 1; i <= TombstoneMaxAttempts; i++ {
+			if n, err := c.RecordAttempt(ctx, "tomb"); err != nil || n != i {
+				t.Fatalf("RecordAttempt: %d %v, want %d", n, err, i)
+			}
+		}
+		got, _ = c.FindTombstones(ctx, nil, 10)
+		if len(got) != 1 || got[0].BlobID != "old" {
+			t.Errorf("an exhausted tombstone must not be retried: %v", got)
+		}
+		return c.DeleteTombstone(ctx, "old")
+	})
+	if err != nil || !locked {
+		t.Fatalf("run: %v %v", locked, err)
+	}
+	if tombstoneStatus(t, st, "young") != BlobPending {
+		t.Error("a reservation younger than 24 h stays PENDING")
 	}
 }
 

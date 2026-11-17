@@ -335,7 +335,7 @@ func (c *DirectClient) Delete(
 	case resp.StatusCode >= 200 && resp.StatusCode < 400:
 		return nil
 	default:
-		return fmt.Errorf("%w: storage delete returned HTTP %d", ErrUnavailable, resp.StatusCode)
+		return fmt.Errorf("%w: %w: storage delete returned HTTP %d", ErrUnavailable, ErrRejected, resp.StatusCode)
 	}
 }
 

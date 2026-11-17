@@ -86,7 +86,7 @@ func waitWorker(t *testing.T, w *AsyncWorker) {
 }
 
 func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
-	st := startDBStore(t)
+	st, dsn := startDBStoreWithDSN(t)
 	bg := context.Background()
 	var probes atomic.Int32
 	inFFmpeg := make(chan struct{})
@@ -144,13 +144,11 @@ func TestAsyncShutdown_EveryStageReturnsRowToPending(t *testing.T) {
 	cancel()
 	waitWorker(t, w)
 
-	select {
-	case bounded := <-store.deleteCtxs:
-		if !bounded {
-			t.Error("orphan frame Delete must complete before Wait returns, on a bounded live context")
-		}
-	default:
-		t.Error("orphan frame blob was not deleted before Wait returned")
+	if n := len(store.deleteCtxs); n != 0 {
+		t.Errorf("inline blob deletes = %d, an interrupted upload leaves a tombstone for the purge", n)
+	}
+	if n := sqlInt(t, dsn, `SELECT count(*) FROM thumbnail_blob WHERE status='TOMBSTONE'`); n != 1 {
+		t.Errorf("tombstones = %d, the interrupted upload must tombstone its reservation within the bounded context", n)
 	}
 
 	for stage, id := range map[string]string{"upload": idUpload, "ffmpeg": idFFmpeg, "slot wait": idSlot, "download": idDownload, "headers": idHeaders} {

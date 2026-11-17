@@ -182,26 +182,20 @@ func buildDeleteThumbnails(deps Deps) func(context.Context, *apispec.ThumbnailDe
 			return nil, huma.NewError(http.StatusUnprocessableEntity, "Validation Error",
 				&huma.ErrorDetail{Message: config.Msg.IDNotValid, Location: "path.id", Value: in.ID})
 		}
-		rows, err := store.FindByFile(ctx, id)
+		rows, err := store.DeleteFile(ctx, id)
 		if err != nil {
 			if isDBConnError(err) {
 				slog.Warn("deleteThumbnails: DB connection down, no-op success", "err", err)
 				return nil, nil
 			}
-			slog.Warn("deleteThumbnails: FindByFile failed", "err", err)
+			slog.Warn("deleteThumbnails: DeleteFile failed", "err", err)
 			return nil, errDependencyDown()
 		}
 		for i := range rows {
-			if !deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails") {
-				continue
-			}
-			if _, err := store.DeleteRow(ctx, rows[i]); err != nil {
-				if isDBConnError(err) {
-					slog.Warn("deleteThumbnails: DB connection down on delete, no-op success", "err", err)
-					return nil, nil
+			if rows[i].BlobID != nil && deleteRowBlob(ctx, deps.Store, &rows[i], "deleteThumbnails") && !rows[i].Original {
+				if err := store.DeleteTombstone(ctx, *rows[i].BlobID); err != nil {
+					slog.Warn("deleteThumbnails: DeleteTombstone failed, the purge will drop it", "err", err)
 				}
-				slog.Warn("deleteThumbnails: DeleteRow failed", "err", err)
-				return nil, errDependencyDown()
 			}
 		}
 		return nil, nil

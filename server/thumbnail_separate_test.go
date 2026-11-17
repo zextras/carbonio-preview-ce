@@ -432,16 +432,22 @@ func TestSyncGet_UnreadableDBServesWithoutPersisting(t *testing.T) {
 	}
 }
 
-func TestGIFGet_UnreadableDBIs424(t *testing.T) {
+func TestGIFGet_UnreadableDBIsServedInTheRequestWithoutPersisting(t *testing.T) {
+	swap(t, &animatedGIFFunc, func(context.Context, string, render.Info, int, string) ([]byte, error) {
+		return []byte("GIF89a-small"), nil
+	})
 	h, id := gifHarness(t, harnessOpts{noWorker: true})
 	h.seedSource(id, gifOf(t, 1600, 900, 4))
 	h.st.Close()
-	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"}); rec.Code != http.StatusFailedDependency {
-		t.Fatalf("status %d, want 424", rec.Code)
+	if rec := h.get(thumbReq{id: id, version: testVersion, mime: gifMime, size: "s"}); rec.Code != http.StatusOK || rec.Body.String() != "GIF89a-small" {
+		t.Fatalf("status %d %q, want a synchronous 200", rec.Code, rec.Body)
+	}
+	if n := len(h.store.putKeys()); n != 0 {
+		t.Errorf("uploads = %d", n)
 	}
 }
 
-func TestPersist_UnreadableRowsAfterAFailedWriteDeletesTheBlob(t *testing.T) {
+func TestPersist_UnreadableDBUploadsNothing(t *testing.T) {
 	st := startDBStore(t)
 	store := newMemStore()
 	deps := Deps{Cfg: testCfg(), Store: store, Cache: cache.New(1 << 20), Limits: newLimits(0)}
@@ -449,22 +455,21 @@ func TestPersist_UnreadableRowsAfterAFailedWriteDeletesTheBlob(t *testing.T) {
 	q := thumbRequest{p: pipelines["image/webp"], id: newID(), version: testVersion, size: "s", serviceType: "files", owner: testOwner}
 
 	persist(context.Background(), deps, st, q, "image", nil, produced{body: []byte("x"), contentType: "image/jpeg"})
-	if store.blobCount() != 0 {
-		t.Errorf("blobs = %d, an upload whose row could not be written or read back must be deleted", store.blobCount())
+	if n := len(store.putKeys()); n != 0 {
+		t.Errorf("uploads = %d, nothing may be uploaded without a reservation", n)
 	}
 }
 
-func TestWorker_UnreadableRowsAfterAFailedReadyDeletesTheBlob(t *testing.T) {
+func TestWorker_UnreadableDBUploadsNothing(t *testing.T) {
 	st := startDBStore(t)
 	store := newMemStore()
-	store.seed("blob-x", testVersion, "files", testOwner, []byte("x"))
 	w := slotWorker(st, store, 1)
 	st.Close()
-	row := db.Thumbnail{FileID: newID(), Version: testVersion, Size: "s", BlobID: strp("blob-x"), OwnerID: testOwner, ServiceType: "files"}
+	row := db.Thumbnail{FileID: newID(), Version: testVersion, Size: "s", Kind: "video", OwnerID: testOwner, ServiceType: "files"}
 
-	w.deleteUnreferenced(context.Background(), row)
-	if store.blobCount() != 0 {
-		t.Errorf("blobs = %d, an unverifiable blob must be deleted", store.blobCount())
+	w.finish(context.Background(), row, produced{body: []byte("x"), contentType: "image/jpeg"})
+	if n := len(store.putKeys()); n != 0 {
+		t.Errorf("uploads = %d, a job whose reservation fails uploads nothing", n)
 	}
 }
 
@@ -503,8 +508,8 @@ func TestLimits_DrainCancelsBackgroundSavesBeforeItsDeadline(t *testing.T) {
 	if d := time.Since(start); d > 4*time.Second {
 		t.Errorf("drain took %v, the save must be cancelled before the deadline", d)
 	}
-	if n := len(store.deletedKeys()); n != 1 {
-		t.Errorf("cleanup deletes = %d, want the half-written node deleted", n)
+	if n := h.blobRows("TOMBSTONE"); n != 1 {
+		t.Errorf("tombstones = %d, the interrupted upload must leave its reservation as a tombstone for the purge", n)
 	}
 	if rows := h.pair(id, testVersion); len(rows) != 0 {
 		t.Errorf("rows = %+v", rows)

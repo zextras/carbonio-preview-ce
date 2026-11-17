@@ -65,7 +65,7 @@ func TestDeleteThumbnails_ConcurrentReadyKeepsNewBlob(t *testing.T) {
 	}
 }
 
-func TestThumbnailGet_DigestChangeKeepsRowWhenOldBlobDeleteFails(t *testing.T) {
+func TestThumbnailGet_DigestChangeTombstonesTheOldBlobWhateverStorageDoes(t *testing.T) {
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
 	h.seedReady(id, testVersion, "m", "video", "b-old", testOwner, "files", []byte("x"), "d1")
@@ -74,15 +74,15 @@ func TestThumbnailGet_DigestChangeKeepsRowWhenOldBlobDeleteFails(t *testing.T) {
 		t.Fatalf("status %d, want 202", rec.Code)
 	}
 	row := h.pair(id, testVersion)["m"]
-	if row.Status != db.StatusReady || row.BlobID == nil || *row.BlobID != "b-old" {
-		t.Fatalf("a row whose old blob could not be deleted must stay: %+v", row)
+	if row.Status != db.StatusPending || row.BlobID != nil {
+		t.Fatalf("the row is replaced whatever storages does: %+v", row)
 	}
-	if !h.store.has("b-old", testVersion, "files", testOwner) {
-		t.Errorf("old blob must still exist")
+	if h.blobStatus("b-old") != "TOMBSTONE" || !h.store.has("b-old", testVersion, "files", testOwner) {
+		t.Errorf("old blob must be tombstoned and still exist for the purge (status %q)", h.blobStatus("b-old"))
 	}
 }
 
-func TestThumbnailGet_ImageRegenKeepsRowWhenOldBlobDeleteFails(t *testing.T) {
+func TestThumbnailGet_ImageRegenReplacesTheRowAndTombstonesTheOldBlobWhenStorageDeletesFail(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
@@ -100,15 +100,18 @@ func TestThumbnailGet_ImageRegenKeepsRowWhenOldBlobDeleteFails(t *testing.T) {
 	if len(before) != 1 || before["m"] == nil {
 		t.Fatalf("rows = %+v, a request for m must store only m", before)
 	}
-	if *after["m"].BlobID != *before["m"].BlobID {
-		t.Errorf("m: row swapped to %s although the old blob %s could not be deleted", *after["m"].BlobID, *before["m"].BlobID)
+	if *after["m"].BlobID == *before["m"].BlobID {
+		t.Errorf("m: the row must point at the new blob")
 	}
-	if n := len(h.store.putKeys()); n != puts {
-		t.Errorf("uploaded %d blobs for rows that were not replaced", n-puts)
+	if h.blobStatus(*before["m"].BlobID) != "TOMBSTONE" {
+		t.Errorf("old blob status = %q, want TOMBSTONE", h.blobStatus(*before["m"].BlobID))
+	}
+	if n := len(h.store.putKeys()); n != puts+1 {
+		t.Errorf("uploaded %d blobs, want exactly the replacement", n-puts)
 	}
 }
 
-func TestThumbnailGet_RegenLosingTheRaceDeletesOnlyItsOwnBlob(t *testing.T) {
+func TestThumbnailGet_RegenLosingTheRaceTombstonesOnlyItsOwnBlob(t *testing.T) {
 	realVips(t)
 	h := newHarness(t, harnessOpts{noWorker: true})
 	id := newID()
@@ -117,7 +120,7 @@ func TestThumbnailGet_RegenLosingTheRaceDeletesOnlyItsOwnBlob(t *testing.T) {
 		t.Fatalf("first: %d", rec.Code)
 	}
 	var once sync.Once
-	h.store.deleteErr = func(memKey) error {
+	h.store.putErr = func(memKey) error {
 		once.Do(func() {
 			cur := h.pair(id, testVersion)
 			next := db.Thumbnail{FileID: id, Version: testVersion, Size: "m", Kind: "image", OwnerID: testOwner, ServiceType: "files", BlobID: strp("b-other")}
@@ -131,6 +134,7 @@ func TestThumbnailGet_RegenLosingTheRaceDeletesOnlyItsOwnBlob(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: "image/jpeg", digest: "d2"}); rec.Code != http.StatusOK {
 		t.Fatalf("regenerate: %d", rec.Code)
 	}
+	h.purge()
 	rows := h.pair(id, testVersion)
 	for size, r := range rows {
 		if r.BlobID != nil && !h.store.has(*r.BlobID, testVersion, "files", testOwner) {
@@ -178,7 +182,7 @@ func TestWorker_UploadFailureDropsTheRowAndLeavesOnlyTheSource(t *testing.T) {
 	}
 }
 
-func TestWorker_MarkReadyErrorDeletesBlobsAndDropsRows(t *testing.T) {
+func TestWorker_MarkReadyErrorDropsTheRowAndLeavesTheReservation(t *testing.T) {
 	stubVideoPipeline(t)
 	h := newHarness(t, harnessOpts{})
 	h.exec(`CREATE FUNCTION fail_ready() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$ LANGUAGE plpgsql`)
@@ -188,9 +192,17 @@ func TestWorker_MarkReadyErrorDeletesBlobsAndDropsRows(t *testing.T) {
 	if rec := h.get(thumbReq{id: id, version: testVersion, mime: videoMime}); rec.Code != http.StatusAccepted {
 		t.Fatalf("miss: %d", rec.Code)
 	}
-	eventually(t, "blob deleted and row dropped after the MarkReady error", func() bool {
-		return len(h.store.putKeys()) == 1 && h.rowCount(id) == 0 && h.store.blobCount() == 1
+	eventually(t, "row dropped after the MarkReady error, the blob left to its reservation", func() bool {
+		return len(h.store.putKeys()) == 1 && h.rowCount(id) == 0 && h.store.blobCount() == 2
 	})
+	if n := h.blobRows("PENDING"); n != 1 {
+		t.Errorf("reservations = %d, the unconfirmed blob keeps its reservation", n)
+	}
+	h.exec(`UPDATE thumbnail_blob SET created_at = now() - interval '25 hours'`)
+	h.purge()
+	if n := h.store.blobCount(); n != 1 {
+		t.Errorf("blobs after the purge = %d, the expired reservation must be purged", n)
+	}
 	assertCachedWithoutRowThenRegenerates(t, h, thumbReq{id: id, version: testVersion, mime: videoMime})
 }
 
@@ -222,24 +234,22 @@ func TestLimits_DrainWaitsForFlightsAndBackgroundCleanup(t *testing.T) {
 	}
 }
 
-func TestStoreBlob_FailedUploadCleanupIsTrackedByDrain(t *testing.T) {
-	lim := newLimits(0)
+func TestStoreReserved_FailedUploadTombstonesTheReservationWithoutDeleting(t *testing.T) {
+	st, dsn := startDBStoreWithDSN(t)
 	store := newMemStore()
 	store.putErr = func(memKey) error { return fmt.Errorf("boom") }
-	store.deleteErr = func(memKey) error {
-		time.Sleep(100 * time.Millisecond)
-		return nil
-	}
-	if _, err := storeBlob(context.Background(), lim, store, []byte("x"), 1, "files", "o"); err == nil {
+	deps := Deps{Store: store, Cache: cache.New(1 << 20), Limits: newLimits(0)}
+	if _, err := storeReserved(context.Background(), deps, st, []byte("x"), 1, "files", "o"); err == nil {
 		t.Fatal("want the upload error")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if !lim.drain(ctx) {
-		t.Fatal("drain timed out")
+	if n := sqlInt(t, dsn, `SELECT count(*) FROM thumbnail_blob WHERE status='TOMBSTONE'`); n != 1 {
+		t.Errorf("tombstones = %d, want 1", n)
 	}
-	if n := len(store.deletedKeys()); n != 1 {
-		t.Errorf("deletes after drain = %d, want 1", n)
+	if n := len(store.deletedKeys()); n != 0 {
+		t.Errorf("inline deletes = %d, the purge is the only cleanup", n)
+	}
+	if _, err := storeReserved(context.Background(), deps, nil, []byte("x"), 1, "files", "o"); err == nil {
+		t.Error("without a DB nothing may be uploaded")
 	}
 }
 

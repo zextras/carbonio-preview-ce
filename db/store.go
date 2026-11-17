@@ -15,6 +15,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -220,9 +221,17 @@ const casWhere = `file_id=$1 AND version=$2 AND size=$3 AND status=$4
 
 // PutReady and Enqueue are compare-and-set: expected == nil inserts and loses to any existing row,
 // otherwise the row is replaced only while it still equals expected. They report whether a row was written.
+// In the same transaction a won write consumes the reservation of its blob and tombstones the blob it replaced,
+// a lost one tombstones the new blob.
 func (s *Store) PutReady(ctx context.Context, row Thumbnail, expected *Thumbnail) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("db.PutReady: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var tag pgconn.CommandTag
 	if expected == nil {
-		tag, err := s.pool.Exec(ctx,
+		tag, err = tx.Exec(ctx,
 			`INSERT INTO thumbnail
                 (file_id, version, size, status, kind, digest, lang, blob_id, original, content_type,
                  owner_id, service_type, attempts, created_at, updated_at, last_accessed_at)
@@ -231,29 +240,39 @@ func (s *Store) PutReady(ctx context.Context, row Thumbnail, expected *Thumbnail
 			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.BlobID, row.Original,
 			row.ContentType, row.OwnerID, row.ServiceType,
 		)
-		if err != nil {
-			return false, fmt.Errorf("db.PutReady: %w", err)
-		}
-		return tag.RowsAffected() == 1, nil
+	} else {
+		tag, err = tx.Exec(ctx,
+			`UPDATE thumbnail
+             SET status='READY', kind=$7, digest=$8, lang=$9, blob_id=$10, original=$11, content_type=$12,
+                 owner_id=$13, service_type=$14, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
+                 updated_at=now(), last_accessed_at=now()
+             WHERE `+casWhere,
+			row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
+			row.Kind, row.Digest, row.Lang, row.BlobID, row.Original, row.ContentType, row.OwnerID, row.ServiceType,
+		)
 	}
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE thumbnail
-         SET status='READY', kind=$7, digest=$8, lang=$9, blob_id=$10, original=$11, content_type=$12,
-             owner_id=$13, service_type=$14, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
-             updated_at=now(), last_accessed_at=now()
-         WHERE `+casWhere,
-		row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
-		row.Kind, row.Digest, row.Lang, row.BlobID, row.Original, row.ContentType, row.OwnerID, row.ServiceType,
-	)
 	if err != nil {
 		return false, fmt.Errorf("db.PutReady: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	won := tag.RowsAffected() == 1
+	if err := settleBlobs(ctx, tx, won, row, expected); err != nil {
+		return false, fmt.Errorf("db.PutReady: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("db.PutReady: commit: %w", err)
+	}
+	return won, nil
 }
 
 func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("db.Enqueue: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var tag pgconn.CommandTag
 	if expected == nil {
-		tag, err := s.pool.Exec(ctx,
+		tag, err = tx.Exec(ctx,
 			`INSERT INTO thumbnail
                 (file_id, version, size, status, kind, digest, lang, owner_id, service_type,
                  attempts, created_at, updated_at, last_accessed_at)
@@ -261,24 +280,30 @@ func (s *Store) Enqueue(ctx context.Context, row Thumbnail, expected *Thumbnail)
              ON CONFLICT (file_id, version, size) DO NOTHING`,
 			row.FileID, row.Version, row.Size, row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
 		)
-		if err != nil {
-			return false, fmt.Errorf("db.Enqueue: %w", err)
-		}
-		return tag.RowsAffected() == 1, nil
+	} else {
+		tag, err = tx.Exec(ctx,
+			`UPDATE thumbnail
+             SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, original=false, content_type=NULL,
+                 owner_id=$10, service_type=$11, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
+                 created_at=now(), updated_at=now()
+             WHERE `+casWhere,
+			row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
+			row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
+		)
 	}
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE thumbnail
-         SET status='PENDING', kind=$7, digest=$8, lang=$9, blob_id=NULL, original=false, content_type=NULL,
-             owner_id=$10, service_type=$11, attempts=0, codec=NULL, claimed_by=NULL, claimed_at=NULL,
-             created_at=now(), updated_at=now()
-         WHERE `+casWhere,
-		row.FileID, row.Version, row.Size, expected.Status, expected.BlobID, expected.Digest,
-		row.Kind, row.Digest, row.Lang, row.OwnerID, row.ServiceType,
-	)
 	if err != nil {
 		return false, fmt.Errorf("db.Enqueue: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	won := tag.RowsAffected() == 1
+	if won && expected != nil {
+		if err := tombstoneRowBlob(ctx, tx, expected); err != nil {
+			return false, fmt.Errorf("db.Enqueue: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("db.Enqueue: commit: %w", err)
+	}
+	return won, nil
 }
 
 // Claim atomically moves the PENDING row of (fileID, version, size) to GENERATING
@@ -345,7 +370,7 @@ func (s *Store) FindPendingNewest(ctx context.Context, limit int) ([]Thumbnail, 
 
 // MarkReady moves the GENERATING rows owned by instanceID to READY in one
 // transaction and returns the sizes it wrote; rows that are gone or no longer
-// owned are skipped.
+// owned are skipped, and their new blob is tombstoned. A written row consumes the reservation of its blob.
 func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbnail) ([]string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -364,8 +389,12 @@ func (s *Store) MarkReady(ctx context.Context, instanceID string, rows []Thumbna
 		if err != nil {
 			return nil, fmt.Errorf("db.MarkReady: %w", err)
 		}
-		if tag.RowsAffected() == 1 {
+		won := tag.RowsAffected() == 1
+		if won {
 			written = append(written, r.Size)
+		}
+		if err := settleBlobs(ctx, tx, won, r, nil); err != nil {
+			return nil, fmt.Errorf("db.MarkReady: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -468,17 +497,31 @@ func (s *Store) TouchReady(ctx context.Context, fileID string, version int, size
 	return nil
 }
 
-// DeleteRow deletes the row only while it still equals the snapshot, so a row that was replaced
-// meanwhile (and the blob it references) survives for the sweep. It reports whether a row was deleted.
-func (s *Store) DeleteRow(ctx context.Context, row Thumbnail) (bool, error) {
-	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM thumbnail WHERE `+casWhere,
-		row.FileID, row.Version, row.Size, row.Status, row.BlobID, row.Digest,
-	)
+// DeleteFile deletes every row of the file and tombstones their blobs in one transaction. It returns the deleted rows,
+// whose blobs the caller deletes after the commit.
+func (s *Store) DeleteFile(ctx context.Context, fileID string) ([]Thumbnail, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("db.DeleteRow: %w", err)
+		return nil, fmt.Errorf("db.DeleteFile: begin: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `DELETE FROM thumbnail WHERE file_id=$1 RETURNING `+selectCols, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("db.DeleteFile: %w", err)
+	}
+	deleted, err := scanAll(rows)
+	if err != nil {
+		return nil, fmt.Errorf("db.DeleteFile: scan: %w", err)
+	}
+	for i := range deleted {
+		if err := tombstoneRowBlob(ctx, tx, &deleted[i]); err != nil {
+			return nil, fmt.Errorf("db.DeleteFile: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db.DeleteFile: commit: %w", err)
+	}
+	return deleted, nil
 }
 
 func (s *Store) DeleteByFile(ctx context.Context, fileID string) error {
@@ -532,18 +575,38 @@ func (s *CleanupConn) FindExpired(ctx context.Context, after *Thumbnail, limit i
 }
 
 // DeleteExpired deletes the row only if it is still READY or LEGACY and still
-// not accessed for 30 days, so an access after FindExpired saves it.
-func (s *CleanupConn) DeleteExpired(ctx context.Context, fileID string, version int, size string) error {
-	_, err := s.conn.Exec(ctx,
+// not accessed for 30 days, so an access after FindExpired saves it. Its blob is tombstoned in the same transaction.
+// It returns the deleted row, or nil when it was kept.
+func (s *CleanupConn) DeleteExpired(ctx context.Context, fileID string, version int, size string) (*Thumbnail, error) {
+	tx, err := s.conn.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("db.DeleteExpired: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx,
 		`DELETE FROM thumbnail
          WHERE file_id=$1 AND version=$2 AND size=$3 AND status IN ('READY','LEGACY')
-           AND last_accessed_at < now() - interval '30 days'`,
+           AND last_accessed_at < now() - interval '30 days'
+         RETURNING `+selectCols,
 		fileID, version, size,
 	)
 	if err != nil {
-		return fmt.Errorf("db.DeleteExpired: %w", err)
+		return nil, fmt.Errorf("db.DeleteExpired: %w", err)
 	}
-	return nil
+	deleted, err := scanAll(rows)
+	if err != nil {
+		return nil, fmt.Errorf("db.DeleteExpired: scan: %w", err)
+	}
+	if len(deleted) == 0 {
+		return nil, nil
+	}
+	if err := tombstoneRowBlob(ctx, tx, &deleted[0]); err != nil {
+		return nil, fmt.Errorf("db.DeleteExpired: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("db.DeleteExpired: commit: %w", err)
+	}
+	return &deleted[0], nil
 }
 
 // cleanupLockKey is the fixed Postgres advisory-lock key serialising the

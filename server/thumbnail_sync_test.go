@@ -525,15 +525,16 @@ func TestThumbnailGet_SyncDigestMismatchReplacesAndDeletesOldBlob(t *testing.T) 
 		if r.Digest == nil || *r.Digest != "d2" || *r.BlobID == *old[size].BlobID {
 			t.Errorf("row %s not replaced: %+v", size, r)
 		}
-		if h.store.has(*old[size].BlobID, testVersion, "files", testOwner) {
-			t.Errorf("old blob of %s still on storages", size)
+		if h.blobStatus(*old[size].BlobID) != "TOMBSTONE" {
+			t.Errorf("old blob of %s is not tombstoned", size)
 		}
 		if !h.store.has(*r.BlobID, testVersion, "files", testOwner) {
 			t.Errorf("new blob of %s missing", size)
 		}
 	}
+	h.purge()
 	if n := h.store.blobCount(); n != 2 {
-		t.Errorf("blobs = %d, want source + 1", n)
+		t.Errorf("blobs after the purge = %d, want source + 1", n)
 	}
 }
 

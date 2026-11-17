@@ -171,9 +171,10 @@ func TestFullFlow(t *testing.T) {
 			t.Errorf("static GIF thumbnail %dx%d, want long side 320", w, h)
 		}
 
-		ts, _, _ = start(t, animatedGIFFixture(t), "image/gif", cache.New(0))
-		if code, _, _ := getBody(t, thumbURL(ts, "m", "image/gif")+"&digest=x"); code != http.StatusFailedDependency {
-			t.Errorf("animated GIF thumbnail without a DB: status=%d, want 424", code)
+		fixture := animatedGIFFixture(t)
+		ts, _, _ = start(t, fixture, "image/gif", cache.New(0))
+		if code, ct, body := getBody(t, thumbURL(ts, "m", "image/gif")+"&digest=x"); code != http.StatusOK || ct != "image/gif" || !bytes.Equal(body, fixture) {
+			t.Errorf("animated GIF thumbnail without a DB: status=%d ct=%q identical=%v, want 200 with the source GIF (it fits M, no 424)", code, ct, bytes.Equal(body, fixture))
 		}
 	})
 

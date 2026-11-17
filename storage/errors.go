@@ -13,3 +13,6 @@ var ErrNotFound = errors.New("storage: item not found")
 // ErrUnavailable is returned when storage is unreachable (connection
 // timeout, DNS failure, etc.) or returns any non-404 error response.
 var ErrUnavailable = errors.New("storage: unavailable or request error")
+
+// ErrRejected marks an HTTP error status returned by a reachable storage, as opposed to an outage.
+var ErrRejected = errors.New("storage: request rejected")
