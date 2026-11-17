@@ -8,6 +8,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/color"
+	"image/draw"
 	"image/gif"
 	"os"
 	"path/filepath"
@@ -152,10 +155,13 @@ func TestAnimatedGIF_SlowSourceIsNotInflated(t *testing.T) {
 			t.Errorf("frame %d delay %d cs, want the source's 100", i, d)
 		}
 	}
+	if got := totalDelay(g); got != 600 {
+		t.Errorf("duration %d cs, want 600 (unchanged)", got)
+	}
 }
 
 func TestAnimatedGIF_NeverUpscales(t *testing.T) {
-	for name, dims := range map[string][2]int{"landscape": {200, 100}, "portrait": {100, 200}} {
+	for name, dims := range map[string][2]int{"landscape": {200, 100}, "portrait": {100, 200}, "odd": {201, 101}, "odd portrait": {101, 201}} {
 		src := genGIF(t, dims[0], dims[1], 8)
 		for _, side := range []int{SideS, SideM} {
 			_, oi := resizedGIF(t, src, side)
@@ -163,5 +169,78 @@ func TestAnimatedGIF_NeverUpscales(t *testing.T) {
 				t.Errorf("%s at side %d: %dx%d, want the source size %dx%d", name, side, oi.Width, oi.Height, dims[0], dims[1])
 			}
 		}
+	}
+}
+
+func slideshowGIF(t *testing.T, delays []int, distinct func(i int) int) []byte {
+	t.Helper()
+	pal := color.Palette{color.Black, color.White, color.RGBA{255, 0, 0, 255}, color.RGBA{0, 255, 0, 255}, color.RGBA{0, 0, 255, 255}}
+	g := &gif.GIF{}
+	for i, d := range delays {
+		f := image.NewPaletted(image.Rect(0, 0, 640, 360), pal)
+		draw.Draw(f, f.Bounds(), &image.Uniform{pal[distinct(i)%len(pal)]}, image.Point{}, draw.Src)
+		x := (distinct(i) * 37) % 600
+		draw.Draw(f, image.Rect(x, 100, x+40, 160), &image.Uniform{pal[(distinct(i)+2)%len(pal)]}, image.Point{}, draw.Src)
+		g.Image = append(g.Image, f)
+		g.Delay = append(g.Delay, d)
+	}
+	var b bytes.Buffer
+	if err := gif.EncodeAll(&b, g); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func repeat(n, v int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = v
+	}
+	return out
+}
+
+func TestAnimatedGIF_FastSourceWithALongLastPauseKeepsDurationAndPause(t *testing.T) {
+	resolveFFmpeg(t)
+	delays := append(repeat(100, 2), 200)
+	src := slideshowGIF(t, delays, func(i int) int { return i })
+	g, _ := resizedGIF(t, src, 320)
+	if got := totalDelay(g); got < 400-1 || got > 400+1 {
+		t.Errorf("duration %d cs, want 400 (within 1 cs)", got)
+	}
+	if last := g.Delay[len(g.Delay)-1]; last < 190 {
+		t.Errorf("last delay %d cs, want the 2 s pause kept", last)
+	}
+}
+
+func TestAnimatedGIF_TrailingExactDuplicatesKeepDuration(t *testing.T) {
+	resolveFFmpeg(t)
+	delays := repeat(60, 4)
+	src := slideshowGIF(t, delays, func(i int) int { return min(i, 49) })
+	g, _ := resizedGIF(t, src, 320)
+	if got := totalDelay(g); got < 240-1 || got > 240+1 {
+		t.Errorf("duration %d cs, want 240 (the dropped duplicates' time goes to the last frame)", got)
+	}
+}
+
+func TestAnimatedGIF_UnparsableSourceKeepsFFmpegsOutput(t *testing.T) {
+	src := genGIF(t, 320, 180, 10)
+	truncated := src[:len(src)-1]
+	if _, ok := gifDelays(truncated); ok {
+		t.Fatal("a GIF without its trailer must not parse")
+	}
+	in, dir := writeIn(t, truncated)
+	info, err := Probe(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := AnimatedGIF(context.Background(), in, info, 320, dir)
+	if err != nil {
+		t.Fatalf("ffmpeg output must be returned untouched: %v", err)
+	}
+	if _, err := gif.DecodeAll(bytes.NewReader(out)); err != nil {
+		t.Errorf("output is not a GIF: %v", err)
+	}
+	if got := patchLastDelay([]byte("garbage"), 100); string(got) != "garbage" {
+		t.Errorf("garbage must be left alone, got %q", got)
 	}
 }

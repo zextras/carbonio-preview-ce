@@ -7,6 +7,7 @@ package render
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -24,9 +25,9 @@ const gifMaxFPS = 10
 
 func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, workDir string) ([]byte, error) {
 	long := strconv.Itoa(side)
-	scale := "scale=-2:'min(" + long + ",ih)':flags=lanczos"
+	scale := "scale=-1:'min(" + long + ",ih)':flags=lanczos"
 	if info.Width >= info.Height {
-		scale = "scale='min(" + long + ",iw)':-2:flags=lanczos"
+		scale = "scale='min(" + long + ",iw)':-1:flags=lanczos"
 	}
 	chain := "fps=" + strconv.Itoa(gifMaxFPS) + "," + scale + ",mpdecimate=hi=1:lo=1:frac=1:max=0"
 	palette := filepath.Join(workDir, "palette.png")
@@ -53,7 +54,101 @@ func AnimatedGIF(ctx context.Context, inputPath string, info Info, side int, wor
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%w: ffmpeg produced no output", ErrGIFFailed)
 	}
+	if src, err := os.ReadFile(inputPath); err == nil {
+		if delays, ok := gifDelays(src); ok {
+			total := 0
+			for _, d := range delays {
+				total += d
+			}
+			data = patchLastDelay(data, total)
+		}
+	}
 	return data, nil
+}
+
+// gifBlocks walks the GIF block structure without decoding pixels and returns the offset of every Graphic Control Extension delay; ok is false unless the stream ends with its trailer.
+func gifBlocks(data []byte) (offsets []int, ok bool) {
+	if len(data) < 13 || (string(data[:6]) != "GIF87a" && string(data[:6]) != "GIF89a") {
+		return nil, false
+	}
+	pos := 13
+	if data[10]&0x80 != 0 {
+		pos += 3 << (data[10]&7 + 1)
+	}
+	skip := func(p int) (int, bool) {
+		for {
+			if p >= len(data) {
+				return 0, false
+			}
+			n := int(data[p])
+			p++
+			if n == 0 {
+				return p, true
+			}
+			p += n
+		}
+	}
+	for pos < len(data) {
+		switch data[pos] {
+		case 0x3B:
+			return offsets, true
+		case 0x21:
+			if pos+2 >= len(data) {
+				return nil, false
+			}
+			if data[pos+1] == 0xF9 {
+				if pos+6 > len(data) || data[pos+2] != 4 {
+					return nil, false
+				}
+				offsets = append(offsets, pos+4)
+			}
+			var good bool
+			if pos, good = skip(pos + 2); !good {
+				return nil, false
+			}
+		case 0x2C:
+			if pos+10 > len(data) {
+				return nil, false
+			}
+			next := pos + 10
+			if data[pos+9]&0x80 != 0 {
+				next += 3 << (data[pos+9]&7 + 1)
+			}
+			var good bool
+			if pos, good = skip(next + 1); !good {
+				return nil, false
+			}
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
+}
+
+func gifDelays(data []byte) ([]int, bool) {
+	offsets, ok := gifBlocks(data)
+	if !ok {
+		return nil, false
+	}
+	delays := make([]int, len(offsets))
+	for i, o := range offsets {
+		delays[i] = int(binary.LittleEndian.Uint16(data[o:]))
+	}
+	return delays, true
+}
+
+// patchLastDelay sets the last frame delay of out so its total duration is total centiseconds; unparsable input is returned untouched.
+func patchLastDelay(out []byte, total int) []byte {
+	offsets, ok := gifBlocks(out)
+	if !ok || len(offsets) == 0 {
+		return out
+	}
+	others := 0
+	for _, o := range offsets[:len(offsets)-1] {
+		others += int(binary.LittleEndian.Uint16(out[o:]))
+	}
+	binary.LittleEndian.PutUint16(out[offsets[len(offsets)-1]:], uint16(min(max(2, total-others), 65535)))
+	return out
 }
 
 func runFFmpegGIF(ctx context.Context, args ...string) error {
