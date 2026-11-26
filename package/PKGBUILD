@@ -91,7 +91,6 @@ sha256sums=(
 )
 
 backup=(
-  "etc/zextras/service-discover/carbonio-preview.hcl"
   "etc/carbonio/preview/config.properties"
 )
 
