@@ -294,26 +294,10 @@ postinst() {
     systemctl enable carbonio-preview-sidecar.service >/dev/null 2>&1 || :
   fi
 
-  if [ "$1" = "configure" ]; then
-    env -i PATH=/usr/bin:/bin bash -c 'set -a; [ -r "$1" ] && . "$1"; exec consul-template -once -template "$2:$3"' _ \
-      /etc/zextras/service-discover/carbonio-preview.env \
-      /etc/zextras/service-discover/templates/carbonio-preview-template.hcl \
-      /etc/zextras/service-discover/carbonio-preview.hcl > /dev/null \
-      || echo "WARNING: cannot render /etc/zextras/service-discover/carbonio-preview.hcl, run carbonio-preview setup"
-  fi
-
   echo "======================================================"
   echo "Carbonio Preview installed successfully!"
   echo "You must run pending-setups to configure it correctly."
   echo "======================================================"
-}
-
-posttrans() {
-  env -i PATH=/usr/bin:/bin bash -c 'set -a; [ -r "$1" ] && . "$1"; exec consul-template -once -template "$2:$3"' _ \
-    /etc/zextras/service-discover/carbonio-preview.env \
-    /etc/zextras/service-discover/templates/carbonio-preview-template.hcl \
-    /etc/zextras/service-discover/carbonio-preview.hcl > /dev/null \
-    || echo "WARNING: cannot render /etc/zextras/service-discover/carbonio-preview.hcl, run carbonio-preview setup"
 }
 
 prerm() {
