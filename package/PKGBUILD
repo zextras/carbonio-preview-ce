@@ -16,7 +16,6 @@ depends__apt=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "service-discover-template"
   "libstdc++6"
   "carbonio-ffmpeg"
 )
@@ -24,7 +23,6 @@ depends__rocky_8=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "service-discover-template"
   "libstdc++"
   "carbonio-ffmpeg"
 )
@@ -32,7 +30,6 @@ depends__rocky_9=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
-  "service-discover-template"
   "libstdc++"
   "carbonio-ffmpeg"
 )
