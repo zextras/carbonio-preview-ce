@@ -15,6 +15,15 @@ if [[ "$1" != "setup" ]]; then
 fi
 
 
+# shellcheck disable=SC2016
+if ! env -i PATH=/usr/bin:/bin bash -c 'set -a; [ -r "$1" ] && . "$1"; exec consul-template -once -template "$2:$3"' _ \
+  /etc/zextras/service-discover/carbonio-preview.env \
+  /etc/zextras/service-discover/templates/carbonio-preview-template.hcl \
+  /etc/zextras/service-discover/carbonio-preview.hcl > /dev/null; then
+  echo "Cannot render /etc/zextras/service-discover/carbonio-preview.hcl; leaving pending-setup to be retried."
+  exit 1
+fi
+
 # decrypt the bootstrap token, asking the password to the sys admin
 # --setup check for SETUP_CONSUL_TOKEN env. variable and uses it
 # to avoid re-asking for the password
@@ -72,3 +81,17 @@ service-discover service-token prune-legacy --service carbonio-preview --policy 
 
 # Limit token visibility as much as possible
 export -n CONSUL_HTTP_TOKEN
+rc=$?
+cat << 'EOF'
+
+Sidecar Config (overridable by /etc/zextras/service-discover/carbonio-preview.env, apply with carbonio-preview setup)
+
+┌────────────────┬─────────┐
+│ Key            │ Default │
+├────────────────┼─────────┤
+│ CHECK_TIMEOUT  │ 1s      │
+│ CHECK_INTERVAL │ 5s      │
+└────────────────┴─────────┘
+
+EOF
+exit "${rc}"

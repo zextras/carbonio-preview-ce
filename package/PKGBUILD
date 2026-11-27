@@ -16,6 +16,7 @@ depends__apt=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "service-discover-template"
   "libstdc++6"
   "carbonio-ffmpeg"
 )
@@ -23,6 +24,7 @@ depends__rocky_8=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "service-discover-template"
   "libstdc++"
   "carbonio-ffmpeg"
 )
@@ -30,6 +32,7 @@ depends__rocky_9=(
   "pending-setups"
   "service-discover"
   "service-discover-base"
+  "service-discover-template"
   "libstdc++"
   "carbonio-ffmpeg"
 )
@@ -60,7 +63,7 @@ source=(
   "carbonio-preview.service"
   "carbonio-preview-sidecar.service"
   "carbonio-preview-sidecar-legacy.service"
-  "carbonio-preview.hcl"
+  "carbonio-preview-template.hcl"
   "carbonio-preview"
   "messages.ini"
   "intentions.json"
@@ -77,8 +80,8 @@ sha256sums=(
   'c6b99bfb1504f81013d54aa7c71c3a5aab94211879411b6fc62831f8a62619fc'
   'ce115c11ca2ebc53ec4bac914ca0b63ae83e309578b2d5aade3698a05f9dbbbc'
   '5b135d5eafa56e9006dfdd6b231f9048b0a446ba9753d7f2f8bf72b0dbfdd4e2'
-  '476cb748250ec66c059a666813ed51a91e3dc9db6e6790209e9269c0a21cdd61'
-  'be35ce50e21b0f8243b8825d829924abde4b68777bf1c91b613754b070ed11c7'
+  'ade1417a7dba96574b3ea0cf9db8bc1a567ce4e8029d1cb985dee582c2b0220d'
+  '511a470179a1c5268ae92aa222cbb1e9feee056ceb46ce8aaeb1d2976a4bffea'
   'c02ee7de63a0f46ad14466de369975219b3e7e74b1e946a8e624992c196e62ad'
   '5eab74e1c04db43cdc3b2a39d6264b8de630b682d2d1987cdd731b92e9cc1210'
   'b85f7aed633545c66303204e2d77d80434b9bf595570b967357c1b130edc1741'
@@ -91,7 +94,6 @@ sha256sums=(
 )
 
 backup=(
-  "etc/zextras/service-discover/carbonio-preview.hcl"
   "etc/carbonio/preview/config.properties"
 )
 
@@ -198,8 +200,8 @@ package() {
     "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
-  install -Dm644 "${srcdir}/carbonio-preview.hcl" \
-    "${pkgdir}/etc/zextras/service-discover/carbonio-preview.hcl"
+  install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
+    "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -228,8 +230,8 @@ package__rocky_8() {
     "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
-  install -Dm644 "${srcdir}/carbonio-preview.hcl" \
-    "${pkgdir}/etc/zextras/service-discover/carbonio-preview.hcl"
+  install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
+    "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -258,8 +260,8 @@ package__ubuntu_jammy() {
     "${pkgdir}/usr/lib/carbonio-preview/libvips-cpp.so.8.18.3"
   install -Dm644 "${srcdir}/carbonio-preview.service" \
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
-  install -Dm644 "${srcdir}/carbonio-preview.hcl" \
-    "${pkgdir}/etc/zextras/service-discover/carbonio-preview.hcl"
+  install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
+    "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -308,5 +310,10 @@ prerm() {
 postrm() {
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload >/dev/null 2>&1 || :
+  fi
+
+  rm -f /etc/zextras/service-discover/carbonio-preview.hcl
+  if [ "$1" = "purge" ]; then
+    rm -f /etc/zextras/service-discover/carbonio-preview.env
   fi
 }
