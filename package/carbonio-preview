@@ -15,6 +15,12 @@ if [[ "$1" != "setup" ]]; then
 fi
 
 
+carbonio-preview-hcl migrate || :
+if ! carbonio-preview-hcl render; then
+  echo "Cannot render /etc/zextras/service-discover/carbonio-preview.hcl; leaving pending-setup to be retried."
+  exit 1
+fi
+
 # decrypt the bootstrap token, asking the password to the sys admin
 # --setup check for SETUP_CONSUL_TOKEN env. variable and uses it
 # to avoid re-asking for the password
@@ -72,3 +78,6 @@ service-discover service-token prune-legacy --service carbonio-preview --policy 
 
 # Limit token visibility as much as possible
 export -n CONSUL_HTTP_TOKEN
+rc=$?
+carbonio-preview-hcl show || :
+exit "${rc}"

@@ -80,6 +80,14 @@ repos:
         language: system
         types: [go]
 
+    -   id: test-hcl-template
+        name: test-hcl-template
+        description: Tests the hcl template render and migration script.
+        entry: bash .ci/test-hcl-template.sh
+        language: system
+        pass_filenames: false
+        files: ^(package/(carbonio-preview-(hcl|template\.hcl)|carbonio-preview)|\.ci/test-hcl-template\.sh)$
+
 -   repo: local
     hooks:
     # Generated-file hooks (see README.md): CI is verify-only, so generation happens here at commit time.
