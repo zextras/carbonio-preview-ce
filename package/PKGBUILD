@@ -64,7 +64,6 @@ source=(
   "carbonio-preview-sidecar.service"
   "carbonio-preview-sidecar-legacy.service"
   "carbonio-preview-template.hcl"
-  "carbonio-preview-hcl"
   "carbonio-preview"
   "messages.ini"
   "intentions.json"
@@ -81,9 +80,8 @@ sha256sums=(
   'c6b99bfb1504f81013d54aa7c71c3a5aab94211879411b6fc62831f8a62619fc'
   'ce115c11ca2ebc53ec4bac914ca0b63ae83e309578b2d5aade3698a05f9dbbbc'
   '5b135d5eafa56e9006dfdd6b231f9048b0a446ba9753d7f2f8bf72b0dbfdd4e2'
-  '61f7c5449505b9409df0c2f5558990f0ff56d5f3d7769063de1106b208e555c1'
-  'c2cf2641046431e538a72cbe5fd6e4306f5c0fce877e6be8ac0ecb9a49fc95d5'
-  '194a618376cdeaf76ea3f3b65ffbfbaedefe6f02e19a5680b2eb26406b314669'
+  'ade1417a7dba96574b3ea0cf9db8bc1a567ce4e8029d1cb985dee582c2b0220d'
+  '511a470179a1c5268ae92aa222cbb1e9feee056ceb46ce8aaeb1d2976a4bffea'
   'c02ee7de63a0f46ad14466de369975219b3e7e74b1e946a8e624992c196e62ad'
   '5eab74e1c04db43cdc3b2a39d6264b8de630b682d2d1987cdd731b92e9cc1210'
   'b85f7aed633545c66303204e2d77d80434b9bf595570b967357c1b130edc1741'
@@ -204,8 +202,6 @@ package() {
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
     "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
-  install -Dm755 "${srcdir}/carbonio-preview-hcl" \
-    "${pkgdir}/usr/bin/carbonio-preview-hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -236,8 +232,6 @@ package__rocky_8() {
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
     "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
-  install -Dm755 "${srcdir}/carbonio-preview-hcl" \
-    "${pkgdir}/usr/bin/carbonio-preview-hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -268,8 +262,6 @@ package__ubuntu_jammy() {
     "${pkgdir}/lib/systemd/system/carbonio-preview.service"
   install -Dm644 "${srcdir}/carbonio-preview-template.hcl" \
     "${pkgdir}/etc/zextras/service-discover/templates/carbonio-preview-template.hcl"
-  install -Dm755 "${srcdir}/carbonio-preview-hcl" \
-    "${pkgdir}/usr/bin/carbonio-preview-hcl"
   install -Dm755 "${srcdir}/531-carbonio-preview.sh" \
     "${pkgdir}/etc/zextras/pending-setups.d/531-carbonio-preview.sh"
   install -Dm644 "${srcdir}/intentions.json" \
@@ -303,7 +295,11 @@ postinst() {
   fi
 
   if [ "$1" = "configure" ]; then
-    carbonio-preview-hcl render || echo "WARNING: hcl render failed, run carbonio-preview setup"
+    env -i PATH=/usr/bin:/bin bash -c 'set -a; [ -r "$1" ] && . "$1"; exec consul-template -once -template "$2:$3"' _ \
+      /etc/zextras/service-discover/carbonio-preview.env \
+      /etc/zextras/service-discover/templates/carbonio-preview-template.hcl \
+      /etc/zextras/service-discover/carbonio-preview.hcl > /dev/null \
+      || echo "WARNING: cannot render /etc/zextras/service-discover/carbonio-preview.hcl, run carbonio-preview setup"
   fi
 
   echo "======================================================"
@@ -313,7 +309,11 @@ postinst() {
 }
 
 posttrans() {
-  carbonio-preview-hcl render || echo "WARNING: hcl render failed, run carbonio-preview setup"
+  env -i PATH=/usr/bin:/bin bash -c 'set -a; [ -r "$1" ] && . "$1"; exec consul-template -once -template "$2:$3"' _ \
+    /etc/zextras/service-discover/carbonio-preview.env \
+    /etc/zextras/service-discover/templates/carbonio-preview-template.hcl \
+    /etc/zextras/service-discover/carbonio-preview.hcl > /dev/null \
+    || echo "WARNING: cannot render /etc/zextras/service-discover/carbonio-preview.hcl, run carbonio-preview setup"
 }
 
 prerm() {
