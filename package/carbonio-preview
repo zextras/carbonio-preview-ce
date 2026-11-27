@@ -15,7 +15,6 @@ if [[ "$1" != "setup" ]]; then
 fi
 
 
-carbonio-preview-hcl migrate || :
 if ! carbonio-preview-hcl render; then
   echo "Cannot render /etc/zextras/service-discover/carbonio-preview.hcl; leaving pending-setup to be retried."
   exit 1

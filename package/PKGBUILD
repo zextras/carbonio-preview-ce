@@ -82,8 +82,8 @@ sha256sums=(
   'ce115c11ca2ebc53ec4bac914ca0b63ae83e309578b2d5aade3698a05f9dbbbc'
   '5b135d5eafa56e9006dfdd6b231f9048b0a446ba9753d7f2f8bf72b0dbfdd4e2'
   '61f7c5449505b9409df0c2f5558990f0ff56d5f3d7769063de1106b208e555c1'
-  '2064d2f23ed576dff2bcd5f70e0cd9336d44840981e925702013bcd3491cb636'
-  'e6d86d6cac4b651a753ef0ae702f1cb87b2acf39b2db5458656a3e29995817e7'
+  'e06b8a9dff44d38deacf546797b86176fc2a756e61afcc08133461fd239b395b'
+  '194a618376cdeaf76ea3f3b65ffbfbaedefe6f02e19a5680b2eb26406b314669'
   'c02ee7de63a0f46ad14466de369975219b3e7e74b1e946a8e624992c196e62ad'
   '5eab74e1c04db43cdc3b2a39d6264b8de630b682d2d1987cdd731b92e9cc1210'
   'b85f7aed633545c66303204e2d77d80434b9bf595570b967357c1b130edc1741'
@@ -303,7 +303,6 @@ postinst() {
   fi
 
   if [ "$1" = "configure" ]; then
-    carbonio-preview-hcl migrate || :
     carbonio-preview-hcl render || echo "WARNING: hcl render failed, run carbonio-preview setup"
   fi
 
@@ -314,7 +313,6 @@ postinst() {
 }
 
 posttrans() {
-  carbonio-preview-hcl migrate || :
   carbonio-preview-hcl render || echo "WARNING: hcl render failed, run carbonio-preview setup"
 }
 
